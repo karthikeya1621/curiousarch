@@ -3,21 +3,24 @@
   "version": "0.0.1",
   "description": "Headless capacity simulation engine. No React, no DOM.",
   "type": "module",
-  "main": "./src/solver.ts",
+  "main": "./src/index.ts",
   "private": true,
   "engines": {
     "node": ">=24"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/karthikeya1621/archsim.git"
+    "url": "git+https://github.com/karthikeya1621/archsim.git",
+    "directory": "packages/engine"
   },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "sim": "tsx bin/sim.ts",
-    "whatif": "tsx bin/whatif.ts"
+    "whatif": "tsx bin/whatif.ts",
+    "check-inference": "tsx bin/check-inference.ts",
+    "compare": "tsx bin/run-comparison.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",
