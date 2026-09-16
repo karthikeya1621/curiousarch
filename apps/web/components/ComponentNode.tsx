@@ -22,10 +22,38 @@ const KIND_TONE: Record<Component["kind"], string> = {
   queue: "bg-teal-50 text-teal-600",
 };
 
+/**
+ * Horizontal scaling — "how many parallel copies of this" — shown as a
+ * plain "×N" appended to the existing subtitle text, not a separate
+ * element: no extra DOM per node, so it costs nothing extra during
+ * animateNodes' every-frame relayout re-render. Deliberately not the
+ * combined ComponentProfile.servers figure (components.ts) for a service —
+ * that's instances * concurrencyPerInstance, conflating this with vertical
+ * scaling (concurrencyPerInstance, a per-instance property) — but each
+ * kind's own count-type field: the one thing you'd literally add more of.
+ * Cache has no such field (components.ts pins it at exactly 1 server,
+ * always — there is no horizontal lever to show), and a gateway has no
+ * server concept at all, so neither gets a count.
+ */
+function horizontalCount(component: Component): number | null {
+  switch (component.kind) {
+    case "service":
+      return component.instances.value;
+    case "database":
+      return component.connectionPoolSize.value;
+    case "queue":
+      return component.consumers.value;
+    case "cache":
+    case "gateway":
+      return null;
+  }
+}
+
 export function ComponentNode({ data }: NodeProps) {
   const { component, scenarios } = data as unknown as ComponentNodeData;
   const isOpen = useAppStore((s) => s.openComponentId === component.id);
   const KindIcon = KIND_ICON[component.kind];
+  const count = horizontalCount(component);
 
   return (
     <div
@@ -49,6 +77,7 @@ export function ComponentNode({ data }: NodeProps) {
             </p>
             <p className="truncate text-[11px] text-slate-400">
               {component.id} · {component.kind}
+              {count !== null ? ` · ×${count}` : ""}
             </p>
           </div>
         </div>
