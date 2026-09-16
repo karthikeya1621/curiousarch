@@ -74,3 +74,55 @@ export function SparklesIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+/**
+ * One icon per Component["kind"] (types.ts), used together in
+ * ComponentNode so a node's role reads at a glance without leaning on
+ * color alone.
+ */
+
+export function GatewayIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <rect x="3" y="11" width="18" height="7" rx="1.5" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+      <path d="M7 15h.01M12 15h.01M17 15h.01" />
+    </svg>
+  );
+}
+
+export function ServiceIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <rect x="3" y="4" width="18" height="6" rx="1.5" />
+      <rect x="3" y="14" width="18" height="6" rx="1.5" />
+      <path d="M7 7h.01M7 17h.01" />
+    </svg>
+  );
+}
+
+export function CacheIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M13 3 4 14h7l-1 7 9-11h-7l1-7z" />
+    </svg>
+  );
+}
+
+export function DatabaseIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <ellipse cx="12" cy="5" rx="8" ry="3" />
+      <path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+      <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+    </svg>
+  );
+}
+
+export function QueueIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M4 6h16M4 12h16M4 18h10" />
+    </svg>
+  );
+}
