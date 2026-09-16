@@ -138,6 +138,26 @@ describe("SystemModelSchema", () => {
     expect(SystemModelSchema.safeParse(noRationale).success).toBe(false);
   });
 
+  it("rejects a model with only a gateway — nothing actually doing work", () => {
+    // Found live: a bare-gateway model passes every other check and reaches
+    // simulate() as a trivially "healthy" system for a prose description
+    // that was clearly about more than admission control (see CONTEXT.md's
+    // live movie-ticket-booking test). This is what makes fromProse's
+    // existing repair-retry catch it instead.
+    const gatewayOnly = {
+      ...fixture,
+      components: fixture.components.filter((c) => c.kind === "gateway"),
+      edges: [],
+    };
+    const result = SystemModelSchema.safeParse(gatewayOnly);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => /beyond the entry point/i.test(i.message))).toBe(
+        true,
+      );
+    }
+  });
+
   it("rejects an edge pointing at a component id that doesn't exist", () => {
     const danglingEdge = {
       ...fixture,

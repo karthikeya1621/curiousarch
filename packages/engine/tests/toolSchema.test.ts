@@ -62,4 +62,19 @@ describe("tool input schema", () => {
       expect(schema).not.toContain(`"${keyword}"`);
     }
   });
+
+  it("never sets an array minItems above 1", () => {
+    // Discovered live, the hard way: a real 400 — "For 'array' type,
+    // 'minItems' values other than 0 or 1 are not supported" — when
+    // components.min(2) was tried directly on SystemModelSchema (the same
+    // declaration feeds this schema, so the constraint leaked straight into
+    // the live request). The real "at least 2 components" rule now lives in
+    // SystemModelSchema's superRefine instead (see schema.test.ts), which
+    // isn't representable in JSON Schema and so never reaches this tree.
+    const schema = JSON.stringify(buildToolInputSchema());
+    const values = [...schema.matchAll(/"minItems":(\d+)/g)].map((m) => Number(m[1]));
+    for (const v of values) {
+      expect(v).toBeLessThanOrEqual(1);
+    }
+  });
 });

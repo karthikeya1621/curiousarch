@@ -118,11 +118,36 @@ export const SystemModelSchema = z
   .object({
     id: z.string().min(1),
     name: z.string().min(1),
+    // .min(1) here, not .min(2) — this same declaration feeds
+    // buildToolInputSchema() as well as response parsing, and strict mode's
+    // constrained decoding rejects the request outright for an array
+    // `minItems` above 1 ("'minItems' values other than 0 or 1 are not
+    // supported"), discovered live. The real "at least one component beyond
+    // the gateway" check lives in superRefine below instead, which
+    // zodToJsonSchema never translates into the schema sent to the API in
+    // the first place (same reason the cycle/dangling-edge checks live
+    // there) — so it can be as strict as it needs to be without touching
+    // what the live call is allowed to ask for.
     components: z.array(ComponentSchema).min(1),
     edges: z.array(EdgeSchema),
     workload: WorkloadSchema,
   })
   .superRefine((model, ctx) => {
+    // A gateway alone does no work and models nothing — every reference
+    // model has a gateway plus at least one thing actually processing the
+    // request. Found live: a bare-gateway model passed every other check
+    // here and reached simulate() as a trivially "healthy" system that said
+    // nothing, for a prose description that was clearly about more than
+    // admission control (see CONTEXT.md's movie-ticket-booking test).
+    if (model.components.length < 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "A capacity model needs at least one component beyond the entry point — describe what actually does the work (a service, cache, database, or queue).",
+        path: ["components"],
+      });
+    }
+
     const ids = new Set(model.components.map((c) => c.id));
 
     const duplicates = model.components

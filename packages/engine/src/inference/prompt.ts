@@ -22,6 +22,8 @@ For every parameter you must give:
 
 Write the rationale before deciding value and provenance — reason first, conclude second. A value with no defensible reason is worse than no value.
 
+"stated" is a claim that the number came from the prose, word for word or in substance — never mark it "stated" for a value you chose yourself. Your own rationale is the tell: if it contains "typical", "assumed", "default", "no ... given/stated", or any other admission that you picked the number rather than read it, the provenance for that same parameter must be "default" or "inferred", never "stated". Before finalizing, re-check every parameter against this: a rationale that describes a guess and a provenance of "stated" on the same parameter is a contradiction the UI will show to the user as a lie about where the number came from — the single thing this tool exists to get right.
+
 Rules:
 - The model must be a DAG. Never create an edge back into a component that is upstream of it; retries and circuit breakers are parameters on a component, not edges.
 - Every edge's "from" and "to" must be an id of a component you defined.
