@@ -102,8 +102,11 @@ UI (`apps/web/`):
 - `lib/store.ts` — Zustand: `model`, a flat `history` undo stack,
   `selectedScenarioId`/`selectedFixId`/`openComponentId` (cross-component UI
   selection state), and the mutators (`setModel`, `updateParameter`,
-  `setWorkloadRps`, `undo`, `selectScenario`, `selectFix`,
-  `setOpenComponentId`)
+  `setWorkloadRps`, `applyFix`, `undo`, `selectScenario`, `selectFix`,
+  `setOpenComponentId`). `applyFix` commits `fix.apply(model)` — the fix
+  against the REAL model — never `fix.apply(scenario.apply(model))`, which
+  would permanently bake in a hypothetical failure that was only ever a
+  stress test.
 - `lib/hooks.ts` — `useScenarios`/`useScenarioDelta`/`useFixes`/
   `useFixResult`/`useBreakingPoint`, every engine call memoized and
   try/catch-guarded so a stale selection can't crash a render
@@ -143,6 +146,44 @@ would. **This is a known, accepted gap, not an oversight** — if a future
 session has the chance to run the flow against a real system with a real
 operator judging the result, that's still the strongest test available and
 worth doing opportunistically.
+
+**A live end-to-end run against "movie ticket booking, 1M users" (chosen as
+a genuinely operable domain, not a synthetic reference system) via the real
+`/api/infer` pipeline** — ~7 live calls through the actual UI, not a proxy
+subagent. Findings, none requiring a code fix so far:
+
+- The model consistently inferred a sensible, well-reasoned architecture
+  when it inferred one at all: separate booking and catalog services, a
+  showtime/seat-availability cache, a purpose-split database, and an async
+  payment/confirmation queue — genuine domain understanding, not a generic
+  gateway-service-db template.
+- **In 4 of 6 "rich" runs, the inferred baseline was already unhealthy at
+  its own inferred workload** — `QUEUE_OVERFLOW` on the payment/notification
+  queue, because the inferred consumer count couldn't drain the inferred
+  arrival rate. This is a real, recognizable failure mode for ticketing
+  systems (the Ticketmaster-style meltdown pattern), consistently and
+  correctly *computed*, not asserted by the model.
+- The correction loop worked exactly as designed on a **live-inferred**
+  model, not just the three hand-built reference ones: reading the
+  finding's own `consumersRequired` evidence and correcting `consumers` in
+  `ControlPanel` flipped the system to healthy — and the tool then honestly
+  reported `HIGH_UTILIZATION` at 98%, a near-miss, rather than a false "all
+  clear." This is the first time the full loop has been exercised against
+  something other than a hand-modelled or synthetic system.
+- **Run-to-run variance is real and significant**: 2 of 7 attempts on the
+  identical prompt returned a near-empty model (gateway only, everything
+  else silently dropped), and live latency ranged ~4s–60s call to call.
+  This reconfirms PLAN-0.4's already-documented ~30% inference-reliability
+  finding live, in the actual pipeline — not a new bug, but worth knowing
+  it still holds.
+- **One observed instance of mislabeled provenance**: a `consumers` value
+  with the rationale "typical small pool of workers" (clearly a guess) was
+  tagged `provenance: "stated"` instead of `"default"`. Only seen once, not
+  yet confirmed as a systemic pattern — but worth watching, since accurate
+  provenance is the specific mechanism this product's trust model depends
+  on (`CONTEXT.md`'s own "one thing that makes this defensible" section).
+  If this recurs, the fix is tightening `src/inference/prompt.ts`'s
+  provenance instructions, not the schema.
 
 Phase 1's own closing question ("does the loop produce a moment of insight,
 or does it produce a diagram?") hasn't been answered by a human other than
