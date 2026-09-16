@@ -8,6 +8,27 @@
 import { describe, expect, it } from "vitest";
 import { listFixes, compareFix } from "../src/fixes.js";
 import { checkout, mediaUpload, urlShortener } from "../models/reference.js";
+import type { SystemModel } from "../src/types.js";
+
+/**
+ * Same herd-prone shape as golden.test.ts's "flags a herd when few hot keys
+ * sit over a slow refill" fixture, but with the downstream query time tuned
+ * to 30ms specifically so halving it (15ms) crosses the duplication
+ * threshold: duplicatesPerExpiry = (load / hotKeys) * refillSeconds =
+ * (10,000 / 100) * 0.03 = 3 before the fix (>= 2, herd fires), and
+ * (10,000 / 100) * 0.015 = 1.5 after (< 2, herd clears) — with the
+ * downstream database nowhere near its own capacity (100 conns / 15ms =
+ * 6,666.67 rps sustainable, against ~500 rps of actual miss traffic), so
+ * nothing else about the model is at risk of confounding the result.
+ */
+const herdProne: SystemModel = {
+  ...urlShortener,
+  components: urlShortener.components.map((c) => {
+    if (c.kind === "cache") return { ...c, keyspaceHotSet: { ...c.keyspaceHotSet, value: 100 } };
+    if (c.kind === "database") return { ...c, queryTimeMs: { ...c.queryTimeMs, value: 30 } };
+    return c;
+  }),
+};
 
 describe("listFixes", () => {
   it("is empty when the scenario doesn't break anything at current load", () => {
@@ -40,6 +61,13 @@ describe("listFixes", () => {
     const ids = fixes.map((f) => f.id);
     expect(ids).toContain("svc:instances-1.5x-preventive");
     expect(ids).not.toContain("svc:pool-1.5x-preventive");
+  });
+
+  it("offers a second THUNDERING_HERD fix targeting the downstream database's query time, not the cache", () => {
+    const fixes = listFixes(herdProne, "svc:instance-loss-50");
+    const ids = fixes.map((f) => f.id);
+    expect(ids).toContain("cache:ttl-2x");
+    expect(ids).toContain("cache:refill-query-half");
   });
 });
 
@@ -95,6 +123,22 @@ describe("compareFix", () => {
 
     const svc = result.underFix.components.find((c) => c.componentId === "svc")!;
     expect(svc.utilization).toBeCloseTo(0.6, 5);
+  });
+
+  it("resolves a herd by speeding up the downstream refill query instead of touching the cache", () => {
+    const result = compareFix(herdProne, "svc:instance-loss-50", "cache:refill-query-half");
+    expect(result.underFailure.findings.map((f) => f.code)).toContain("THUNDERING_HERD");
+    expect(result.underFix.findings.map((f) => f.code)).not.toContain("THUNDERING_HERD");
+    expect(result.resolved).toBe(true);
+
+    // Confirms *which* component actually changed: the database's capacity
+    // doubles (30ms -> 15ms query time, 100 conns / 0.015s = 6,666.67 rps),
+    // not the cache's — a fix under a different id touching the cache
+    // instead would leave this figure exactly where it started.
+    const dbBefore = result.underFailure.components.find((c) => c.componentId === "db")!;
+    const dbAfter = result.underFix.components.find((c) => c.componentId === "db")!;
+    expect(dbBefore.capacityRps).toBeCloseTo(3_333.33, 1);
+    expect(dbAfter.capacityRps).toBeCloseTo(6_666.67, 1);
   });
 
   it("throws for a fix that doesn't apply to the scenario's findings", () => {

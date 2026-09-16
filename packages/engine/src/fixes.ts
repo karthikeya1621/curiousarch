@@ -136,6 +136,24 @@ const FIX_CATALOG: Partial<Record<FindingCode, FixFactory>> = {
       tradeoff: "Serves staler data for longer — only safe if your staleness tolerance allows it.",
       apply: (model) => withComponent(model, componentId, (c) => (c.kind === "cache" ? scale(c, "ttlSeconds", 2) : c)),
     },
+    {
+      // Herd damage is duplicatesPerExpiry = (arrival / hotKeys) * refillSeconds,
+      // and refillSeconds is the DOWNSTREAM database's queryTimeMs, not any
+      // field on the cache itself (see herdFindings in solver.ts) — a faster
+      // refill query shrinks the window duplicate requests can pile up in,
+      // independent of TTL. This is the one finding in this catalogue whose
+      // second fix reaches past the component it's attached to.
+      id: `${componentId}:refill-query-half`,
+      label: "Halve the refill query time (optimize the query that repopulates this key)",
+      tradeoff: "Real engineering work on the downstream query, not a cache setting — and it only helps the herd window, not general database load.",
+      apply: (model) => {
+        const downstreamEdge = model.edges.find((e) => e.from === componentId);
+        if (!downstreamEdge) return model;
+        return withComponent(model, downstreamEdge.to, (c) =>
+          c.kind === "database" ? scale(c, "queryTimeMs", 0.5) : c,
+        );
+      },
+    },
   ],
 
   /**

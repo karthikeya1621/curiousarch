@@ -100,11 +100,22 @@ function buildTool(): Anthropic.Tool {
   };
 }
 
+/**
+ * Live latency for this call has been observed ranging ~4s-60s call to call
+ * (same prompt, same model) — the tool schema is non-trivial and generation
+ * length varies with how many components the model decides to emit. 90s
+ * gives real headroom above the worst case seen without leaving a hung
+ * request to run indefinitely on the SDK's own default.
+ */
+const DEFAULT_TIMEOUT_MS = 90_000;
+
 export interface FromProseOptions {
   apiKey?: string;
   model?: string;
   /** Repair attempts after the first call. PLAN-0.2 specifies one. */
   maxRetries?: number;
+  /** Per-request timeout in ms. Defaults to DEFAULT_TIMEOUT_MS. */
+  timeoutMs?: number;
   client?: Anthropic;
 }
 
@@ -127,7 +138,7 @@ export async function fromProse(
     );
   }
 
-  const client = options.client ?? new Anthropic({ apiKey });
+  const client = options.client ?? new Anthropic({ apiKey, timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
   const model = options.model ?? DEFAULT_MODEL;
   const tool = buildTool();
   const maxRetries = options.maxRetries ?? 1;
