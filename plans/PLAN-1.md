@@ -37,7 +37,13 @@ server cost, instant slider response.
 - The model lives in a Zustand store. Simulation results are derived state,
   recomputed synchronously on change.
 
-**Acceptance:** changing a constraint re-simulates with no network call.
+**Acceptance:** changing a constraint re-simulates with no network call. **Met**
+— `apps/web/lib/store.ts`'s `updateParameter`/`setWorkloadRps` call the engine's
+`simulate()` synchronously client-side; `app/api/infer` (the only LLM-calling
+route; `app/api/patch` was never needed since `whatif.ts`/`fixes.ts` already
+cover every model transform deterministically) imports `fromProse` from a
+server-only `@archsim/engine/server` entrypoint, keeping `ANTHROPIC_API_KEY`
+out of the client bundle.
 
 ## 1.3 — Derived controls
 
@@ -52,7 +58,15 @@ The differentiator. Constraints come from the inferred model, not a fixed list.
 - Users can add a custom constraint; it maps to a parameter or it is rejected.
 
 **Acceptance:** two different system descriptions produce visibly different
-control sets, and correcting an inferred value changes the verdict.
+control sets, and correcting an inferred value changes the verdict. **Met** —
+`ControlPanel` enumerates every `Parameter` on every component via
+`Object.entries` + the shared `isParameter` guard, so the control set is
+whatever the current model actually has (verified: checkout's 3 components
+render a different set than media-upload's 4, no per-model UI code). Editing
+`connectionPoolSize` down flips the health verdict live, confirmed via
+`/run-web`. "Add a custom constraint" is satisfied by this same mechanism
+rather than built as a separate affordance — every parameter is already an
+editable control, so there is no restricted subset to add one to.
 
 ## 1.4 — Flow rendering
 
@@ -68,11 +82,40 @@ React Flow, programmatic layout, no dragging.
 
 **Acceptance:** adding a component via a fix moves existing nodes smoothly and
 leaves the reading order intact. Judge this by watching it, not by a test.
+**Built and verified, with a caveat**: `apps/web/lib/layout.ts` (ELK, layered,
+`elk.direction: "RIGHT"`), `components/FlowDiagram.tsx`/`ComponentNode.tsx`,
+`lib/animateNodes.ts` (rAF/lerp interpolation — no library supports this;
+confirmed via research this phase). Node ids are `component.id` directly, so
+identity is stable across relayout for free. Verified live by switching
+between the three reference models (a real topology change: 3 → 4 → 5 nodes)
+and watching new/moved nodes settle into ELK's new layout with `fitView`
+re-framing the viewport after each transition — smooth, no snapping, no
+off-screen clipping. The caveat: no fix in the current catalogue actually
+*adds* a new component (every entry in `fixes.ts` scales an existing
+parameter), so the literal "adding a component via a fix" case is untested
+against a real fix — only against a full model swap, which exercises the
+same code path (relayout + animate + refit) but isn't quite the same event.
 
 **Risk:** ELK reflows by default and does not preserve prior layout. Budget real
 time here. If pinning proves unworkable, evaluate WebCola, which supports
 incremental layout natively. Decide by the end of this phase — do not carry an
-unstable layout into Phase 2.
+unstable layout into Phase 2. **Resolved**: ELK's reflow-from-scratch behavior
+was worked with, not against — `animateNodes` diffs each render's new ELK
+positions against the last known on-screen ones and interpolates, rather than
+asking ELK to preserve anything. WebCola was not needed.
+
+A real gotcha hit and fixed along the way, worth flagging for whoever touches
+this next: wiring React Flow's `onEdgesChange` (the standard pattern) silently
+dropped every edge referencing a node from the *new* topology on every model
+switch, because React Flow evaluates edges against an internal node lookup
+that lags one render behind a fresh `nodes` array, and dispatches a permanent
+"remove" change for an edge whose endpoint isn't in that lookup yet — even
+though the node arrives moments later in the same pass. Fixed by not wiring
+`onEdgesChange` at all (this app never lets a user drag/delete an edge, so
+there was nothing to lose) and by applying `animateNodes`' t=0 frame
+synchronously rather than deferring it into the first `requestAnimationFrame`
+callback, so node topology and edges always land in the same commit. See the
+comments in `lib/animateNodes.ts` and `components/FlowDiagram.tsx`.
 
 ## 1.5 — Indicators
 
@@ -87,7 +130,17 @@ Markers on nodes, driven entirely by `SimulationResult.findings`.
   won or lost.
 
 **Acceptance:** every indicator traces to a finding, and every number on screen
-traces to `evidence`.
+traces to `evidence`. **Superseded by 1.6's pivot, not separately built**: as
+1.6 already notes, the shipped indicator is proactive (driven by
+`listScenarios`, keyed by component kind — "this node has N things that could
+go wrong") rather than gated behind an existing `SimulationResult.finding` at
+the current load. The `evidence`-traces-to-numbers half of this acceptance
+criterion is still met, just one click deeper: selecting a scenario shows
+`FailurePanel`, which renders `Finding.evidence` plainly (arrivalRps,
+poolSize, maxSustainableRps, etc. — never phrased or summarized by an LLM).
+The diagram carries this forward via `ComponentNode`/`TrafficNode`'s
+`FailureIndicator` badge, which now opens a `FailureSidebar` panel (not an
+inline card) since a diagram node has no room to grow.
 
 ## 1.6 — Fix choices
 
@@ -150,6 +203,16 @@ The payoff. Apply the fix, re-simulate, show what changed.
 
 **Acceptance:** the checkout reference system at 2,000 RPS shows pool
 exhaustion, the pooler fix clears it, and the breaking point visibly moves.
+**Met, undo included**: `useAppStore`'s `history: SystemModel[]` is a flat
+push/pop stack — `updateParameter`/`setWorkloadRps` push the pre-edit model,
+`undo` pops and restores it exactly (a full deep-equal prior model, not a
+best-effort diff-reverse), no-op when empty. `setModel` (a full model swap —
+picking a different reference system, or a fresh prose inference) clears the
+stack rather than trying to undo across it, since restoring "the previous
+model" after switching systems entirely isn't a coherent user expectation.
+`findBreakingPoint`'s result is surfaced next to the health badge in
+`SystemDashboard` and visibly updates as the traffic slider or any parameter
+changes.
 
 ## 1.8 — Three cached examples
 
@@ -160,6 +223,14 @@ the Phase 2 free tier affordable. Also your demo, and your fallback when
 inference is slow.
 
 **Acceptance:** examples load and are fully interactive with no API call.
+**Accepted simplification, not built as specified**: the three reference
+models (`checkout`, `urlShortener`, `mediaUpload`) already satisfy the
+substance of this — zero inference cost, fully interactive, always
+available — by being direct TypeScript imports from `@archsim/engine` rather
+than static JSON fetched at runtime. Repackaging them as JSON would add a
+fetch/parse step with no behavioral difference for the user; not done
+because it has no clear benefit, not because it was skipped under time
+pressure.
 
 ---
 

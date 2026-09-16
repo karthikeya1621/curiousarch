@@ -1,13 +1,11 @@
 import { simulate } from "@archsim/engine";
 import type { SystemModel } from "@archsim/engine";
-import { useScenarios, useBreakingPoint } from "../lib/hooks";
-import { scenarioComponentId } from "../lib/scenarioComponentId";
-import { ComponentCard } from "./ComponentCard";
+import { useBreakingPoint } from "../lib/hooks";
+import { FlowDiagram } from "./FlowDiagram";
 import { FindingsList } from "./FindingsList";
 
 export function SystemDashboard({ model }: { model: SystemModel }) {
   const baseline = simulate(model);
-  const scenarios = useScenarios(model); // computed once here, sliced per card below
   const breakingPoint = useBreakingPoint(model);
 
   return (
@@ -39,25 +37,7 @@ export function SystemDashboard({ model }: { model: SystemModel }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <ComponentCard
-          model={model}
-          title="Traffic"
-          subtitle="workload-level"
-          scenarios={scenarios.filter((s) => scenarioComponentId(s) === null)}
-        />
-        {model.components.map((component) => (
-          <ComponentCard
-            key={component.id}
-            model={model}
-            title={component.label}
-            subtitle={`${component.id} · ${component.kind}`}
-            scenarios={scenarios.filter(
-              (s) => scenarioComponentId(s) === component.id,
-            )}
-          />
-        ))}
-      </div>
+      <FlowDiagram model={model} />
     </div>
   );
 }

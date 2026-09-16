@@ -22,18 +22,26 @@ import type { SystemModel } from "@archsim/engine";
  * effect of the edit the user just made. Only setModel/updateParameter/
  * setWorkloadRps/undo/selectScenario/selectFix are exported as mutators —
  * no raw setters a component could call and forget the invariant.
+ *
+ * openComponentId tracks which flow-diagram node's failure list is showing
+ * in the sidebar (FailureSidebar) — it's UI state, not model state, but it
+ * has to be shared between the diagram (where the indicator badges live)
+ * and the sidebar (where the list actually renders), so it lives here like
+ * the other cross-component selection state.
  */
 interface AppState {
   model: SystemModel;
   history: SystemModel[];
   selectedScenarioId: string | null;
   selectedFixId: string | null;
+  openComponentId: string | null;
   setModel: (model: SystemModel) => void;
   updateParameter: (componentId: string, field: string, value: number) => void;
   setWorkloadRps: (rps: number) => void;
   undo: () => void;
   selectScenario: (id: string | null) => void;
   selectFix: (id: string | null) => void;
+  setOpenComponentId: (id: string | null) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -41,9 +49,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   history: [],
   selectedScenarioId: null,
   selectedFixId: null,
+  openComponentId: null,
 
   setModel: (model) =>
-    set({ model, history: [], selectedScenarioId: null, selectedFixId: null }),
+    set({
+      model,
+      history: [],
+      selectedScenarioId: null,
+      selectedFixId: null,
+      openComponentId: null,
+    }),
 
   updateParameter: (componentId, field, value) => {
     const { model, history } = get();
@@ -71,4 +86,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ selectedScenarioId: id, selectedFixId: null }),
 
   selectFix: (id) => set({ selectedFixId: id }),
+
+  setOpenComponentId: (id) => set({ openComponentId: id }),
 }));

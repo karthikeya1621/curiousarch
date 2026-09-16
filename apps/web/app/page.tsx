@@ -4,6 +4,7 @@ import { referenceModels } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { SystemDashboard } from "../components/SystemDashboard";
 import { ControlPanel } from "../components/ControlPanel";
+import { FailureSidebar } from "../components/FailureSidebar";
 import { ProseInput } from "../components/ProseInput";
 
 export default function Home() {
@@ -42,7 +43,10 @@ export default function Home() {
 
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
         <SystemDashboard model={model} />
-        <ControlPanel model={model} />
+        <div className="flex flex-col gap-4">
+          <ControlPanel model={model} />
+          <FailureSidebar model={model} />
+        </div>
       </div>
     </main>
   );
