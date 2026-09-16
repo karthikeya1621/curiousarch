@@ -2,6 +2,11 @@
  * Server-only entrypoint. Pulls in @anthropic-ai/sdk and reads
  * ANTHROPIC_API_KEY — never import this from client code. See index.ts's
  * own note on why fromProse.ts is excluded from the public barrel.
+ *
+ * src/inference/*.ts's own relative imports must use .ts extensions, same
+ * as everything index.ts pulls in — Turbopack bundles this route-handler
+ * entrypoint too (server code isn't exempt from its .js->.ts resolution
+ * failure) even though it never reaches a client bundle.
  */
 
 export { fromProse } from "./inference/fromProse.ts";

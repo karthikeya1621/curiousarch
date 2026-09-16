@@ -4,6 +4,7 @@ import { referenceModels } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { SystemDashboard } from "../components/SystemDashboard";
 import { ControlPanel } from "../components/ControlPanel";
+import { ProseInput } from "../components/ProseInput";
 
 export default function Home() {
   const model = useAppStore((s) => s.model);
@@ -33,6 +34,10 @@ export default function Home() {
             {m.name}
           </button>
         ))}
+      </div>
+
+      <div className="mt-4">
+        <ProseInput />
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">

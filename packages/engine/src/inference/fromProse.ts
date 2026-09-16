@@ -12,9 +12,9 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { ParameterSchema, SystemModelSchema } from "./schema.js";
-import { SYSTEM_PROMPT } from "./prompt.js";
-import type { SystemModel } from "../types.js";
+import { ParameterSchema, SystemModelSchema } from "./schema.ts";
+import { SYSTEM_PROMPT } from "./prompt.ts";
+import type { SystemModel } from "../types.ts";
 
 const TOOL_NAME = "emit_system_model";
 const DEFAULT_MODEL = "claude-sonnet-5";

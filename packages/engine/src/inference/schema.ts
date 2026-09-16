@@ -18,7 +18,7 @@
  */
 
 import { z } from "zod";
-import type { Component, Edge, SystemModel } from "../types.js";
+import type { Component, Edge, SystemModel } from "../types.ts";
 
 const ProvenanceSchema = z.enum(["stated", "inferred", "default"]);
 
