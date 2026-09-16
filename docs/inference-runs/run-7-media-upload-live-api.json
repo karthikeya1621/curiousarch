@@ -1,0 +1,119 @@
+{
+  "id": "media-upload-transcode",
+  "name": "Media Upload and Transcoding Pipeline",
+  "components": [
+    {
+      "id": "gateway",
+      "label": "Upload Gateway",
+      "kind": "gateway",
+      "maxRps": {
+        "rationale": "No explicit admission ceiling stated; set generously above the 50 rps stated arrival rate so the gateway is not the bottleneck given no limit was mentioned.",
+        "provenance": "default",
+        "value": 500,
+        "unit": "rps"
+      }
+    },
+    {
+      "id": "upload-api",
+      "label": "Upload API",
+      "kind": "service",
+      "instances": {
+        "rationale": "Stated directly as 6 instances.",
+        "provenance": "stated",
+        "value": 6,
+        "unit": "instances"
+      },
+      "concurrencyPerInstance": {
+        "rationale": "Not stated; typical default concurrency for a lightweight accept-and-enqueue service handling I/O bound work.",
+        "provenance": "default",
+        "value": 20,
+        "unit": "threads"
+      },
+      "serviceTimeMs": {
+        "rationale": "Upload API just accepts the file and enqueues a job, returning immediately, so service time is small and dominated by receiving the payload plus enqueue call, not full transcoding.",
+        "provenance": "inferred",
+        "value": 15,
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "transcode-queue",
+      "label": "Transcoding Job Queue",
+      "kind": "queue",
+      "capacity": {
+        "rationale": "Not stated; default buffer size typical for a job queue decoupling upload from slow transcoding workers.",
+        "provenance": "default",
+        "value": 1000,
+        "unit": "messages"
+      },
+      "consumers": {
+        "rationale": "Stated directly as 12 worker consumers.",
+        "provenance": "stated",
+        "value": 12,
+        "unit": "consumers"
+      },
+      "consumerServiceTimeMs": {
+        "rationale": "Prose states transcoding is slow and the expensive part of the pipeline; assumed a typical heavy transcode duration per job.",
+        "provenance": "inferred",
+        "value": 8000,
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "postgres",
+      "label": "Postgres Metadata DB",
+      "kind": "database",
+      "connectionPoolSize": {
+        "rationale": "Stated directly as capped at 30 connections.",
+        "provenance": "stated",
+        "value": 30,
+        "unit": "connections"
+      },
+      "queryTimeMs": {
+        "rationale": "Not stated; typical fast write query time for inserting job metadata into Postgres.",
+        "provenance": "default",
+        "value": 10,
+        "unit": "ms"
+      },
+      "writeRatio": {
+        "rationale": "Workers only write metadata after transcoding; nothing reads from this table in the request path, so traffic here is effectively all writes.",
+        "provenance": "inferred",
+        "value": 1,
+        "unit": "ratio"
+      },
+      "readReplicas": {
+        "rationale": "Stated directly that there are no read replicas.",
+        "provenance": "stated",
+        "value": 0,
+        "unit": "replicas"
+      },
+      "replicaApplyRate": {
+        "rationale": "No read replicas exist, so sustained replica apply rate is zero by definition.",
+        "provenance": "stated",
+        "value": 0,
+        "unit": "ops/sec"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "gateway",
+      "to": "upload-api",
+      "callsPerRequest": 1
+    },
+    {
+      "from": "upload-api",
+      "to": "transcode-queue",
+      "callsPerRequest": 1
+    },
+    {
+      "from": "transcode-queue",
+      "to": "postgres",
+      "callsPerRequest": 1
+    }
+  ],
+  "workload": {
+    "rps": 50,
+    "payloadKb": 5120
+  }
+}

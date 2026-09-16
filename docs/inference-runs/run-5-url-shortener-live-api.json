@@ -1,0 +1,124 @@
+{
+  "id": "url-shortener",
+  "name": "URL Shortener Redirect + Create Path",
+  "components": [
+    {
+      "id": "gateway",
+      "label": "Load Balancer",
+      "kind": "gateway",
+      "maxRps": {
+        "rationale": "Prose gives 10,000 rps as current traffic; LB is sized to admit at least that with headroom, no explicit ceiling stated.",
+        "provenance": "inferred",
+        "value": 15000,
+        "unit": "rps"
+      }
+    },
+    {
+      "id": "api",
+      "label": "API Layer",
+      "kind": "service",
+      "instances": {
+        "rationale": "Prose states the API layer currently runs 20 instances.",
+        "provenance": "stated",
+        "value": 20,
+        "unit": "count"
+      },
+      "concurrencyPerInstance": {
+        "rationale": "No concurrency figure given; typical stateless HTTP service handling redirects uses a moderate worker/thread pool per instance.",
+        "provenance": "default",
+        "value": 50,
+        "unit": "count"
+      },
+      "serviceTimeMs": {
+        "rationale": "No timing stated; redirect handling is lightweight (lookup + 302) so a small CPU/IO time is typical.",
+        "provenance": "default",
+        "value": 5,
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "cache",
+      "label": "Redis Cache",
+      "kind": "cache",
+      "hitRate": {
+        "rationale": "Prose says most traffic is for recently shortened links and cache should absorb a good chunk, implying a high but not total hit rate.",
+        "provenance": "inferred",
+        "value": 0.85,
+        "unit": "ratio"
+      },
+      "hitLatencyMs": {
+        "rationale": "No latency stated; typical in-memory Redis GET latency for a cache-aside setup.",
+        "provenance": "default",
+        "value": 1,
+        "unit": "ms"
+      },
+      "ttlSeconds": {
+        "rationale": "Prose states a five-minute TTL on the Redis cache.",
+        "provenance": "stated",
+        "value": 300,
+        "unit": "seconds"
+      },
+      "keyspaceHotSet": {
+        "rationale": "No explicit count given; inferred as moderate since recently-created links dominate traffic within the TTL window at 10k rps.",
+        "provenance": "inferred",
+        "value": 100000,
+        "unit": "count"
+      }
+    },
+    {
+      "id": "db",
+      "label": "Postgres",
+      "kind": "database",
+      "connectionPoolSize": {
+        "rationale": "Prose states the connection pool is capped at 100 connections.",
+        "provenance": "stated",
+        "value": 100,
+        "unit": "count"
+      },
+      "queryTimeMs": {
+        "rationale": "No query time given; typical indexed lookup/insert on Postgres for a simple key-value style schema.",
+        "provenance": "default",
+        "value": 5,
+        "unit": "ms"
+      },
+      "writeRatio": {
+        "rationale": "Prose says creating short links happens rarely compared to redirects, implying a small write share of overall DB traffic.",
+        "provenance": "inferred",
+        "value": 0.05,
+        "unit": "ratio"
+      },
+      "readReplicas": {
+        "rationale": "Prose explicitly states no read replicas are run.",
+        "provenance": "stated",
+        "value": 0,
+        "unit": "count"
+      },
+      "replicaApplyRate": {
+        "rationale": "No replicas exist so there is no sustained replica apply rate to speak of.",
+        "provenance": "stated",
+        "value": 0,
+        "unit": "ops/sec"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "gateway",
+      "to": "api",
+      "callsPerRequest": 1
+    },
+    {
+      "from": "api",
+      "to": "cache",
+      "callsPerRequest": 1
+    },
+    {
+      "from": "cache",
+      "to": "db",
+      "callsPerRequest": 1
+    }
+  ],
+  "workload": {
+    "rps": 10000
+  }
+}

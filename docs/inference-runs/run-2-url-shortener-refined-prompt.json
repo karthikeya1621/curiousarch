@@ -1,0 +1,110 @@
+{
+  "id": "url-shortener",
+  "name": "URL Shortener Capacity Model",
+  "workload": { "rps": 10000 },
+  "components": [
+    {
+      "id": "gateway",
+      "label": "Load Balancer / API Gateway",
+      "kind": "gateway",
+      "maxRps": {
+        "rationale": "Prose describes a load balancer in front of the API but gives no specific admission ceiling, so use a large typical gateway limit well above the current 10k rps.",
+        "provenance": "default",
+        "value": 50000,
+        "unit": "rps"
+      }
+    },
+    {
+      "id": "api",
+      "label": "API Layer",
+      "kind": "service",
+      "instances": {
+        "rationale": "Prose states the API layer currently runs 20 instances behind the load balancer.",
+        "provenance": "stated",
+        "value": 20,
+        "unit": "instances"
+      },
+      "concurrencyPerInstance": {
+        "rationale": "No concurrency figure given; typical concurrency for a stateless, I/O-bound redirect/lookup service instance.",
+        "provenance": "default",
+        "value": 50,
+        "unit": "concurrent requests"
+      },
+      "serviceTimeMs": {
+        "rationale": "No timing given; redirect and short-link-creation handling logic itself (excluding cache/DB wait) is lightweight.",
+        "provenance": "default",
+        "value": 2,
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "redis",
+      "label": "Redis Cache",
+      "kind": "cache",
+      "hitRate": {
+        "rationale": "Prose says most traffic is for recently-shortened links and the cache 'should absorb a good chunk' of it, implying a high but not extreme hit rate.",
+        "provenance": "inferred",
+        "value": 0.85,
+        "unit": "ratio"
+      },
+      "hitLatencyMs": {
+        "rationale": "No latency given; typical in-memory Redis GET latency.",
+        "provenance": "default",
+        "value": 1,
+        "unit": "ms"
+      },
+      "ttlSeconds": {
+        "rationale": "Prose states the Redis cache uses a five-minute TTL.",
+        "provenance": "stated",
+        "value": 300,
+        "unit": "seconds"
+      },
+      "keyspaceHotSet": {
+        "rationale": "No hot-key count given; typical distinct-key working set for a recently-shortened-links cache at this traffic level.",
+        "provenance": "default",
+        "value": 100000,
+        "unit": "keys"
+      }
+    },
+    {
+      "id": "postgres",
+      "label": "Postgres Database",
+      "kind": "database",
+      "connectionPoolSize": {
+        "rationale": "Prose states the Postgres connection pool is capped at 100 connections.",
+        "provenance": "stated",
+        "value": 100,
+        "unit": "connections"
+      },
+      "queryTimeMs": {
+        "rationale": "No query timing given; typical mean latency for indexed lookup/insert queries on Postgres.",
+        "provenance": "default",
+        "value": 5,
+        "unit": "ms"
+      },
+      "writeRatio": {
+        "rationale": "Prose says creating new short links happens rarely compared to the vast majority of redirect (read) traffic, so writes are a small share.",
+        "provenance": "inferred",
+        "value": 0.02,
+        "unit": "ratio"
+      },
+      "readReplicas": {
+        "rationale": "Prose explicitly states no read replicas are run.",
+        "provenance": "stated",
+        "value": 0,
+        "unit": "replicas"
+      },
+      "replicaApplyRate": {
+        "rationale": "With zero read replicas stated, there is no replica apply throughput to speak of.",
+        "provenance": "inferred",
+        "value": 0,
+        "unit": "ops/sec"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "gateway", "to": "api", "callsPerRequest": 1 },
+    { "from": "api", "to": "redis", "callsPerRequest": 1 },
+    { "from": "redis", "to": "postgres", "callsPerRequest": 1 }
+  ]
+}

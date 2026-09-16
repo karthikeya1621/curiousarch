@@ -1,0 +1,80 @@
+{
+  "id": "checkout-order-placement",
+  "name": "Checkout / Order Placement Service",
+  "workload": { "rps": 500 },
+  "components": [
+    {
+      "id": "gateway-1",
+      "label": "API Gateway",
+      "kind": "gateway",
+      "maxRps": {
+        "rationale": "Prose gives no specific admission ceiling, so use a large typical API gateway/load-balancer limit well above current 500 rps.",
+        "provenance": "default",
+        "value": 20000,
+        "unit": "rps"
+      }
+    },
+    {
+      "id": "order-service",
+      "label": "Order Service",
+      "kind": "service",
+      "instances": {
+        "rationale": "Prose states requests go through 8 instances of the order service.",
+        "provenance": "stated",
+        "value": 8,
+        "unit": "instances"
+      },
+      "concurrencyPerInstance": {
+        "rationale": "No concurrency limit given, so use a typical per-instance worker/thread concurrency for a stateless synchronous service.",
+        "provenance": "default",
+        "value": 20,
+        "unit": "concurrent requests"
+      },
+      "serviceTimeMs": {
+        "rationale": "Includes order validation plus the synchronous call out to the payment provider, which counts as service time since the request isn't done until that call returns; no explicit latency given so a typical combined validation + third-party payment round-trip is used.",
+        "provenance": "default",
+        "value": 150,
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "postgres-db",
+      "label": "Postgres (primary)",
+      "kind": "database",
+      "connectionPoolSize": {
+        "rationale": "Prose states Postgres connections are unpooled by an external pooler and capped at 40 connections.",
+        "provenance": "stated",
+        "value": 40,
+        "unit": "connections"
+      },
+      "queryTimeMs": {
+        "rationale": "No query latency given, so use a typical Postgres write-query execution time.",
+        "provenance": "default",
+        "value": 8,
+        "unit": "ms"
+      },
+      "writeRatio": {
+        "rationale": "Prose states almost all traffic is writes (placing new orders), not reads, so writeRatio is near 1.",
+        "provenance": "inferred",
+        "value": 0.95,
+        "unit": "ratio"
+      },
+      "readReplicas": {
+        "rationale": "Prose states two read replicas run off the primary.",
+        "provenance": "stated",
+        "value": 2,
+        "unit": "replicas"
+      },
+      "replicaApplyRate": {
+        "rationale": "No sustained replica apply throughput given, so use a typical value for a write-heavy Postgres streaming replica.",
+        "provenance": "default",
+        "value": 2000,
+        "unit": "ops/sec"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "gateway-1", "to": "order-service", "callsPerRequest": 1 },
+    { "from": "order-service", "to": "postgres-db", "callsPerRequest": 1 }
+  ]
+}

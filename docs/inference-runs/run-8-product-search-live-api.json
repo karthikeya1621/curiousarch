@@ -1,0 +1,131 @@
+{
+  "id": "product-search-api",
+  "name": "Product Search API Capacity Model",
+  "components": [
+    {
+      "id": "gateway",
+      "label": "API Gateway",
+      "kind": "gateway",
+      "maxRps": {
+        "rationale": "No explicit gateway limit stated; set slightly above normal traffic to reflect an admission ceiling that isn't the bottleneck.",
+        "provenance": "inferred",
+        "value": 4500,
+        "unit": "rps"
+      }
+    },
+    {
+      "id": "search-service",
+      "label": "Search Service",
+      "kind": "service",
+      "instances": {
+        "rationale": "Prose states 15 instances of the search service.",
+        "provenance": "stated",
+        "value": 15,
+        "unit": "instances"
+      },
+      "concurrencyPerInstance": {
+        "rationale": "No concurrency figure given; assume a typical thread/worker pool size for a JVM/Node-style search service handling I/O-bound calls to Elasticsearch.",
+        "provenance": "default",
+        "value": 20,
+        "unit": "threads"
+      },
+      "serviceTimeMs": {
+        "rationale": "No explicit CPU time given for parsing/ranking; assume a modest value typical of query parsing plus result ranking excluding the Elasticsearch call itself.",
+        "provenance": "default",
+        "value": 15,
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "search-cache",
+      "label": "Search Result Cache",
+      "kind": "cache",
+      "hitRate": {
+        "rationale": "Prose says hit rates are much lower than typical because search queries are diverse; assume a low hit rate reflecting long-tail query diversity.",
+        "provenance": "inferred",
+        "value": 0.15,
+        "unit": "ratio"
+      },
+      "hitLatencyMs": {
+        "rationale": "No latency stated; typical round-trip for a remote in-memory cache used in front of a search cluster.",
+        "provenance": "default",
+        "value": 2,
+        "unit": "ms"
+      },
+      "cpuTimeMs": {
+        "rationale": "Typical in-memory cache server processing time per operation, orders of magnitude below round-trip latency.",
+        "provenance": "default",
+        "value": 0.1,
+        "unit": "ms"
+      },
+      "ttlSeconds": {
+        "rationale": "Prose states search results are cached for 30 seconds.",
+        "provenance": "stated",
+        "value": 30,
+        "unit": "seconds"
+      },
+      "keyspaceHotSet": {
+        "rationale": "Diverse, long-tail search queries imply a large distinct key space rather than a small hot set, consistent with the low hit rate described.",
+        "provenance": "inferred",
+        "value": 500000,
+        "unit": "keys"
+      }
+    },
+    {
+      "id": "elasticsearch",
+      "label": "Elasticsearch Cluster",
+      "kind": "database",
+      "connectionPoolSize": {
+        "rationale": "Prose states a client-side connection pool of 50 connections to Elasticsearch.",
+        "provenance": "stated",
+        "value": 50,
+        "unit": "connections"
+      },
+      "queryTimeMs": {
+        "rationale": "No explicit query time given; assume a typical full-text search query latency for Elasticsearch under normal load.",
+        "provenance": "default",
+        "value": 40,
+        "unit": "ms"
+      },
+      "writeRatio": {
+        "rationale": "Prose states indexing happens on a completely separate pipeline that doesn't touch this read path, so this path is effectively all reads.",
+        "provenance": "stated",
+        "value": 0,
+        "unit": "ratio"
+      },
+      "readReplicas": {
+        "rationale": "Prose explicitly states no Elasticsearch replicas are run for search traffic.",
+        "provenance": "stated",
+        "value": 0,
+        "unit": "replicas"
+      },
+      "replicaApplyRate": {
+        "rationale": "No replicas exist for this read path, so replica apply rate is zero.",
+        "provenance": "stated",
+        "value": 0,
+        "unit": "ops/sec"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "gateway",
+      "to": "search-service",
+      "callsPerRequest": 1
+    },
+    {
+      "from": "search-service",
+      "to": "search-cache",
+      "callsPerRequest": 1
+    },
+    {
+      "from": "search-cache",
+      "to": "elasticsearch",
+      "callsPerRequest": 0.85
+    }
+  ],
+  "workload": {
+    "rps": 3000,
+    "payloadKb": 2
+  }
+}

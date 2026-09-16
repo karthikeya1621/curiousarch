@@ -1,0 +1,106 @@
+/**
+ * What-if scenarios: relative perturbations to a model, diffed against its
+ * own baseline via the same `simulate()` the golden tests hold to a
+ * hand-derived standard. Expected values here are computed on paper from
+ * the reference models' own stated numbers, not captured from a run.
+ */
+
+import { describe, expect, it } from "vitest";
+import { listScenarios, applyScenario, compareScenario } from "../src/whatif.js";
+import { checkout, urlShortener, mediaUpload } from "../models/reference.js";
+
+describe("listScenarios", () => {
+  it("generates one scenario set per component kind present", () => {
+    const ids = listScenarios(checkout).map((s) => s.id);
+    // checkout: gateway (none), service, database — no cache, no queue.
+    expect(ids).toContain("svc:instance-loss-50");
+    expect(ids).toContain("svc:latency-spike-2x");
+    expect(ids).toContain("db:query-latency-2x");
+    expect(ids).toContain("db:pool-shrink-50");
+    expect(ids).toContain("db:write-spike-2x");
+    expect(ids.some((id) => id.startsWith("gw:"))).toBe(false);
+    expect(ids.some((id) => id.includes("cache") || id.includes("consumer"))).toBe(false);
+  });
+
+  it("includes traffic scenarios scaled to the model's own workload", () => {
+    const scenarios = listScenarios(checkout);
+    const tenX = scenarios.find((s) => s.id === "workload:traffic-10x")!;
+    expect(tenX.label).toContain("5,000 rps"); // 500 * 10
+  });
+
+  it("offers cache-specific scenarios only for models with a cache", () => {
+    expect(listScenarios(urlShortener).map((s) => s.id)).toContain("cache:cold");
+    expect(listScenarios(checkout).map((s) => s.id)).not.toContain("cache:cold");
+  });
+
+  it("offers queue-specific scenarios only for models with a queue", () => {
+    expect(listScenarios(mediaUpload).map((s) => s.id)).toContain("queue:consumer-loss-50");
+    expect(listScenarios(checkout).map((s) => s.id)).not.toContain("queue:consumer-loss-50");
+  });
+});
+
+describe("applyScenario", () => {
+  it("halves instances without mutating the original model", () => {
+    const patched = applyScenario(checkout, "svc:instance-loss-50");
+    const svc = patched.components.find((c) => c.id === "svc");
+    if (svc?.kind !== "service") throw new Error("expected service");
+    expect(svc.instances.value).toBe(4); // 8 / 2
+
+    const originalSvc = checkout.components.find((c) => c.id === "svc");
+    if (originalSvc?.kind !== "service") throw new Error("expected service");
+    expect(originalSvc.instances.value).toBe(8); // unchanged
+  });
+
+  it("doubles query time for a database scenario", () => {
+    const patched = applyScenario(checkout, "db:query-latency-2x");
+    const db = patched.components.find((c) => c.id === "db");
+    if (db?.kind !== "database") throw new Error("expected database");
+    expect(db.queryTimeMs.value).toBe(50); // 25 * 2
+  });
+
+  it("throws on an unknown scenario id", () => {
+    expect(() => applyScenario(checkout, "nope")).toThrow(/unknown scenario/i);
+  });
+
+  it("rejects a scenario that doesn't apply to this model's components", () => {
+    // checkout has no cache; a cache scenario id must not resolve against it.
+    expect(() => applyScenario(checkout, "cache:cold")).toThrow(/unknown scenario/i);
+  });
+});
+
+describe("compareScenario", () => {
+  it("flags a scenario that breaks a previously healthy system", () => {
+    // Checkout at its stated 500 rps is healthy; 10x traffic (5,000 rps)
+    // is far past its 1,600 rps pool-bound capacity.
+    const delta = compareScenario(checkout, "workload:traffic-10x");
+    expect(delta.baseline.healthy).toBe(true);
+    expect(delta.newlyUnhealthy).toBe(true);
+    expect(delta.underScenario.healthy).toBe(false);
+    expect(delta.newFindingCodes).toContain("CONNECTION_POOL_EXHAUSTED");
+  });
+
+  it("reports no new findings when a scenario doesn't move the needle", () => {
+    // Checkout has ~3.2x headroom (1,600 / 500) before the pool exhausts;
+    // halving connectionPoolSize (40 -> 20, capacity -> 800 rps) still
+    // leaves headroom over the stated 500 rps load.
+    const delta = compareScenario(checkout, "db:pool-shrink-50");
+    expect(delta.baseline.healthy).toBe(true);
+    expect(delta.underScenario.healthy).toBe(true);
+    expect(delta.newlyUnhealthy).toBe(false);
+  });
+
+  it("computes the latency delta end to end", () => {
+    // Doubling the order service's serviceTimeMs (40ms -> 80ms) at a load
+    // nowhere near its own capacity should show up directly in mean latency,
+    // roughly as an extra ~40ms end to end (service is on the critical path).
+    const delta = compareScenario(checkout, "svc:latency-spike-2x");
+    expect(delta.endToEndMeanDeltaMs).toBeGreaterThan(30);
+    expect(delta.endToEndMeanDeltaMs).toBeLessThan(50);
+  });
+
+  it("leaves the original model and its baseline result untouched", () => {
+    const before = JSON.stringify(checkout);
+    compareScenario(checkout, "workload:traffic-10x");
+    expect(JSON.stringify(checkout)).toBe(before);
+  });
+});

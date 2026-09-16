@@ -1,0 +1,104 @@
+{
+  "id": "media-upload-transcode",
+  "name": "Media Upload & Transcoding Pipeline",
+  "workload": { "rps": 50 },
+  "components": [
+    {
+      "id": "gateway",
+      "label": "API Gateway",
+      "kind": "gateway",
+      "maxRps": {
+        "rationale": "Prose gives no explicit admission ceiling and current traffic (50 rps) is well below typical gateway limits, so use a large typical default rather than a value near current load.",
+        "provenance": "default",
+        "value": 20000,
+        "unit": "rps"
+      }
+    },
+    {
+      "id": "uploadApi",
+      "label": "Upload API",
+      "kind": "service",
+      "instances": {
+        "rationale": "Prose states the upload API runs on 6 instances.",
+        "provenance": "stated",
+        "value": 6,
+        "unit": "instances"
+      },
+      "concurrencyPerInstance": {
+        "rationale": "No concurrency figure given; a typical stateless API instance handling quick accept-and-enqueue requests supports tens of concurrent requests per instance.",
+        "provenance": "default",
+        "value": 50,
+        "unit": "concurrent requests"
+      },
+      "serviceTimeMs": {
+        "rationale": "The API only accepts the file and enqueues a job before returning, explicitly not waiting for transcoding, so service time covers just the accept+enqueue overhead, not the transcode itself.",
+        "provenance": "inferred",
+        "value": 20,
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "transcodeQueue",
+      "label": "Transcoding Job Queue",
+      "kind": "queue",
+      "capacity": {
+        "rationale": "No queue depth stated; using a typical default buffer size for a job queue decoupling bursty uploads from slower workers.",
+        "provenance": "default",
+        "value": 10000,
+        "unit": "messages"
+      },
+      "consumers": {
+        "rationale": "Prose states there are 12 worker consumers pulling jobs off the queue.",
+        "provenance": "stated",
+        "value": 12,
+        "unit": "consumers"
+      },
+      "consumerServiceTimeMs": {
+        "rationale": "Prose emphasizes transcoding is slow and the expensive part of the pipeline but gives no number; a typical media transcode job takes on the order of several seconds to tens of seconds of CPU-bound work.",
+        "provenance": "default",
+        "value": 15000,
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "postgres",
+      "label": "Postgres (job metadata)",
+      "kind": "database",
+      "connectionPoolSize": {
+        "rationale": "Prose states the Postgres pool is capped at 30 connections.",
+        "provenance": "stated",
+        "value": 30,
+        "unit": "connections"
+      },
+      "queryTimeMs": {
+        "rationale": "No query latency stated; a simple metadata insert after transcoding is typically fast.",
+        "provenance": "default",
+        "value": 5,
+        "unit": "ms"
+      },
+      "writeRatio": {
+        "rationale": "Prose states workers only write job metadata and nothing else reads from that table in the request path, so all traffic to this database is writes.",
+        "provenance": "inferred",
+        "value": 1.0,
+        "unit": "ratio"
+      },
+      "readReplicas": {
+        "rationale": "Prose explicitly states there are no read replicas.",
+        "provenance": "stated",
+        "value": 0,
+        "unit": "replicas"
+      },
+      "replicaApplyRate": {
+        "rationale": "With zero read replicas, there is no replica apply throughput to speak of.",
+        "provenance": "inferred",
+        "value": 0,
+        "unit": "ops/sec"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "gateway", "to": "uploadApi", "callsPerRequest": 1 },
+    { "from": "uploadApi", "to": "transcodeQueue", "callsPerRequest": 1 },
+    { "from": "transcodeQueue", "to": "postgres", "callsPerRequest": 1 }
+  ]
+}

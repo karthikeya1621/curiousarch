@@ -1,0 +1,119 @@
+{
+  "id": "checkout-order-placement",
+  "name": "Checkout / Order Placement Service",
+  "components": [
+    {
+      "id": "gateway",
+      "label": "Checkout Entry Gateway",
+      "kind": "gateway",
+      "maxRps": {
+        "rationale": "No explicit gateway limit stated; set slightly above current 500 rps load to reflect a typical headroom ceiling rather than an exact stated cap.",
+        "provenance": "inferred",
+        "value": 750,
+        "unit": "rps"
+      }
+    },
+    {
+      "id": "order-service",
+      "label": "Order Service",
+      "kind": "service",
+      "instances": {
+        "rationale": "Prose states requests go through 8 instances of the order service.",
+        "provenance": "stated",
+        "value": 8,
+        "unit": "instances"
+      },
+      "concurrencyPerInstance": {
+        "rationale": "No concurrency figure given; assume a typical moderate per-instance concurrency for a service doing synchronous downstream calls (payment + DB write).",
+        "provenance": "default",
+        "value": 20,
+        "unit": "threads"
+      },
+      "serviceTimeMs": {
+        "rationale": "No explicit CPU/IO time given for validation logic itself (excluding downstream calls); assume a typical lightweight validation time.",
+        "provenance": "default",
+        "value": 15,
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "payment-provider",
+      "label": "External Payment Provider",
+      "kind": "service",
+      "instances": {
+        "rationale": "Modeled as a single logical external dependency since it's a third-party synchronous call, not a horizontally-scaled internal service we control.",
+        "provenance": "inferred",
+        "value": 1,
+        "unit": "instances"
+      },
+      "concurrencyPerInstance": {
+        "rationale": "External payment providers typically cap concurrent in-flight calls per client; assume a typical moderate limit since none was stated.",
+        "provenance": "default",
+        "value": 50,
+        "unit": "connections"
+      },
+      "serviceTimeMs": {
+        "rationale": "No latency given for the payment provider call; assume a typical external payment gateway round-trip time.",
+        "provenance": "default",
+        "value": 120,
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "postgres",
+      "label": "Postgres Primary",
+      "kind": "database",
+      "connectionPoolSize": {
+        "rationale": "Prose states Postgres connections are unpooled and capped at 40 connections.",
+        "provenance": "stated",
+        "value": 40,
+        "unit": "connections"
+      },
+      "queryTimeMs": {
+        "rationale": "No query time stated; assume a typical write query latency for an order insert on Postgres.",
+        "provenance": "default",
+        "value": 10,
+        "unit": "ms"
+      },
+      "writeRatio": {
+        "rationale": "Prose states almost all traffic is writes (placing new orders), not reads.",
+        "provenance": "stated",
+        "value": 0.95,
+        "unit": "ratio"
+      },
+      "readReplicas": {
+        "rationale": "Prose states two read replicas run off the primary.",
+        "provenance": "stated",
+        "value": 2,
+        "unit": "replicas"
+      },
+      "replicaApplyRate": {
+        "rationale": "No sustained replica apply rate given; assume a typical value sufficient to keep pace with a write-heavy 500 rps workload without stated evidence of lag.",
+        "provenance": "default",
+        "value": 600,
+        "unit": "ops/sec"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "gateway",
+      "to": "order-service",
+      "callsPerRequest": 1
+    },
+    {
+      "from": "order-service",
+      "to": "payment-provider",
+      "callsPerRequest": 1
+    },
+    {
+      "from": "order-service",
+      "to": "postgres",
+      "callsPerRequest": 1
+    }
+  ],
+  "workload": {
+    "rps": 500,
+    "payloadKb": 2
+  }
+}
