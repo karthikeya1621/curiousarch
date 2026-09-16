@@ -1,22 +1,42 @@
 "use client";
 
-import { useMemo } from "react";
-import { simulate, checkout } from "@archsim/engine";
+import { referenceModels } from "@archsim/engine";
+import { useAppStore } from "../lib/store";
+import { SystemDashboard } from "../components/SystemDashboard";
 
-/**
- * PLAN-1.2 acceptance: simulate() runs in the browser, zero network call.
- * Unstyled JSON dump on purpose — no UI polish is this slice's job, just
- * proving the engine executes client-side. Open devtools Network tab: no
- * request fires for this computation.
- */
 export default function Home() {
-  const result = useMemo(() => simulate(checkout), []);
+  const model = useAppStore((s) => s.model);
+  const setModel = useAppStore((s) => s.setModel);
 
   return (
-    <main style={{ padding: "2rem", fontFamily: "monospace" }}>
-      <h1>{checkout.name}</h1>
-      <p>Computed client-side by simulate() — no network call.</p>
-      <pre>{JSON.stringify(result, null, 2)}</pre>
+    <main className="mx-auto max-w-5xl px-4 py-8">
+      <h1 className="text-2xl font-bold">archsim</h1>
+      <p className="mt-1 text-sm text-gray-600">
+        Every node with a possible failure carries an indicator. Click one,
+        pick a failure, see its impact, pick a fix, see whether it actually
+        resolved it.
+      </p>
+
+      <div className="mt-4 flex gap-2">
+        {referenceModels.map((m) => (
+          <button
+            key={m.id}
+            onClick={() => setModel(m)}
+            className={
+              "rounded-full px-3 py-1 text-sm font-medium transition-colors " +
+              (model.id === m.id
+                ? "bg-gray-900 text-white"
+                : "bg-gray-100 text-gray-700 hover:bg-gray-200")
+            }
+          >
+            {m.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-6">
+        <SystemDashboard model={model} />
+      </div>
     </main>
   );
 }
