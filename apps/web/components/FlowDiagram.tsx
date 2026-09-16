@@ -86,7 +86,10 @@ function FlowDiagramInner({ model }: { model: SystemModel }) {
   }, [model, scenariosByNode, setNodes, setEdges, fitView]);
 
   return (
-    <div style={{ height: 440 }} className="rounded-lg border border-gray-200 bg-white">
+    <div
+      style={{ height: 440 }}
+      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -94,7 +97,7 @@ function FlowDiagramInner({ model }: { model: SystemModel }) {
         nodeTypes={nodeTypes}
         proOptions={{ hideAttribution: true }}
       >
-        <Background />
+        <Background color="#cbd5e1" gap={20} size={1} />
       </ReactFlow>
     </div>
   );

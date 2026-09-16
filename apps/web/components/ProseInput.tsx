@@ -3,6 +3,8 @@
 import { useState } from "react";
 import type { SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
+import { Card } from "./Card";
+import { SparklesIcon } from "./icons";
 
 export function ProseInput() {
   const setModel = useAppStore((s) => s.setModel);
@@ -31,8 +33,12 @@ export function ProseInput() {
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <label htmlFor="prose-description" className="text-sm font-semibold">
+    <Card padding="sm">
+      <label
+        htmlFor="prose-description"
+        className="flex items-center gap-1.5 text-sm font-semibold text-slate-900"
+      >
+        <SparklesIcon className="h-4 w-4 text-slate-400" />
         Describe your own system
       </label>
       <textarea
@@ -41,18 +47,18 @@ export function ProseInput() {
         onChange={(e) => setDescription(e.target.value)}
         rows={3}
         placeholder="e.g. A checkout API backed by a Postgres database with a connection pool of 20 and a 25ms average query time..."
-        className="mt-2 w-full rounded border border-gray-300 p-2 text-sm"
+        className="mt-2.5 w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none"
       />
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-3 flex items-center gap-3">
         <button
           onClick={submit}
           disabled={loading || !description.trim()}
-          className="rounded bg-gray-900 px-3 py-1.5 text-sm font-medium text-white enabled:hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-lg bg-slate-900 px-3.5 py-1.5 text-sm font-medium text-white transition-colors enabled:hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
         >
           {loading ? "Inferring…" : "Build model"}
         </button>
-        {error && <span className="text-xs text-red-600">{error}</span>}
+        {error && <span className="text-xs text-rose-600">{error}</span>}
       </div>
-    </div>
+    </Card>
   );
 }

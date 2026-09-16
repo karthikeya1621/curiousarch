@@ -2,11 +2,14 @@ import { isParameter } from "@archsim/engine";
 import type { Component, Parameter, SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { useBreakingPoint } from "../lib/hooks";
+import { Card } from "./Card";
+import { Badge, type BadgeTone } from "./Badge";
+import { UndoIcon } from "./icons";
 
-const PROVENANCE_STYLE: Record<Parameter["provenance"], string> = {
-  stated: "bg-blue-100 text-blue-800",
-  inferred: "bg-purple-100 text-purple-800",
-  default: "bg-gray-100 text-gray-600",
+const PROVENANCE_TONE: Record<Parameter["provenance"], BadgeTone> = {
+  stated: "info",
+  inferred: "violet",
+  default: "neutral",
 };
 
 function ParameterRow({
@@ -21,19 +24,15 @@ function ParameterRow({
   const updateParameter = useAppStore((s) => s.updateParameter);
 
   return (
-    <div className="flex items-center justify-between gap-2 py-1">
+    <div className="flex items-center justify-between gap-3 py-2">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <span className="truncate text-xs font-medium text-gray-700">{field}</span>
-          <span
-            className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${PROVENANCE_STYLE[param.provenance]}`}
-          >
-            {param.provenance}
-          </span>
+          <span className="truncate text-xs font-medium text-slate-700">{field}</span>
+          <Badge tone={PROVENANCE_TONE[param.provenance]}>{param.provenance}</Badge>
         </div>
-        <p className="truncate text-[11px] text-gray-500">{param.rationale}</p>
+        <p className="truncate text-[11px] text-slate-400">{param.rationale}</p>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1.5">
         <input
           type="number"
           value={param.value}
@@ -41,9 +40,9 @@ function ParameterRow({
             const value = Number(e.target.value);
             if (Number.isFinite(value)) updateParameter(componentId, field, value);
           }}
-          className="w-20 rounded border border-gray-300 px-1.5 py-0.5 text-right text-sm"
+          className="w-20 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-right text-sm text-slate-900 focus:border-slate-400 focus:bg-white focus:outline-none"
         />
-        <span className="text-xs text-gray-500">{param.unit}</span>
+        <span className="w-10 shrink-0 text-xs text-slate-400">{param.unit}</span>
       </div>
     </div>
   );
@@ -65,22 +64,23 @@ export function ControlPanel({ model }: { model: SystemModel }) {
   const sliderMax = breakingPoint ? breakingPoint.rps * 2 : model.workload.rps * 4;
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
+    <Card padding="sm" className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Controls</h3>
+        <h3 className="text-sm font-semibold text-slate-900">Controls</h3>
         <button
           onClick={undo}
           disabled={history.length === 0}
-          className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 enabled:hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition-colors enabled:hover:border-slate-300 enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
         >
+          <UndoIcon className="h-3.5 w-3.5" />
           Undo
         </button>
       </div>
 
-      <div>
-        <div className="flex items-center justify-between text-xs text-gray-700">
+      <div className="border-b border-slate-100 pb-3 pt-2">
+        <div className="flex items-center justify-between text-xs text-slate-700">
           <span className="font-medium">Traffic</span>
-          <span>{model.workload.rps.toLocaleString()} rps</span>
+          <span className="font-mono">{model.workload.rps.toLocaleString()} rps</span>
         </div>
         <input
           type="range"
@@ -88,25 +88,26 @@ export function ControlPanel({ model }: { model: SystemModel }) {
           max={Math.max(sliderMax, 1)}
           value={model.workload.rps}
           onChange={(e) => setWorkloadRps(Number(e.target.value))}
-          className="mt-1 w-full"
+          className="mt-2 w-full accent-slate-900"
         />
-        <p className="mt-0.5 text-[11px] text-gray-500">
+        <p className="mt-1 text-[11px] text-slate-400">
           {breakingPoint
             ? `Breaks around ${breakingPoint.rps.toLocaleString()} rps`
             : "No breaking point found below the simulator's ceiling"}
         </p>
       </div>
 
-      <div className="flex flex-col divide-y divide-gray-100 border-t border-gray-100 pt-1">
+      <div className="flex flex-col divide-y divide-slate-100">
         {model.components.map((component) => {
           const params = componentParameters(component);
           if (params.length === 0) return null;
           return (
-            <div key={component.id} className="py-2">
-              <p className="text-xs font-semibold text-gray-800">
-                {component.label} <span className="text-gray-400">· {component.id}</span>
+            <div key={component.id} className="py-1">
+              <p className="pt-2 text-xs font-semibold text-slate-800">
+                {component.label}{" "}
+                <span className="font-normal text-slate-400">· {component.id}</span>
               </p>
-              <div className="mt-1 flex flex-col divide-y divide-gray-50">
+              <div className="flex flex-col divide-y divide-slate-50">
                 {params.map(([field, param]) => (
                   <ParameterRow
                     key={field}
@@ -120,6 +121,6 @@ export function ControlPanel({ model }: { model: SystemModel }) {
           );
         })}
       </div>
-    </div>
+    </Card>
   );
 }

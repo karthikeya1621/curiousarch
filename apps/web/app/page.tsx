@@ -6,30 +6,40 @@ import { SystemDashboard } from "../components/SystemDashboard";
 import { ControlPanel } from "../components/ControlPanel";
 import { FailureSidebar } from "../components/FailureSidebar";
 import { ProseInput } from "../components/ProseInput";
+import { ActivityIcon } from "../components/icons";
 
 export default function Home() {
   const model = useAppStore((s) => s.model);
   const setModel = useAppStore((s) => s.setModel);
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <h1 className="text-2xl font-bold">archsim</h1>
-      <p className="mt-1 text-sm text-gray-600">
-        Every node with a possible failure carries an indicator. Click one,
-        pick a failure, see its impact, pick a fix, see whether it actually
-        resolved it.
-      </p>
+    <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+      <header className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
+          <ActivityIcon className="h-5 w-5" />
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900">
+            archsim
+          </h1>
+          <p className="mt-0.5 max-w-2xl text-sm text-slate-500">
+            Every node with a possible failure carries an indicator. Click
+            one, pick a failure, see its impact, pick a fix, see whether it
+            actually resolved it.
+          </p>
+        </div>
+      </header>
 
-      <div className="mt-4 flex gap-2">
+      <div className="mt-6 inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
         {referenceModels.map((m) => (
           <button
             key={m.id}
             onClick={() => setModel(m)}
             className={
-              "rounded-full px-3 py-1 text-sm font-medium transition-colors " +
+              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors " +
               (model.id === m.id
-                ? "bg-gray-900 text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200")
+                ? "bg-slate-900 text-white"
+                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900")
             }
           >
             {m.name}
@@ -41,9 +51,9 @@ export default function Home() {
         <ProseInput />
       </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
+      <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-[1fr_340px]">
         <SystemDashboard model={model} />
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-5">
           <ControlPanel model={model} />
           <FailureSidebar model={model} />
         </div>

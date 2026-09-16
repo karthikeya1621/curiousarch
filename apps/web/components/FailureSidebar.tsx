@@ -6,6 +6,8 @@ import { useScenarios } from "../lib/hooks";
 import { scenarioComponentId } from "../lib/scenarioComponentId";
 import { TRAFFIC_NODE_ID } from "../lib/layout";
 import { FailurePanel } from "./FailurePanel";
+import { Card } from "./Card";
+import { XIcon, AlertTriangleIcon } from "./icons";
 
 /**
  * Lives in the sidebar next to ControlPanel, not inside FlowDiagram — a
@@ -26,16 +28,17 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
 
   if (activeScenario) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <Card padding="sm">
         <FailurePanel model={model} scenarioId={activeScenario.id} />
-      </div>
+      </Card>
     );
   }
 
   if (!openComponentId) {
     return (
-      <div className="rounded-lg border border-dashed border-gray-300 bg-white p-4 text-xs text-gray-500">
-        Click a node&apos;s failure-count badge to see what could go wrong there.
+      <div className="flex items-start gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-xs text-slate-500">
+        <AlertTriangleIcon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+        <span>Click a node&apos;s failure-count badge to see what could go wrong there.</span>
       </div>
     );
   }
@@ -45,14 +48,14 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
   );
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <p className="text-sm font-semibold">Possible failures</p>
+    <Card padding="sm">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-semibold text-slate-900">Possible failures</p>
         <button
           onClick={() => setOpenComponentId(null)}
-          className="text-xs text-gray-400 hover:text-gray-700"
+          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
         >
-          ✕
+          <XIcon className="h-3.5 w-3.5" />
         </button>
       </div>
       <div className="flex flex-col gap-1.5">
@@ -60,13 +63,13 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
           <button
             key={s.id}
             onClick={() => selectScenario(s.id)}
-            className="rounded border border-gray-200 px-2 py-1.5 text-left text-sm hover:border-gray-300 hover:bg-gray-50"
+            className="rounded-lg border border-slate-200 px-3 py-2 text-left text-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
           >
-            <span className="font-medium">{s.label}</span>
-            <p className="text-xs text-gray-500">{s.description}</p>
+            <span className="font-medium text-slate-900">{s.label}</span>
+            <p className="text-xs text-slate-500">{s.description}</p>
           </button>
         ))}
       </div>
-    </div>
+    </Card>
   );
 }
