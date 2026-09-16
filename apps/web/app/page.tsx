@@ -13,7 +13,7 @@ export default function Home() {
   const setModel = useAppStore((s) => s.setModel);
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+    <main className="w-full px-6 py-8 lg:px-10">
       <header className="flex items-start gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
           <ActivityIcon className="h-5 w-5" />
@@ -47,15 +47,18 @@ export default function Home() {
         ))}
       </div>
 
-      <div className="mt-4">
-        <ProseInput />
-      </div>
-
-      <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-[1fr_340px]">
-        <SystemDashboard model={model} />
-        <div className="flex flex-col gap-5">
+      <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-[300px_minmax(0,1fr)_320px]">
+        <div className="order-2 xl:order-1">
           <ControlPanel model={model} />
+        </div>
+
+        <div className="order-1 flex flex-col gap-5 xl:order-2">
+          <SystemDashboard model={model} />
           <FailureSidebar model={model} />
+        </div>
+
+        <div className="order-3">
+          <ProseInput />
         </div>
       </div>
     </main>
