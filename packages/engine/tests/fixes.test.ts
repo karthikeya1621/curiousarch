@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { listFixes, compareFix } from "../src/fixes.js";
-import { checkout, mediaUpload } from "../models/reference.js";
+import { checkout, mediaUpload, urlShortener } from "../models/reference.js";
 
 describe("listFixes", () => {
   it("is empty when the scenario doesn't break anything at current load", () => {
@@ -29,6 +29,17 @@ describe("listFixes", () => {
     const fixes = listFixes(checkout, "workload:traffic-10x");
     const ids = fixes.map((f) => f.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("offers a preventive fix for a HIGH_UTILIZATION warning, keyed by the component's own kind", () => {
+    // url-shortener's service hits exactly 90% utilization at 6x traffic
+    // (60,000 / 66,666.67) — a warning, nothing saturated. The factory
+    // switches on component.kind, so a service gets an instances-based
+    // fix, not the pool/consumer/cpu-time variants meant for other kinds.
+    const fixes = listFixes(urlShortener, "workload:traffic-6x");
+    const ids = fixes.map((f) => f.id);
+    expect(ids).toContain("svc:instances-1.5x-preventive");
+    expect(ids).not.toContain("svc:pool-1.5x-preventive");
   });
 });
 
@@ -71,6 +82,19 @@ describe("compareFix", () => {
     expect(result.underFailure.findings.map((f) => f.code)).toContain("QUEUE_OVERFLOW");
     expect(result.underFix.findings.map((f) => f.code)).toContain("QUEUE_OVERFLOW");
     expect(result.resolved).toBe(false);
+  });
+
+  it("resolves a HIGH_UTILIZATION warning by adding headroom before anything saturates", () => {
+    // 20 -> 30 instances: 30*50=1,500 servers at 15ms => 100,000 rps
+    // capacity. 60,000 / 100,000 = 60% — comfortably back under the 80%
+    // threshold.
+    const result = compareFix(urlShortener, "workload:traffic-6x", "svc:instances-1.5x-preventive");
+    expect(result.underFailure.findings.map((f) => f.code)).toContain("HIGH_UTILIZATION");
+    expect(result.underFix.findings.map((f) => f.code)).not.toContain("HIGH_UTILIZATION");
+    expect(result.resolved).toBe(true);
+
+    const svc = result.underFix.components.find((c) => c.componentId === "svc")!;
+    expect(svc.utilization).toBeCloseTo(0.6, 5);
   });
 
   it("throws for a fix that doesn't apply to the scenario's findings", () => {

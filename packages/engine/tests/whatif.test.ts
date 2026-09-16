@@ -28,6 +28,15 @@ describe("listScenarios", () => {
     expect(tenX.label).toContain("5,000 rps"); // 500 * 10
   });
 
+  it("includes a 6x traffic scenario alongside 2x/5x/10x", () => {
+    // 6x exists specifically because it's the only multiplier that lands a
+    // reference model (url-shortener's service) in a HIGH_UTILIZATION
+    // warning without saturating anything — see compareScenario's own test
+    // below for the hand-derived numbers.
+    const ids = listScenarios(checkout).map((s) => s.id);
+    expect(ids).toContain("workload:traffic-6x");
+  });
+
   it("offers cache-specific scenarios only for models with a cache", () => {
     expect(listScenarios(urlShortener).map((s) => s.id)).toContain("cache:cold");
     expect(listScenarios(checkout).map((s) => s.id)).not.toContain("cache:cold");
@@ -105,6 +114,21 @@ describe("compareScenario", () => {
     expect(delta.newlyUnhealthy).toBe(true);
     expect(delta.underScenario.healthy).toBe(false);
     expect(delta.newFindingCodes).toContain("CONNECTION_POOL_EXHAUSTED");
+  });
+
+  it("surfaces a warning while staying healthy — the early-indicator case", () => {
+    // url-shortener's service: 20 instances * 50 concurrency = 1,000
+    // servers at 15ms => 66,666.67 rps capacity (golden.test.ts). At 6x
+    // traffic (60,000 rps), utilization is exactly 60000 / 66666.67 = 0.9
+    // — past the 0.8 HIGH_UTILIZATION threshold but nowhere near
+    // saturated. Nothing else on this model moves: the whole point of this
+    // scenario existing (see listScenarios' test above) is a model that's
+    // still healthy but says something before it breaks.
+    const delta = compareScenario(urlShortener, "workload:traffic-6x");
+    expect(delta.baseline.healthy).toBe(true);
+    expect(delta.underScenario.healthy).toBe(true);
+    expect(delta.newlyUnhealthy).toBe(false);
+    expect(delta.newFindingCodes).toEqual(["HIGH_UTILIZATION"]);
   });
 
   it("reports no new findings when a scenario doesn't move the needle", () => {

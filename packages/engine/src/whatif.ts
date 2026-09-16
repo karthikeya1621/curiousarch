@@ -65,7 +65,15 @@ export function setParameterValue(
 }
 
 function trafficScenarios(model: SystemModel): Scenario[] {
-  return [2, 5, 10].map((factor) => ({
+  // 6x sits between 2x/5x/10x deliberately: for url-shortener specifically
+  // it lands the service at 90% utilization — a real HIGH_UTILIZATION
+  // warning with the system still healthy, not a jump straight to
+  // critical. Every other multiplier here skips past that "still fine,
+  // but say something" band for every reference model (verified by
+  // scanning 1x-10x across all three) — without it, nothing a user could
+  // actually click ever demonstrates PLAN-1.5's own stated point that
+  // warnings must surface before failure, not just critical findings.
+  return [2, 5, 6, 10].map((factor) => ({
     id: `workload:traffic-${factor}x`,
     label: `Traffic spikes to ${factor}x (${Math.round(model.workload.rps * factor).toLocaleString()} rps)`,
     description: `A sudden ${factor}x surge — a sale, a viral post, a retry storm.`,

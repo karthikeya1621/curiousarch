@@ -34,7 +34,14 @@ export interface Fix {
 }
 
 type FixTemplate = Omit<Fix, "targetsFindingCode">;
-type FixFactory = (componentId: string) => FixTemplate[];
+/**
+ * `component` is the one piece every other factory below doesn't need —
+ * they're all keyed off a finding code that only ever fires on one kind
+ * (CACHE_SATURATED only on a cache, etc.). HIGH_UTILIZATION is the
+ * exception: it fires on any non-gateway kind, so its factory is the only
+ * one that switches on `component.kind` to pick the right parameter.
+ */
+type FixFactory = (componentId: string, component: Component) => FixTemplate[];
 
 function scale(component: Component, field: string, factor: number): Component {
   const c = component as unknown as Record<string, { value: number; unit: string; provenance: string; rationale: string }>;
@@ -130,6 +137,65 @@ const FIX_CATALOG: Partial<Record<FindingCode, FixFactory>> = {
       apply: (model) => withComponent(model, componentId, (c) => (c.kind === "cache" ? scale(c, "ttlSeconds", 2) : c)),
     },
   ],
+
+  /**
+   * The one finding code every other entry above ignores: a warning, not a
+   * critical, and the whole reason it exists (PLAN-1.5) is to give an
+   * operator something to act on before a component saturates. Each branch
+   * adds roughly 50% headroom — a smaller lever than the matching
+   * SATURATED/EXHAUSTED fix's "double" or "halve", since this is a
+   * preventive move, not recovery from an already-broken state. Gateways
+   * are excluded from HIGH_UTILIZATION entirely in solver.ts, so there's no
+   * case for them here.
+   */
+  HIGH_UTILIZATION: (componentId, component) => {
+    switch (component.kind) {
+      case "service":
+        return [
+          {
+            id: `${componentId}:instances-1.5x-preventive`,
+            label: "Add 50% more instances before it saturates",
+            tradeoff: "Extra compute cost paid ahead of need — the bet is that headroom now is cheaper than an incident later.",
+            apply: (model) =>
+              withComponent(model, componentId, (c) => (c.kind === "service" ? scale(c, "instances", 1.5) : c)),
+          },
+        ];
+      case "database":
+        return [
+          {
+            id: `${componentId}:pool-1.5x-preventive`,
+            label: "Add 50% more connection pool headroom",
+            tradeoff: "More memory and file descriptors reserved on the database server for load that hasn't arrived yet.",
+            apply: (model) =>
+              withComponent(model, componentId, (c) =>
+                c.kind === "database" ? scale(c, "connectionPoolSize", 1.5) : c,
+              ),
+          },
+        ];
+      case "queue":
+        return [
+          {
+            id: `${componentId}:consumers-1.5x-preventive`,
+            label: "Add 50% more consumers before it backs up",
+            tradeoff: "More worker cost paid ahead of need, same caveat as the full fix: only helps if what consumers call downstream can absorb it too.",
+            apply: (model) =>
+              withComponent(model, componentId, (c) => (c.kind === "queue" ? scale(c, "consumers", 1.5) : c)),
+          },
+        ];
+      case "cache":
+        return [
+          {
+            id: `${componentId}:cpu-time-preventive`,
+            label: "Cut per-op processing time by a third",
+            tradeoff: "Same infrastructure/engineering cost as the full fix, applied as a smaller, earlier intervention.",
+            apply: (model) =>
+              withComponent(model, componentId, (c) => (c.kind === "cache" ? scale(c, "cpuTimeMs", 2 / 3) : c)),
+          },
+        ];
+      case "gateway":
+        return [];
+    }
+  },
 };
 
 /**
@@ -150,7 +216,13 @@ export function listFixes(model: SystemModel, scenarioId: string): Fix[] {
   for (const finding of underFailure.findings) {
     const factory = FIX_CATALOG[finding.code];
     if (!factory) continue;
-    for (const template of factory(finding.componentId)) {
+    // Scenarios never change a component's id or kind (whatif.ts's own
+    // scenarios only patch parameter values), so looking the component up
+    // on the original, unscaled model is safe even though the finding
+    // itself came from simulating the model *under* the scenario.
+    const component = model.components.find((c) => c.id === finding.componentId);
+    if (!component) continue;
+    for (const template of factory(finding.componentId, component)) {
       if (seen.has(template.id)) continue;
       seen.add(template.id);
       fixes.push({ ...template, targetsFindingCode: finding.code });
