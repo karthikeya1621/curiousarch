@@ -85,6 +85,7 @@ which also works fine (see Gotchas) and needs no extra tooling either way.
 | `click <css-sel>` | click via Playwright's normal click pipeline |
 | `click-text <text>` | click the first `button`/`a`/`[role=button]` whose text is or contains `<text>` |
 | `click-card-badge <text>` | archsim-specific — see Gotchas: click the failure-count badge on the `ComponentCard` whose title contains `<text>` |
+| `set-input <css-sel> <value>` | set a controlled `<input>` (number or range) to `<value>` and fire React's `onChange` — see Gotchas |
 | `wait <css-sel>` | wait up to 10s for a selector |
 | `wait-text <text>` | wait up to 10s for `document.body.innerText` to contain `<text>` |
 | `text [css-sel]` | print `innerText` of the selector (or `document.body`) |
@@ -157,6 +158,18 @@ exercises `packages/engine`.
   summary and the failure/fix panels use `rounded-lg` without
   `shadow-sm`). If `SystemDashboard.tsx`'s card styling changes, this
   selector needs updating alongside it.
+
+- **Neither `click` nor Playwright's own `.fill()` reliably drives
+  `ControlPanel`'s number/range inputs.** They're React-controlled — React
+  patches the element instance's `value` setter to track state, so setting
+  `el.value` directly and dispatching `input` (what `.fill()` does under
+  the hood for non-text input types, and what any hand-rolled `eval` tends
+  to do) never reaches `onChange`. `set-input` works around this by
+  calling the *prototype's* original `value` setter (via
+  `Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')`)
+  before dispatching `input`/`change` — the standard React-compatible
+  trick. Confirmed working for both a plain number input
+  (`connectionPoolSize`) and the traffic `<input type="range">`.
 
 - **`apps/web`'s own `tsc --noEmit` fails with `Cannot find name
   'LayoutProps'` unless Next's route types exist first.** `LayoutProps` is

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { checkout } from "@archsim/engine";
+import { checkout, setParameterValue } from "@archsim/engine";
 import type { SystemModel } from "@archsim/engine";
 
 /**
@@ -13,26 +13,59 @@ import type { SystemModel } from "@archsim/engine";
  * whatever findings the scenario actually produces, so a stale
  * selectedFixId left over after changing selectedScenarioId isn't just
  * stale, it can resolve to a *different, wrong* fix if two scenarios
- * happen to produce a same-id fix on the same component. Only
- * setModel/selectScenario/selectFix are exported as mutators — no raw
- * setters a component could call and forget the reset.
+ * happen to produce a same-id fix on the same component. setModel clears
+ * both selections and the undo history (a full model swap, e.g. from
+ * prose inference, isn't something a user would expect to "undo" back
+ * through). updateParameter/setWorkloadRps deliberately do NOT clear
+ * selections: correcting a value never changes a component's id or kind,
+ * so every selected id stays valid, and clearing them would hide the
+ * effect of the edit the user just made. Only setModel/updateParameter/
+ * setWorkloadRps/undo/selectScenario/selectFix are exported as mutators —
+ * no raw setters a component could call and forget the invariant.
  */
 interface AppState {
   model: SystemModel;
+  history: SystemModel[];
   selectedScenarioId: string | null;
   selectedFixId: string | null;
   setModel: (model: SystemModel) => void;
+  updateParameter: (componentId: string, field: string, value: number) => void;
+  setWorkloadRps: (rps: number) => void;
+  undo: () => void;
   selectScenario: (id: string | null) => void;
   selectFix: (id: string | null) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   model: checkout, // a real default, not a placeholder — no "unset" state to guard against
+  history: [],
   selectedScenarioId: null,
   selectedFixId: null,
 
   setModel: (model) =>
-    set({ model, selectedScenarioId: null, selectedFixId: null }),
+    set({ model, history: [], selectedScenarioId: null, selectedFixId: null }),
+
+  updateParameter: (componentId, field, value) => {
+    const { model, history } = get();
+    set({
+      model: setParameterValue(model, componentId, field, value),
+      history: [...history, model],
+    });
+  },
+
+  setWorkloadRps: (rps) => {
+    const { model, history } = get();
+    set({
+      model: { ...model, workload: { ...model.workload, rps } },
+      history: [...history, model],
+    });
+  },
+
+  undo: () => {
+    const { history } = get();
+    if (history.length === 0) return;
+    set({ model: history[history.length - 1], history: history.slice(0, -1) });
+  },
 
   selectScenario: (id) =>
     set({ selectedScenarioId: id, selectedFixId: null }),

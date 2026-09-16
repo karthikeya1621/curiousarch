@@ -27,6 +27,17 @@ export function param(
   return { value, unit, provenance, rationale };
 }
 
+export function isParameter(value: unknown): value is Parameter {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "value" in value &&
+    "unit" in value &&
+    "provenance" in value &&
+    "rationale" in value
+  );
+}
+
 export type ComponentKind =
   | "gateway"
   | "service"

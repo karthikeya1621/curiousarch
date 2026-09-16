@@ -20,7 +20,14 @@
 
 export * from "./types.ts";
 export { simulate, findBreakingPoint } from "./solver.ts";
-export { listScenarios, applyScenario, compareScenario, withComponent } from "./whatif.ts";
+export { isAsyncBoundary } from "./components.ts";
+export {
+  listScenarios,
+  applyScenario,
+  compareScenario,
+  withComponent,
+  setParameterValue,
+} from "./whatif.ts";
 export type { Scenario, ScenarioDelta } from "./whatif.ts";
 export { listFixes, compareFix } from "./fixes.ts";
 export type { Fix, FixResult } from "./fixes.ts";

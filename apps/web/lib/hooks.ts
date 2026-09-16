@@ -4,8 +4,9 @@ import {
   compareScenario,
   listFixes,
   compareFix,
+  findBreakingPoint,
 } from "@archsim/engine";
-import type { SystemModel, Scenario, ScenarioDelta, Fix, FixResult } from "@archsim/engine";
+import type { SystemModel, Scenario, ScenarioDelta, Fix, FixResult, Finding } from "@archsim/engine";
 
 /**
  * Every component derives from the engine through these four hooks, never
@@ -60,4 +61,10 @@ export function useFixResult(
       return null;
     }
   }, [model, scenarioId, fixId]);
+}
+
+export function useBreakingPoint(
+  model: SystemModel,
+): { rps: number; findings: Finding[] } | null {
+  return useMemo(() => findBreakingPoint(model), [model]);
 }

@@ -13,7 +13,8 @@
 import { simulate, findBreakingPoint } from "../src/solver.js";
 import { referenceModels } from "../models/reference.js";
 import { fromProse } from "../src/inference/fromProse.js";
-import type { Component, Parameter, SystemModel } from "../src/types.js";
+import { isParameter } from "../src/types.js";
+import type { Component, SystemModel } from "../src/types.js";
 
 function usage(): never {
   console.error(
@@ -26,17 +27,6 @@ function usage(): never {
     ].join("\n"),
   );
   process.exit(1);
-}
-
-function isParameter(value: unknown): value is Parameter {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "value" in value &&
-    "unit" in value &&
-    "provenance" in value &&
-    "rationale" in value
-  );
 }
 
 function round(value: number, dp = 0): number {

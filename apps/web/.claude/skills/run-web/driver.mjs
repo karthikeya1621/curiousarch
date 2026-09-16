@@ -77,6 +77,35 @@ const COMMANDS = {
     console.log("click-text", JSON.stringify(text), "->", r);
   },
 
+  // React controlled inputs track their value via a patched setter on the
+  // element instance; setting el.value directly and dispatching "input"
+  // (or Playwright's own .fill() on non-text input types) does not trigger
+  // onChange. Calling the *prototype's* original value setter first, then
+  // dispatching "input", is what actually fires React's handler - the
+  // standard workaround. Needed for both the number inputs and the <input
+  // type="range"> slider in ControlPanel, neither of which Playwright's
+  // .fill() supports directly for range.
+  async "set-input"(rest) {
+    if (!page) return console.log("ERROR: launch first");
+    const spaceIdx = rest.indexOf(" ");
+    const sel = spaceIdx === -1 ? rest : rest.slice(0, spaceIdx);
+    const value = spaceIdx === -1 ? "" : rest.slice(spaceIdx + 1);
+    const r = await page.evaluate(
+      ({ sel, value }) => {
+        const el = document.querySelector(sel);
+        if (!el) return "NOT_FOUND";
+        const proto = Object.getPrototypeOf(el);
+        const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+        descriptor.set.call(el, value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return "OK";
+      },
+      { sel, value },
+    );
+    console.log("set-input", sel, value, "->", r);
+  },
+
   async wait(sel) {
     if (!page) return console.log("ERROR: launch first");
     try {

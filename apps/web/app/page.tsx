@@ -3,13 +3,14 @@
 import { referenceModels } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { SystemDashboard } from "../components/SystemDashboard";
+import { ControlPanel } from "../components/ControlPanel";
 
 export default function Home() {
   const model = useAppStore((s) => s.model);
   const setModel = useAppStore((s) => s.setModel);
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
+    <main className="mx-auto max-w-6xl px-4 py-8">
       <h1 className="text-2xl font-bold">archsim</h1>
       <p className="mt-1 text-sm text-gray-600">
         Every node with a possible failure carries an indicator. Click one,
@@ -34,8 +35,9 @@ export default function Home() {
         ))}
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
         <SystemDashboard model={model} />
+        <ControlPanel model={model} />
       </div>
     </main>
   );

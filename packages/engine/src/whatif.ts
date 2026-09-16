@@ -19,6 +19,7 @@
  */
 
 import { simulate } from "./solver.ts";
+import { isParameter } from "./types.ts";
 import type { Component, FindingCode, SimulationResult, SystemModel } from "./types.ts";
 
 export interface Scenario {
@@ -39,6 +40,28 @@ export function withComponent(
     ...model,
     components: model.components.map((c) => (c.id === componentId ? patch(c) : c)),
   };
+}
+
+/**
+ * Apply a user-supplied correction to one parameter. Unlike scenarios (which
+ * model a hypothetical stress), this records that the user just told the
+ * tool the real number — the edited field's provenance becomes "stated",
+ * same as if it had been given up front.
+ */
+export function setParameterValue(
+  model: SystemModel,
+  componentId: string,
+  field: string,
+  value: number,
+): SystemModel {
+  return withComponent(model, componentId, (c) => {
+    const record = c as unknown as Record<string, unknown>;
+    const current = record[field];
+    if (!isParameter(current)) {
+      throw new Error(`"${field}" is not a parameter on component "${componentId}".`);
+    }
+    return { ...c, [field]: { ...current, value, provenance: "stated" } } as Component;
+  });
 }
 
 function trafficScenarios(model: SystemModel): Scenario[] {

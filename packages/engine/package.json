@@ -4,6 +4,10 @@
   "description": "Headless capacity simulation engine. No React, no DOM.",
   "type": "module",
   "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts"
+  },
   "private": true,
   "engines": {
     "node": ">=24"

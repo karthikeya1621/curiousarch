@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { listScenarios, applyScenario, compareScenario } from "../src/whatif.js";
+import { listScenarios, applyScenario, compareScenario, setParameterValue } from "../src/whatif.js";
 import { checkout, urlShortener, mediaUpload } from "../models/reference.js";
 
 describe("listScenarios", () => {
@@ -65,6 +65,34 @@ describe("applyScenario", () => {
   it("rejects a scenario that doesn't apply to this model's components", () => {
     // checkout has no cache; a cache scenario id must not resolve against it.
     expect(() => applyScenario(checkout, "cache:cold")).toThrow(/unknown scenario/i);
+  });
+});
+
+describe("setParameterValue", () => {
+  it("sets the new value and marks it stated, without mutating the original", () => {
+    const patched = setParameterValue(checkout, "db", "queryTimeMs", 40);
+    const db = patched.components.find((c) => c.id === "db");
+    if (db?.kind !== "database") throw new Error("expected database");
+    expect(db.queryTimeMs.value).toBe(40);
+    expect(db.queryTimeMs.provenance).toBe("stated");
+
+    const originalDb = checkout.components.find((c) => c.id === "db");
+    if (originalDb?.kind !== "database") throw new Error("expected database");
+    expect(originalDb.queryTimeMs.value).toBe(25); // unchanged
+  });
+
+  it("preserves the rationale and unit while overwriting value and provenance", () => {
+    const patched = setParameterValue(checkout, "db", "queryTimeMs", 40);
+    const db = patched.components.find((c) => c.id === "db");
+    if (db?.kind !== "database") throw new Error("expected database");
+    const original = checkout.components.find((c) => c.id === "db");
+    if (original?.kind !== "database") throw new Error("expected database");
+    expect(db.queryTimeMs.unit).toBe(original.queryTimeMs.unit);
+    expect(db.queryTimeMs.rationale).toBe(original.queryTimeMs.rationale);
+  });
+
+  it("throws when the field isn't a parameter on that component", () => {
+    expect(() => setParameterValue(checkout, "db", "kind", 1)).toThrow(/not a parameter/i);
   });
 });
 
