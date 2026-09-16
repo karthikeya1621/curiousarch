@@ -16,6 +16,7 @@ export function FixResultPanel({
   fixId: string;
 }) {
   const selectFix = useAppStore((s) => s.selectFix);
+  const applyFix = useAppStore((s) => s.applyFix);
   const result = useFixResult(model, scenarioId, fixId);
 
   // Selection was invalid (shouldn't happen given the store's invariants,
@@ -90,6 +91,17 @@ export function FixResultPanel({
           This fix doesn&apos;t target: {otherFindings.map((f) => f.code).join(", ")}
         </p>
       )}
+
+      <button
+        onClick={() => applyFix(result.fix.apply(model))}
+        className="mt-3 w-full rounded-lg bg-slate-900 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-700"
+      >
+        Apply this fix
+      </button>
+      <p className="mt-1.5 text-center text-[11px] text-slate-400">
+        Makes this change to the real model — not the hypothetical failure
+        above. Undo reverts it.
+      </p>
     </div>
   );
 }

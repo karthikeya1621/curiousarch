@@ -28,6 +28,18 @@ import type { SystemModel } from "@archsim/engine";
  * has to be shared between the diagram (where the indicator badges live)
  * and the sidebar (where the list actually renders), so it lives here like
  * the other cross-component selection state.
+ *
+ * applyFix commits a fix's transform to the REAL model — not the
+ * hypothetical failure+fix combination FixResultPanel previews. A scenario
+ * models "what if this broke"; a fix is a real change ("double the pool")
+ * a user could actually make. Applying one means "make that real change,"
+ * not "also pretend the hypothetical failure happened forever" — so the
+ * caller passes `fix.apply(model)` (the fix against the current real
+ * model), never `fix.apply(scenario.apply(model))`. Like a full model
+ * swap, it clears the transient selections (the old scenario/fix/open
+ * node no longer describe anything meaningful once the model has moved),
+ * but like a parameter edit, it pushes undo history rather than clearing
+ * it — this is one step in an ongoing correction loop, not a fresh start.
  */
 interface AppState {
   model: SystemModel;
@@ -38,6 +50,7 @@ interface AppState {
   setModel: (model: SystemModel) => void;
   updateParameter: (componentId: string, field: string, value: number) => void;
   setWorkloadRps: (rps: number) => void;
+  applyFix: (newModel: SystemModel) => void;
   undo: () => void;
   selectScenario: (id: string | null) => void;
   selectFix: (id: string | null) => void;
@@ -73,6 +86,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       model: { ...model, workload: { ...model.workload, rps } },
       history: [...history, model],
+    });
+  },
+
+  applyFix: (newModel) => {
+    const { model, history } = get();
+    set({
+      model: newModel,
+      history: [...history, model],
+      selectedScenarioId: null,
+      selectedFixId: null,
+      openComponentId: null,
     });
   },
 
