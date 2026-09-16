@@ -18,9 +18,9 @@
  * traffic spike or a query-latency scenario.
  */
 
-import { simulate } from "./solver.js";
-import { listScenarios, withComponent, type Scenario } from "./whatif.js";
-import type { Component, FindingCode, SimulationResult, SystemModel } from "./types.js";
+import { simulate } from "./solver.ts";
+import { listScenarios, withComponent, type Scenario } from "./whatif.ts";
+import type { Component, FindingCode, SimulationResult, SystemModel } from "./types.ts";
 
 export interface Fix {
   /** "<componentId>:<kind>" — stable, unique per component. */

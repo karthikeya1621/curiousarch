@@ -9,8 +9,13 @@
  * Numbers here are deliberately round so they can be checked on paper.
  */
 
-import { param } from "../src/types.js";
-import type { SystemModel } from "../src/types.js";
+// .ts extension, not .js: Turbopack cannot resolve a .js-suffixed import
+// pointing at a .ts file for this workspace package at all (confirmed live —
+// see src/index.ts's doc comment for the full story). tsc/tsx/vitest accept
+// either under moduleResolution: "bundler", so this is safe for every
+// consumer, not just the web app.
+import { param } from "../src/types.ts";
+import type { SystemModel } from "../src/types.ts";
 
 /**
  * 1. URL shortener — read-dominated, cache-fronted.

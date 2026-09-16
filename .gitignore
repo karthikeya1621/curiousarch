@@ -4,6 +4,7 @@ node_modules/
 .env.*
 dist/
 coverage/
+.next/
 *.tsbuildinfo
 .vscode/
 .idea/

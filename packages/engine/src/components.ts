@@ -10,8 +10,8 @@
  * pressure — lives in solver.ts, not here.
  */
 
-import { mmc, responseQuantile } from "./queueing.js";
-import type { Component, ComponentResult } from "./types.js";
+import { mmc, responseQuantile } from "./queueing.ts";
+import type { Component, ComponentResult } from "./types.ts";
 
 export interface ComponentProfile {
   /** Parallel service channels: pool size, thread count, consumer count. */

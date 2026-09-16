@@ -18,8 +18,8 @@
  * module only patches parameters and re-runs the same engine.
  */
 
-import { simulate } from "./solver.js";
-import type { Component, FindingCode, SimulationResult, SystemModel } from "./types.js";
+import { simulate } from "./solver.ts";
+import type { Component, FindingCode, SimulationResult, SystemModel } from "./types.ts";
 
 export interface Scenario {
   /** Stable, unique id — "<componentId>:<kind>" or "workload:<kind>". */

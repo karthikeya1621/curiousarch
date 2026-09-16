@@ -12,14 +12,14 @@ import {
   evaluate,
   isAsyncBoundary,
   outflowFactor,
-} from "./components.js";
+} from "./components.ts";
 import type {
   Component,
   ComponentResult,
   Finding,
   SimulationResult,
   SystemModel,
-} from "./types.js";
+} from "./types.ts";
 
 const HIGH_UTILIZATION = 0.8;
 
