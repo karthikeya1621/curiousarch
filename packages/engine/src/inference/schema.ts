@@ -34,7 +34,10 @@ import type { Component, Edge, SystemModel } from "../types.ts";
 // top-level definition.
 export const ProvenanceSchema = z.enum(["stated", "inferred", "default"]);
 
-function traitSchema<T extends z.ZodTypeAny>(valueSchema: T) {
+// Exported so other structured-output schemas (e.g. an AI-proposed set of
+// specific trait values for a fix, in inference/proposeCacheTraits.ts) can
+// build a trait shape without duplicating rationale/provenance/value.
+export function traitSchema<T extends z.ZodTypeAny>(valueSchema: T) {
   return z.object({
     rationale: z
       .string()

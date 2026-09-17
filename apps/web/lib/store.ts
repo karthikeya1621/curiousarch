@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { checkout, setTraitValue } from "@archsim/engine";
+import { checkout } from "@archsim/engine";
 import type { ScaleTier, SystemModel } from "@archsim/engine";
 
 /**
@@ -16,11 +16,11 @@ import type { ScaleTier, SystemModel } from "@archsim/engine";
  * happen to produce a same-id fix on the same component. setModel clears
  * both selections and the undo history (a full model swap, e.g. from
  * prose inference, isn't something a user would expect to "undo" back
- * through). updateTrait/setWorkloadScale deliberately do NOT clear
- * selections: correcting a value never changes a component's id or kind,
- * so every selected id stays valid, and clearing them would hide the
- * effect of the edit the user just made. Only setModel/updateTrait/
- * setWorkloadScale/undo/selectScenario/selectFix are exported as mutators —
+ * through). setWorkloadScale deliberately does NOT clear selections:
+ * changing the scale never changes a component's id or kind, so every
+ * selected id stays valid, and clearing them would hide the effect of the
+ * change the user just made. Only setModel/setWorkloadScale/applyFix/undo/
+ * selectScenario/selectFix/setOpenComponentId are exported as mutators —
  * no raw setters a component could call and forget the invariant.
  *
  * openComponentId tracks which flow-diagram node's failure list is showing
@@ -38,8 +38,14 @@ import type { ScaleTier, SystemModel } from "@archsim/engine";
  * model), never `fix.apply(scenario.apply(model))`. Like a full model
  * swap, it clears the transient selections (the old scenario/fix/open
  * node no longer describe anything meaningful once the model has moved),
- * but like a trait edit, it pushes undo history rather than clearing
- * it — this is one step in an ongoing correction loop, not a fresh start.
+ * but like a scale change, it pushes undo history rather than clearing
+ * it — this is one step in an ongoing evolution, not a fresh start.
+ *
+ * There is deliberately no `updateTrait` here anymore: component traits
+ * are read-only in the UI (ControlPanel.tsx) — the architecture only
+ * evolves via a scenario/fix or a fresh prose description, never by
+ * hand-toggling a switch. `setWorkloadScale` survives because traffic
+ * scale is the one real non-functional requirement, not a component trait.
  */
 interface AppState {
   model: SystemModel;
@@ -48,7 +54,6 @@ interface AppState {
   selectedFixId: string | null;
   openComponentId: string | null;
   setModel: (model: SystemModel) => void;
-  updateTrait: (componentId: string, field: string, value: string | boolean) => void;
   setWorkloadScale: (scale: ScaleTier) => void;
   applyFix: (newModel: SystemModel) => void;
   undo: () => void;
@@ -72,14 +77,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedFixId: null,
       openComponentId: null,
     }),
-
-  updateTrait: (componentId, field, value) => {
-    const { model, history } = get();
-    set({
-      model: setTraitValue(model, componentId, field, value),
-      history: [...history, model],
-    });
-  },
 
   setWorkloadScale: (scale) => {
     const { model, history } = get();

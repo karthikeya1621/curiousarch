@@ -1,5 +1,5 @@
 import { isTrait } from "@archsim/engine";
-import type { Component, ScaleTier, Trait, SystemModel } from "@archsim/engine";
+import type { Component, Trait, ScaleTier, SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { useBreakingTier } from "../lib/hooks";
 import { Card } from "./Card";
@@ -13,20 +13,6 @@ const PROVENANCE_TONE: Record<Trait<unknown>["provenance"], BadgeTone> = {
 };
 
 const SCALE_TIERS: ScaleTier[] = ["small", "medium", "large", "massive"];
-
-/**
- * Every enum trait in this app has exactly two options — but which two
- * depends on kind, not just field name (both service and database have an
- * `instanceCount` field, with different second options). Small and
- * explicit rather than trying to derive this from the Zod schema at
- * runtime, which would mean shipping schema internals to the client.
- */
-const ENUM_OPTIONS: Partial<Record<Component["kind"], Record<string, [string, string]>>> = {
-  service: { instanceCount: ["single", "multiple"] },
-  cache: { ttl: ["short", "long"], keyspaceSize: ["small", "large"] },
-  database: { instanceCount: ["single", "has-replicas"], writeVolume: ["low", "high"] },
-  queue: { consumerScaling: ["fixed", "auto"] },
-};
 
 function SegmentedToggle({
   options,
@@ -70,19 +56,16 @@ function BooleanSwitch({ checked, onChange }: { checked: boolean; onChange: (nex
   );
 }
 
-function TraitRow({
-  componentId,
-  kind,
-  field,
-  trait,
-}: {
-  componentId: string;
-  kind: Component["kind"];
-  field: string;
-  trait: Trait<unknown>;
-}) {
-  const updateTrait = useAppStore((s) => s.updateTrait);
-
+/**
+ * Read-only: traits are no longer a control surface. This app's whole
+ * premise is that the architecture only evolves by applying a fix to a
+ * real, computed failure point (or by re-describing the system) — a free
+ * toggle here would let you route around that loop entirely. Provenance
+ * and rationale stay visible for exactly the reason they always
+ * were — understanding what was assumed and why — just without a way to
+ * hand-edit it.
+ */
+function TraitRow({ field, trait }: { field: string; trait: Trait<unknown> }) {
   return (
     <div className="flex items-center justify-between gap-3 py-2">
       <div className="min-w-0 flex-1">
@@ -92,20 +75,9 @@ function TraitRow({
         </div>
         <p className="truncate text-[11px] text-slate-400">{trait.rationale}</p>
       </div>
-      <div className="shrink-0">
-        {typeof trait.value === "boolean" ? (
-          <BooleanSwitch
-            checked={trait.value}
-            onChange={(next) => updateTrait(componentId, field, next)}
-          />
-        ) : (
-          <SegmentedToggle
-            options={ENUM_OPTIONS[kind]?.[field] ?? [String(trait.value)]}
-            value={String(trait.value)}
-            onChange={(next) => updateTrait(componentId, field, next)}
-          />
-        )}
-      </div>
+      <span className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+        {typeof trait.value === "boolean" ? (trait.value ? "on" : "off") : String(trait.value)}
+      </span>
     </div>
   );
 }
@@ -136,7 +108,7 @@ export function ControlPanel({ model }: { model: SystemModel }) {
         </button>
       </div>
 
-      <div className="border-b border-slate-100 pb-3 pt-2">
+      <div className="pb-3 pt-2">
         <span className="text-xs font-medium text-slate-700">Traffic scale</span>
         <div className="mt-1.5">
           <SegmentedToggle
@@ -152,30 +124,29 @@ export function ControlPanel({ model }: { model: SystemModel }) {
         </p>
       </div>
 
-      <div className="flex flex-col divide-y divide-slate-100">
-        {model.components.map((component) => {
-          const traits = componentTraits(component);
-          if (traits.length === 0) return null;
-          return (
-            <div key={component.id} className="py-1">
-              <p className="pt-2 text-xs font-semibold text-slate-800">
-                {component.label}{" "}
-                <span className="font-normal text-slate-400">· {component.id}</span>
-              </p>
-              <div className="flex flex-col divide-y divide-slate-50">
-                {traits.map(([field, trait]) => (
-                  <TraitRow
-                    key={field}
-                    componentId={component.id}
-                    kind={component.kind}
-                    field={field}
-                    trait={trait}
-                  />
-                ))}
+      <div className="border-t border-slate-100 pt-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+          System — read-only, evolves via fixes
+        </p>
+        <div className="flex flex-col divide-y divide-slate-100">
+          {model.components.map((component) => {
+            const traits = componentTraits(component);
+            if (traits.length === 0) return null;
+            return (
+              <div key={component.id} className="py-1">
+                <p className="pt-2 text-xs font-semibold text-slate-800">
+                  {component.label}{" "}
+                  <span className="font-normal text-slate-400">· {component.id}</span>
+                </p>
+                <div className="flex flex-col divide-y divide-slate-50">
+                  {traits.map(([field, trait]) => (
+                    <TraitRow key={field} field={field} trait={trait} />
+                  ))}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </Card>
   );

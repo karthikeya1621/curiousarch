@@ -11,3 +11,5 @@
 
 export { fromProse } from "./inference/fromProse.ts";
 export type { FromProseOptions, FromProseResult } from "./inference/fromProse.ts";
+export { proposeCacheTraits } from "./inference/proposeCacheTraits.ts";
+export type { CacheProposal, ProposeCacheTraitsOptions } from "./inference/proposeCacheTraits.ts";

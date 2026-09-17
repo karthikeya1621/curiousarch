@@ -177,6 +177,66 @@ describe("compareFix", () => {
     expect(result.underFix.findings.map((f) => f.code)).not.toContain("THUNDERING_HERD_RISK");
   });
 
+  it("is the one fix flagged for an AI proposal, and none of the others are", () => {
+    const fixes = listFixes(checkout, "gw:rate-limit-disabled");
+    for (const fix of fixes) expect(fix.hasAiProposal).toBeFalsy();
+
+    const readHeavyAtScale: SystemModel = {
+      ...checkout,
+      workload: { scale: { ...checkout.workload.scale, value: "large" } },
+      components: checkout.components.map((c) =>
+        c.id === "db" && c.kind === "database"
+          ? { ...c, writeVolume: { ...c.writeVolume, value: "low" } }
+          : c,
+      ),
+    };
+    const cacheFix = listFixes(readHeavyAtScale, "workload:scale-up").find(
+      (f) => f.id === "db:add-cache",
+    );
+    expect(cacheFix?.hasAiProposal).toBe(true);
+  });
+
+  it("uses AI-proposed cache values, with inferred provenance, when supplied", () => {
+    const readHeavyAtScale: SystemModel = {
+      ...checkout,
+      workload: { scale: { ...checkout.workload.scale, value: "large" } },
+      components: checkout.components.map((c) =>
+        c.id === "db" && c.kind === "database"
+          ? { ...c, writeVolume: { ...c.writeVolume, value: "low" } }
+          : c,
+      ),
+    };
+
+    const proposedTraits = {
+      ttl: { value: "short", rationale: "This system needs fresh totals." },
+      keyspaceSize: { value: "small", rationale: "Only a handful of hot orders dominate." },
+      hasStampedeProtection: { value: true, rationale: "Short TTL + small keyspace needs coalescing." },
+    };
+
+    const result = compareFix(
+      readHeavyAtScale,
+      "workload:scale-up",
+      "db:add-cache",
+      proposedTraits,
+    );
+    const applied = result.fix.apply(
+      applyScenario(readHeavyAtScale, "workload:scale-up"),
+      proposedTraits,
+    );
+    const newCache = applied.components.find((c) => c.id === "db-cache");
+    if (newCache?.kind !== "cache") throw new Error("expected cache");
+    expect(newCache.ttl).toEqual({ value: "short", provenance: "inferred", rationale: "This system needs fresh totals." });
+    expect(newCache.keyspaceSize.value).toBe("small");
+    expect(newCache.keyspaceSize.provenance).toBe("inferred");
+    expect(newCache.hasStampedeProtection.value).toBe(true);
+
+    // Precisely the trap the proposal prompt warns against (short TTL +
+    // small keyspace) — only made safe here because hasStampedeProtection
+    // was also proposed true. The engine still recomputes this for real
+    // rather than trusting that the AI's own choice was safe.
+    expect(result.underFix.findings.map((f) => f.code)).not.toContain("THUNDERING_HERD_RISK");
+  });
+
   it("throws for a fix that doesn't apply to the scenario's findings", () => {
     expect(() => compareFix(checkout, "workload:scale-up", "svc:add-instance")).toThrow(
       /unknown fix/i,

@@ -1,15 +1,21 @@
 /**
  * Fix catalogue: for a pattern a component matched, what's the deterministic
- * remediation — flip the trait toward its safer value — and does applying
- * it actually clear the pattern when re-simulated.
+ * remediation — flip the trait toward its safer value, or (for
+ * UNCACHED_DATABASE_AT_SCALE only) insert a real component — and does
+ * applying it actually clear the pattern when re-simulated.
  *
  * This is the third leg of the flow: indicator (every node with a possible
  * failure) -> failures (src/whatif.ts's Scenario catalogue) -> fixes (this
- * file) -> resimulate. No new facts are invented anywhere in this file —
- * every fix is a fixed, hand-written trait flip, same as the original
- * "hand-written catalogue keyed by finding code, not a model" principle.
- * The LLM's job, if this reaches the UI, is ranking these and writing one
- * sentence of explanation — never inventing the transform or the tradeoff.
+ * file) -> resimulate. Every fix's TRANSFORM SHAPE is fixed and
+ * hand-written, same as the original "hand-written catalogue keyed by
+ * finding code, not a model" principle — the AI never invents a
+ * transform. The one exception is which *specific categorical values* a
+ * fix uses when it has genuine free parameters (see `proposedTraits`
+ * below and `packages/engine/src/inference/proposeCacheTraits.ts`): an AI
+ * may choose those values, but never whether something is a risk, and the
+ * pattern engine recomputes findings on the result exactly as it always
+ * has — a bad choice shows up as a real, computed finding, not a claim
+ * anyone asserted.
  *
  * Fixes are looked up by the finding code a failure scenario actually
  * produces when simulated, not hardcoded per scenario — the same
@@ -30,7 +36,22 @@ export interface Fix {
   tradeoff: string;
   /** The specific finding this fix is meant to clear — see FixResult.resolved. */
   targetsFindingCode: FindingCode;
-  apply: (model: SystemModel) => SystemModel;
+  /**
+   * `proposedTraits` is ignored by every fix except one — see
+   * `hasAiProposal` below. Duck-typed (`Record<string, unknown>`, not a
+   * fix-specific interface) the same way `setTraitValue`/`withComponent`
+   * elsewhere in this file don't carry per-field types either; only the
+   * one factory that reads it needs to agree on its shape.
+   */
+  apply: (model: SystemModel, proposedTraits?: Record<string, unknown>) => SystemModel;
+  /**
+   * True only for a fix where an AI may reasonably choose specific
+   * categorical values within its already-fixed transform shape (today:
+   * only UNCACHED_DATABASE_AT_SCALE's new cache). Absent/false means
+   * fully deterministic — the UI should never fire a network call for a
+   * fix that has nothing for an AI to decide.
+   */
+  hasAiProposal?: boolean;
 }
 
 type FixTemplate = Omit<Fix, "targetsFindingCode">;
@@ -164,10 +185,15 @@ const FIX_CATALOG: Partial<Record<FindingCode, FixFactory>> = {
    * flip — there's no existing trait that means "has a cache in front of
    * it." Inserts a brand-new cache component between the database and
    * whatever currently calls it directly, rewiring the edge(s) around it.
-   * The new cache ships with safe defaults (long TTL, large keyspace,
-   * stampede protection on) specifically so this fix doesn't just relocate
-   * the problem into a fresh THUNDERING_HERD_RISK on the cache it just
-   * added.
+   *
+   * Also the one fix with `hasAiProposal: true` — the new cache's
+   * `ttl`/`keyspaceSize`/`hasStampedeProtection` are genuine free
+   * parameters, so `proposeCacheTraits` (packages/engine/src/inference/)
+   * may choose them for this specific system. Absent an AI proposal (the
+   * call was skipped, or failed), the hardcoded defaults below (long TTL,
+   * large keyspace, stampede protection on) apply instead — deliberately
+   * safe, so this fix never relocates the problem into a fresh
+   * THUNDERING_HERD_RISK on the cache it just added.
    */
   UNCACHED_DATABASE_AT_SCALE: (componentId, component) => {
     if (component.kind !== "database") return [];
@@ -177,23 +203,38 @@ const FIX_CATALOG: Partial<Record<FindingCode, FixFactory>> = {
         id: `${componentId}:add-cache`,
         label: "Add a caching layer",
         tradeoff: "One more moving part to run and keep warm, and cached data can go briefly stale — but repeat reads stop reaching the database at all.",
-        apply: (model) =>
-          withInsertedComponent(
+        hasAiProposal: true,
+        apply: (model, proposedTraits) => {
+          const p = proposedTraits as
+            | {
+                ttl?: { value: "short" | "long"; rationale: string };
+                keyspaceSize?: { value: "small" | "large"; rationale: string };
+                hasStampedeProtection?: { value: boolean; rationale: string };
+              }
+            | undefined;
+          return withInsertedComponent(
             model,
             {
               id: cacheId,
               label: `${component.label} cache`,
               kind: "cache",
-              ttl: trait("long", "default", "Long TTL by default — a freshly added cache shouldn't itself become a thundering-herd risk."),
-              keyspaceSize: trait("large", "default", "Assumed large until proven otherwise."),
-              hasStampedeProtection: trait(true, "default", "Request coalescing on by default, for the same reason."),
+              ttl: p?.ttl
+                ? trait(p.ttl.value, "inferred", p.ttl.rationale)
+                : trait("long", "default", "Long TTL by default — a freshly added cache shouldn't itself become a thundering-herd risk."),
+              keyspaceSize: p?.keyspaceSize
+                ? trait(p.keyspaceSize.value, "inferred", p.keyspaceSize.rationale)
+                : trait("large", "default", "Assumed large until proven otherwise."),
+              hasStampedeProtection: p?.hasStampedeProtection
+                ? trait(p.hasStampedeProtection.value, "inferred", p.hasStampedeProtection.rationale)
+                : trait(true, "default", "Request coalescing on by default, for the same reason."),
             },
             (edges) => [
               ...edges.filter((e) => e.to !== componentId),
               ...edges.filter((e) => e.to === componentId).map((e) => ({ from: e.from, to: cacheId })),
               { from: cacheId, to: componentId },
             ],
-          ),
+          );
+        },
       },
     ];
   },
@@ -252,8 +293,18 @@ export interface FixResult {
   resolved: boolean;
 }
 
-/** Apply a failure scenario, then a fix on top of it, and simulate all three states. */
-export function compareFix(model: SystemModel, scenarioId: string, fixId: string): FixResult {
+/**
+ * Apply a failure scenario, then a fix on top of it, and simulate all three
+ * states. `proposedTraits` is passed straight through to `fix.apply` — see
+ * `Fix.apply`'s own doc comment; every fix except UNCACHED_DATABASE_AT_SCALE's
+ * "add-cache" ignores it and behaves exactly as before.
+ */
+export function compareFix(
+  model: SystemModel,
+  scenarioId: string,
+  fixId: string,
+  proposedTraits?: Record<string, unknown>,
+): FixResult {
   const scenario = listScenarios(model).find((s) => s.id === scenarioId);
   if (!scenario) {
     throw new Error(`Unknown scenario "${scenarioId}". Run listScenarios(model) to see options.`);
@@ -266,7 +317,7 @@ export function compareFix(model: SystemModel, scenarioId: string, fixId: string
   const failureModel = scenario.apply(model);
   const baseline = simulate(model);
   const underFailure = simulate(failureModel);
-  const underFix = simulate(fix.apply(failureModel));
+  const underFix = simulate(fix.apply(failureModel, proposedTraits));
 
   const targetedFailurePresent = underFailure.findings.some(
     (f) => f.code === fix.targetsFindingCode,

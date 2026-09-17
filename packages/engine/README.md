@@ -26,6 +26,19 @@ traits that combined to produce it. The LLM layer may phrase a finding; it
 may not place one. If that boundary moves, the product becomes a
 diagramming tool with opinions.
 
+**An AI may choose values, never transforms.** `fixes.ts`'s
+`UNCACHED_DATABASE_AT_SCALE` factory is the one fix with genuine free
+parameters — a freshly-inserted cache's `ttl`/`keyspaceSize`/
+`hasStampedeProtection` — and `inference/proposeCacheTraits.ts` lets an AI
+choose them for the specific system instead of a hardcoded default. The
+*shape* of the transform (insert a cache, rewire these edges) is still
+entirely hand-written; the AI never decides whether to add a cache, what
+kind of component to add, or whether a combination is safe — findings are
+still recomputed on the result exactly as always, so a bad AI choice shows
+up as a real, computed finding, not a claim anyone asserted. The other 6
+fixes are plain binary trait flips with nothing to decide, so they stay
+fully deterministic with no network call at all.
+
 **Every trait carries provenance.** `Trait<T>` records whether a value was
 stated by the user, inferred from prose, or defaulted, plus a one-line
 rationale. Prose-derived modelling means the engine is guessing categories
@@ -114,12 +127,13 @@ Known gaps, listed so they can be added rather than silently assumed away:
 
 ```
 src/types.ts               Trait<T>, Component/SystemModel/ScaleTier, isTrait
-src/patterns.ts            The six architectural patterns — this is the engine now
+src/patterns.ts            The seven architectural patterns — this is the engine now
 src/components.ts          isAsyncBoundary (a queue is where a sync chain stops)
 src/solver.ts              simulate() (cycle check + run every pattern), findBreakingTier()
 src/inference/schema.ts    Zod schema an LLM fills; every trait is a boolean or small enum
 src/inference/prompt.ts    The system prompt, kept separate so it can be diffed
 src/inference/fromProse.ts Prose -> SystemModel: one call, validate, one repair retry
+src/inference/proposeCacheTraits.ts  The one AI call in the fix flow: values only, see above
 src/whatif.ts              Scenario catalog + apply/compare: flip a trait toward its riskier value
 src/fixes.ts               Fix catalog keyed by finding code + apply-fix-then-resimulate
 models/reference.ts        Three hand-modelled systems (the oracle)
