@@ -51,29 +51,36 @@ export function useFixes(model: SystemModel, scenarioId: string | null): Fix[] {
 
 export interface UseFixResultReturn {
   result: FixResult | null;
-  /**
-   * "idle" for the 6 deterministic fixes (no network call ever fires) —
-   * "loading"/"done" only apply to a fix with `hasAiProposal: true`.
-   */
+  /** "idle" only before a fix is selected — every fix now makes a call. */
   proposalStatus: "idle" | "loading" | "done";
   proposalError: string | null;
   /**
    * Whatever `result` was actually computed with — `undefined` means
-   * fixes.ts's own hardcoded defaults. Exposed so "Apply this fix" commits
-   * the exact values that were just previewed, not a fresh (and possibly
-   * different, if the AI call resolves between preview and click) result.
+   * fixes.ts's own hardcoded defaults. Only ever populated for a fix with
+   * `hasAiProposal` (today: "db:add-cache"). Exposed so "Apply this fix"
+   * commits the exact values that were just previewed, not a fresh (and
+   * possibly different, if the AI call resolves between preview and
+   * click) result.
    */
   proposedTraits: Record<string, unknown> | undefined;
+  /**
+   * One sentence of AI narration for why this fix fits this system —
+   * populated for every fix EXCEPT one with `hasAiProposal` (which shows
+   * its per-value rationale instead). Purely presentational: never fed
+   * back into `compareFix`/`Fix.apply`, so it cannot change the result.
+   */
+  aiRationale: string | null;
 }
 
 /**
  * Progressive, non-blocking by design: `result` is always computed
  * immediately with whatever `proposedTraits` is currently known (`undefined`
  * at first, meaning fixes.ts's own hardcoded defaults apply) so the panel
- * never blank-loads. For a fix with `hasAiProposal`, an effect fires the one
- * AI call this app makes when applying a fix, and once it resolves,
- * `proposedTraits` updates and `result` recomputes with the AI's values —
- * upgrading the preview in place rather than gating it behind a spinner.
+ * never blank-loads. Selecting ANY fix fires the one AI call this app makes
+ * for it — `proposeCacheTraits` (which can influence `result` once it
+ * resolves) for a fix with `hasAiProposal`, `explainFix` (purely narrative,
+ * never touches `result`) for every other one — upgrading the panel in
+ * place rather than gating it behind a spinner.
  */
 export function useFixResult(
   model: SystemModel,
@@ -86,14 +93,16 @@ export function useFixResult(
   const [proposedTraits, setProposedTraits] = useState<Record<string, unknown> | undefined>(
     undefined,
   );
+  const [aiRationale, setAiRationale] = useState<string | null>(null);
   const [proposalStatus, setProposalStatus] = useState<"idle" | "loading" | "done">("idle");
   const [proposalError, setProposalError] = useState<string | null>(null);
 
   useEffect(() => {
     setProposedTraits(undefined);
+    setAiRationale(null);
     setProposalError(null);
 
-    if (!fix || !fix.hasAiProposal) {
+    if (!fix) {
       setProposalStatus("idle");
       return;
     }
@@ -104,25 +113,32 @@ export function useFixResult(
     fetch("/api/propose-fix", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model, componentId: fixComponentId(fix) }),
+      body: JSON.stringify({
+        model,
+        componentId: fixComponentId(fix),
+        fixLabel: fix.label,
+        findingCode: fix.targetsFindingCode,
+        hasAiProposal: fix.hasAiProposal ?? false,
+      }),
     })
       .then(async (res) => {
         const responseBody = await res.json();
-        if (!res.ok) throw new Error(responseBody.error ?? "Proposal failed.");
+        if (!res.ok) throw new Error(responseBody.error ?? "AI call failed.");
         if (cancelled) return;
-        setProposedTraits(responseBody.proposal as Record<string, unknown>);
+        if (responseBody.proposal) setProposedTraits(responseBody.proposal as Record<string, unknown>);
+        if (responseBody.rationale) setAiRationale(responseBody.rationale as string);
         setProposalStatus("done");
       })
       .catch((err) => {
         if (cancelled) return;
-        setProposalError(err instanceof Error ? err.message : "Proposal failed.");
-        setProposalStatus("done"); // fixes.ts's own defaults still apply — see fixes.ts's UNCACHED_DATABASE_AT_SCALE factory
+        setProposalError(err instanceof Error ? err.message : "AI call failed.");
+        setProposalStatus("done"); // fixes.ts's own defaults still apply for hasAiProposal fixes — see its UNCACHED_DATABASE_AT_SCALE factory
       });
 
     return () => {
       cancelled = true;
     };
-  }, [model, scenarioId, fix?.id, fix?.hasAiProposal]);
+  }, [model, scenarioId, fix?.id]);
 
   const result = useMemo(() => {
     if (!scenarioId || !fixId) return null;
@@ -133,7 +149,7 @@ export function useFixResult(
     }
   }, [model, scenarioId, fixId, proposedTraits]);
 
-  return { result, proposalStatus, proposalError, proposedTraits };
+  return { result, proposalStatus, proposalError, proposedTraits, aiRationale };
 }
 
 export function useBreakingTier(

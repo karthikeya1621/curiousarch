@@ -26,18 +26,34 @@ traits that combined to produce it. The LLM layer may phrase a finding; it
 may not place one. If that boundary moves, the product becomes a
 diagramming tool with opinions.
 
-**An AI may choose values, never transforms.** `fixes.ts`'s
-`UNCACHED_DATABASE_AT_SCALE` factory is the one fix with genuine free
-parameters — a freshly-inserted cache's `ttl`/`keyspaceSize`/
-`hasStampedeProtection` — and `inference/proposeCacheTraits.ts` lets an AI
-choose them for the specific system instead of a hardcoded default. The
-*shape* of the transform (insert a cache, rewire these edges) is still
-entirely hand-written; the AI never decides whether to add a cache, what
-kind of component to add, or whether a combination is safe — findings are
-still recomputed on the result exactly as always, so a bad AI choice shows
-up as a real, computed finding, not a claim anyone asserted. The other 6
-fixes are plain binary trait flips with nothing to decide, so they stay
-fully deterministic with no network call at all.
+**An AI may choose values or narrate, never decide a transform or a
+finding.** Every fix now makes a real AI call when selected, but only one
+of two shapes:
+- `fixes.ts`'s `UNCACHED_DATABASE_AT_SCALE` factory is the one fix with
+  genuine free parameters — a freshly-inserted cache's `ttl`/
+  `keyspaceSize`/`hasStampedeProtection` — and
+  `inference/proposeCacheTraits.ts` lets an AI choose them for the
+  specific system instead of a hardcoded default.
+- Every other fix is a plain binary trait flip with nothing to decide;
+  `inference/explainFix.ts` still makes a call, but only for one sentence
+  of narration — why this fix fits this specific system. That sentence
+  never reaches `Fix.apply`, so it cannot change the transform or a
+  finding, only the words shown next to it.
+
+Either way, the *shape* of the transform is entirely hand-written — the
+AI never decides whether to add a cache, what kind of component to add,
+or whether a combination is safe — and findings are always recomputed on
+the result exactly as always, so a bad AI choice shows up as a real,
+computed finding, not a claim anyone asserted.
+
+`inference/reworkModel.ts` (behind the web app's manual "Re-simulate"
+button) is the one exception to "the shape is hand-written" — it produces
+a full candidate `SystemModel`, the same category of thing `fromProse`
+always has, seeded from the current model instead of typed prose. Even
+there the boundary holds exactly the same way it always has for
+`fromProse`: this function produces a model, never a finding — whatever
+it changes, `evaluatePatterns`/`simulate()` is what decides what's wrong
+with the result, same as any other model this package has ever seen.
 
 **Every trait carries provenance.** `Trait<T>` records whether a value was
 stated by the user, inferred from prose, or defaulted, plus a one-line
@@ -132,8 +148,10 @@ src/components.ts          isAsyncBoundary (a queue is where a sync chain stops)
 src/solver.ts              simulate() (cycle check + run every pattern), findBreakingTier()
 src/inference/schema.ts    Zod schema an LLM fills; every trait is a boolean or small enum
 src/inference/prompt.ts    The system prompt, kept separate so it can be diffed
-src/inference/fromProse.ts Prose -> SystemModel: one call, validate, one repair retry
-src/inference/proposeCacheTraits.ts  The one AI call in the fix flow: values only, see above
+src/inference/fromProse.ts Prose -> SystemModel: one call, validate, one repair retry (shared core: runStructuredModelCall)
+src/inference/reworkModel.ts         "Re-simulate": same shared core, seeded from the current model instead of prose
+src/inference/proposeCacheTraits.ts  The AI call for the one fix with free parameters: values, see above
+src/inference/explainFix.ts          The AI call for every other fix: one sentence of narration only
 src/whatif.ts              Scenario catalog + apply/compare: flip a trait toward its riskier value
 src/fixes.ts               Fix catalog keyed by finding code + apply-fix-then-resimulate
 models/reference.ts        Three hand-modelled systems (the oracle)

@@ -13,3 +13,7 @@ export { fromProse } from "./inference/fromProse.ts";
 export type { FromProseOptions, FromProseResult } from "./inference/fromProse.ts";
 export { proposeCacheTraits } from "./inference/proposeCacheTraits.ts";
 export type { CacheProposal, ProposeCacheTraitsOptions } from "./inference/proposeCacheTraits.ts";
+export { explainFix } from "./inference/explainFix.ts";
+export type { FixRationale, ExplainFixOptions } from "./inference/explainFix.ts";
+export { reworkModel } from "./inference/reworkModel.ts";
+export type { ReworkModelOptions, ReworkModelResult } from "./inference/reworkModel.ts";

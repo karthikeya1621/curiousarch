@@ -17,7 +17,7 @@ export function FixResultPanel({
 }) {
   const selectFix = useAppStore((s) => s.selectFix);
   const applyFix = useAppStore((s) => s.applyFix);
-  const { result, proposalStatus, proposalError, proposedTraits } = useFixResult(
+  const { result, proposalStatus, proposalError, proposedTraits, aiRationale } = useFixResult(
     model,
     scenarioId,
     fixId,
@@ -74,51 +74,56 @@ export function FixResultPanel({
         </button>
       </div>
 
-      {result.fix.hasAiProposal && (
-        <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50 p-2.5">
-          {proposalStatus === "loading" && (
-            <p className="text-xs font-medium text-violet-700">
-              Asking the architect for cache specifics…
+      <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50 p-2.5">
+        {proposalStatus === "loading" && (
+          <p className="text-xs font-medium text-violet-700">
+            {result.fix.hasAiProposal
+              ? "Asking the architect for cache specifics…"
+              : "Asking the architect why this fix fits…"}
+          </p>
+        )}
+        {proposalStatus === "done" && proposalError && (
+          <p className="text-xs text-violet-700">
+            {result.fix.hasAiProposal
+              ? `Using safe defaults — the AI proposal failed: ${proposalError}`
+              : `(AI explanation unavailable: ${proposalError})`}
+          </p>
+        )}
+        {proposalStatus === "done" && !proposalError && cacheProposal && (
+          <>
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-500">
+              AI-proposed cache configuration
             </p>
-          )}
-          {proposalStatus === "done" && proposalError && (
-            <p className="text-xs text-violet-700">
-              Using safe defaults — the AI proposal failed: {proposalError}
-            </p>
-          )}
-          {proposalStatus === "done" && !proposalError && cacheProposal && (
-            <>
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-500">
-                AI-proposed cache configuration
-              </p>
-              <div className="flex flex-col gap-1.5 text-xs">
-                {cacheProposal.ttl && (
-                  <p>
-                    <span className="font-semibold text-violet-900">ttl: {cacheProposal.ttl.value}</span>
-                    <span className="text-violet-700"> — {cacheProposal.ttl.rationale}</span>
-                  </p>
-                )}
-                {cacheProposal.keyspaceSize && (
-                  <p>
-                    <span className="font-semibold text-violet-900">
-                      keyspaceSize: {cacheProposal.keyspaceSize.value}
-                    </span>
-                    <span className="text-violet-700"> — {cacheProposal.keyspaceSize.rationale}</span>
-                  </p>
-                )}
-                {cacheProposal.hasStampedeProtection && (
-                  <p>
-                    <span className="font-semibold text-violet-900">
-                      hasStampedeProtection: {String(cacheProposal.hasStampedeProtection.value)}
-                    </span>
-                    <span className="text-violet-700"> — {cacheProposal.hasStampedeProtection.rationale}</span>
-                  </p>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )}
+            <div className="flex flex-col gap-1.5 text-xs">
+              {cacheProposal.ttl && (
+                <p>
+                  <span className="font-semibold text-violet-900">ttl: {cacheProposal.ttl.value}</span>
+                  <span className="text-violet-700"> — {cacheProposal.ttl.rationale}</span>
+                </p>
+              )}
+              {cacheProposal.keyspaceSize && (
+                <p>
+                  <span className="font-semibold text-violet-900">
+                    keyspaceSize: {cacheProposal.keyspaceSize.value}
+                  </span>
+                  <span className="text-violet-700"> — {cacheProposal.keyspaceSize.rationale}</span>
+                </p>
+              )}
+              {cacheProposal.hasStampedeProtection && (
+                <p>
+                  <span className="font-semibold text-violet-900">
+                    hasStampedeProtection: {String(cacheProposal.hasStampedeProtection.value)}
+                  </span>
+                  <span className="text-violet-700"> — {cacheProposal.hasStampedeProtection.rationale}</span>
+                </p>
+              )}
+            </div>
+          </>
+        )}
+        {proposalStatus === "done" && !proposalError && !cacheProposal && aiRationale && (
+          <p className="text-xs text-violet-700">{aiRationale}</p>
+        )}
+      </div>
 
       <div className="mt-3">
         <FindingsCompareTable

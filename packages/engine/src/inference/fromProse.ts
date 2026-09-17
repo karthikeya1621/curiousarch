@@ -89,7 +89,13 @@ export function buildToolInputSchema(): Record<string, unknown> {
   return schema;
 }
 
-function buildTool(): Anthropic.Tool {
+// Exported so reworkModel.ts (a second producer of a SystemModel, seeded
+// from the current model instead of prose) can reuse the exact same tool
+// definition rather than re-deriving it — this schema has already had 4
+// separate live-discovered strict-mode bugs fixed in it (see
+// buildToolInputSchema's comment); a second copy risks a future fix
+// landing in only one of them.
+export function buildTool(): Anthropic.Tool {
   return {
     name: TOOL_NAME,
     description:
@@ -132,14 +138,28 @@ export interface FromProseResult {
   repaired: boolean;
 }
 
-export async function fromProse(
-  description: string,
+/**
+ * The shared core behind both `fromProse` (userContent = a prose
+ * description) and `reworkModel.ts`'s `reworkModel` (userContent = the
+ * current model as JSON) — one LLM call for structured output, Zod
+ * validation, one repair retry, per PLAN-0.2. Extracted (not duplicated)
+ * specifically because this loop has already had multiple separate
+ * live-discovered strict-mode bugs fixed in it; a second hand-copied
+ * version would risk a future fix landing in only one place.
+ *
+ * `label` only affects error-message text (which caller to blame in a
+ * thrown error) and the `*_DEBUG` env var checked for verbose logging.
+ */
+export async function runStructuredModelCall(
+  systemPrompt: string,
+  userContent: string,
   options: FromProseOptions = {},
+  label = "fromProse",
 ): Promise<FromProseResult> {
   const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
   if (!options.client && !apiKey) {
     throw new Error(
-      "fromProse requires an Anthropic API key. Set ANTHROPIC_API_KEY or pass { apiKey }.",
+      `${label} requires an Anthropic API key. Set ANTHROPIC_API_KEY or pass { apiKey }.`,
     );
   }
 
@@ -149,7 +169,7 @@ export async function fromProse(
   const maxRetries = options.maxRetries ?? 1;
 
   const messages: Anthropic.MessageParam[] = [
-    { role: "user", content: description },
+    { role: "user", content: userContent },
   ];
 
   let lastError = "";
@@ -159,7 +179,7 @@ export async function fromProse(
     const response = await client.messages.create({
       model,
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       tools: [tool],
       tool_choice: { type: "tool", name: TOOL_NAME },
       messages:
@@ -184,13 +204,13 @@ export async function fromProse(
       lastError = "The model responded without calling the tool.";
       lastRaw = response.content;
       if (process.env.FROMPROSE_DEBUG) {
-        console.error(`[fromProse] attempt ${attempt}: no tool_use block. content:`, JSON.stringify(response.content));
+        console.error(`[${label}] attempt ${attempt}: no tool_use block. content:`, JSON.stringify(response.content));
       }
       continue;
     }
 
     if (process.env.FROMPROSE_DEBUG) {
-      console.error(`[fromProse] attempt ${attempt}: raw tool input:`, JSON.stringify(toolUse.input));
+      console.error(`[${label}] attempt ${attempt}: raw tool input:`, JSON.stringify(toolUse.input));
     }
 
     const parsed = SystemModelSchema.safeParse(toolUse.input);
@@ -206,7 +226,14 @@ export async function fromProse(
 
   const rawSnippet = JSON.stringify(lastRaw)?.slice(0, 500);
   throw new Error(
-    `fromProse: structured output still failed validation after ${maxRetries} ` +
+    `${label}: structured output still failed validation after ${maxRetries} ` +
       `repair attempt(s). Last error: ${lastError}\nLast raw output (truncated): ${rawSnippet}`,
   );
+}
+
+export async function fromProse(
+  description: string,
+  options: FromProseOptions = {},
+): Promise<FromProseResult> {
+  return runStructuredModelCall(SYSTEM_PROMPT, description, options, "fromProse");
 }
