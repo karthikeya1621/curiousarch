@@ -1,7 +1,7 @@
 /**
- * PLAN-0.1 acceptance: a hand-written JSON fixture — the shape an LLM's
- * structured output would actually produce — round-trips through
- * `SystemModelSchema` into a `SystemModel` that `simulate()` accepts.
+ * A hand-written JSON fixture — the shape an LLM's structured output would
+ * actually produce — round-trips through `SystemModelSchema` into a
+ * `SystemModel` that `simulate()` accepts.
  */
 
 import { describe, expect, it } from "vitest";
@@ -12,81 +12,58 @@ import { simulate } from "../src/solver.js";
 const fixture = {
   id: "checkout-fixture",
   name: "Checkout / order placement",
-  workload: { rps: 500 },
+  workload: {
+    scale: {
+      rationale: "A single-region order-placement API, not yet at wide scale.",
+      provenance: "stated",
+      value: "small",
+    },
+  },
   components: [
     {
       id: "gw",
       label: "API Gateway",
       kind: "gateway",
-      maxRps: {
-        rationale: "No account-level ceiling was mentioned; assumed default.",
-        provenance: "default",
-        value: 50_000,
-        unit: "rps",
+      hasRateLimiting: {
+        rationale: "Requests pass through a rate-limited API gateway.",
+        provenance: "stated",
+        value: true,
       },
     },
     {
       id: "svc",
       label: "Order service",
       kind: "service",
-      instances: {
-        rationale: "Prose stated eight running instances.",
+      instanceCount: {
+        rationale: "Eight instances behind a load balancer.",
         provenance: "stated",
-        value: 8,
-        unit: "count",
+        value: "multiple",
       },
-      concurrencyPerInstance: {
-        rationale: "No thread pool size given; assumed a common default.",
+      hasCircuitBreaker: {
+        rationale: "No circuit breaker mentioned; the common default.",
         provenance: "default",
-        value: 25,
-        unit: "count",
-      },
-      serviceTimeMs: {
-        rationale: "Validation plus a synchronous payment call.",
-        provenance: "inferred",
-        value: 40,
-        unit: "ms",
+        value: false,
       },
     },
     {
       id: "db",
       label: "PostgreSQL (primary)",
       kind: "database",
-      connectionPoolSize: {
-        rationale: "Prose stated a pool of forty with no PgBouncer.",
+      instanceCount: {
+        rationale: "Two read replicas alongside the primary.",
         provenance: "stated",
-        value: 40,
-        unit: "count",
+        value: "has-replicas",
       },
-      queryTimeMs: {
-        rationale: "Multi-row transactional write.",
-        provenance: "inferred",
-        value: 25,
-        unit: "ms",
-      },
-      writeRatio: {
-        rationale: "Order inserts dominate this endpoint.",
+      writeVolume: {
+        rationale: "Order inserts dominate this endpoint's traffic.",
         provenance: "stated",
-        value: 0.9,
-        unit: "ratio",
-      },
-      readReplicas: {
-        rationale: "Prose mentioned two read replicas.",
-        provenance: "stated",
-        value: 2,
-        unit: "count",
-      },
-      replicaApplyRate: {
-        rationale: "Single-threaded logical apply, typical for Postgres.",
-        provenance: "inferred",
-        value: 800,
-        unit: "ops",
+        value: "high",
       },
     },
   ],
   edges: [
-    { from: "gw", to: "svc", callsPerRequest: 1 },
-    { from: "svc", to: "db", callsPerRequest: 1 },
+    { from: "gw", to: "svc" },
+    { from: "svc", to: "db" },
   ],
 };
 
@@ -95,10 +72,10 @@ describe("SystemModelSchema", () => {
     const parsed = SystemModelSchema.parse(fixture);
     expect(() => simulate(parsed)).not.toThrow();
 
+    // No circuit breaker on a 3-deep synchronous chain — the same
+    // cascading-failure risk the golden test asserts for the real model.
     const result = simulate(parsed);
-    // Same numbers as the checkout golden test: 40 conns / 25ms = 1,600 RPS.
-    const db = result.components.find((c) => c.componentId === "db")!;
-    expect(Math.round(db.capacityRps)).toBe(1_600);
+    expect(result.findings.map((f) => f.code)).toContain("CASCADING_FAILURE_RISK");
   });
 
   it("rejects a component kind the engine doesn't support", () => {
@@ -115,7 +92,7 @@ describe("SystemModelSchema", () => {
   it("rejects a cycle at parse time rather than letting the solver throw", () => {
     const cyclic = {
       ...fixture,
-      edges: [...fixture.edges, { from: "db", to: "svc", callsPerRequest: 1 }],
+      edges: [...fixture.edges, { from: "db", to: "svc" }],
     };
     const result = SystemModelSchema.safeParse(cyclic);
     expect(result.success).toBe(false);
@@ -126,24 +103,30 @@ describe("SystemModelSchema", () => {
     }
   });
 
-  it("rejects a parameter with no rationale", () => {
+  it("rejects a trait with no rationale", () => {
     const noRationale = {
       ...fixture,
       components: fixture.components.map((c) =>
-        c.id === "svc" && c.kind === "service"
-          ? { ...c, serviceTimeMs: { ...c.serviceTimeMs, rationale: "" } }
+        c.id === "svc"
+          ? { ...c, hasCircuitBreaker: { ...c.hasCircuitBreaker, rationale: "" } }
           : c,
       ),
     };
     expect(SystemModelSchema.safeParse(noRationale).success).toBe(false);
   });
 
+  it("rejects an edge pointing at a component id that doesn't exist", () => {
+    const danglingEdge = {
+      ...fixture,
+      edges: [...fixture.edges, { from: "svc", to: "cache" }],
+    };
+    expect(SystemModelSchema.safeParse(danglingEdge).success).toBe(false);
+  });
+
   it("rejects a model with only a gateway — nothing actually doing work", () => {
     // Found live: a bare-gateway model passes every other check and reaches
     // simulate() as a trivially "healthy" system for a prose description
-    // that was clearly about more than admission control (see CONTEXT.md's
-    // live movie-ticket-booking test). This is what makes fromProse's
-    // existing repair-retry catch it instead.
+    // that was clearly about more than admission control.
     const gatewayOnly = {
       ...fixture,
       components: fixture.components.filter((c) => c.kind === "gateway"),
@@ -156,13 +139,5 @@ describe("SystemModelSchema", () => {
         true,
       );
     }
-  });
-
-  it("rejects an edge pointing at a component id that doesn't exist", () => {
-    const danglingEdge = {
-      ...fixture,
-      edges: [...fixture.edges, { from: "svc", to: "cache", callsPerRequest: 1 }],
-    };
-    expect(SystemModelSchema.safeParse(danglingEdge).success).toBe(false);
   });
 });

@@ -1,67 +1,126 @@
-import { isParameter } from "@archsim/engine";
-import type { Component, Parameter, SystemModel } from "@archsim/engine";
+import { isTrait } from "@archsim/engine";
+import type { Component, ScaleTier, Trait, SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
-import { useBreakingPoint } from "../lib/hooks";
+import { useBreakingTier } from "../lib/hooks";
 import { Card } from "./Card";
 import { Badge, type BadgeTone } from "./Badge";
 import { UndoIcon } from "./icons";
 
-const PROVENANCE_TONE: Record<Parameter["provenance"], BadgeTone> = {
+const PROVENANCE_TONE: Record<Trait<unknown>["provenance"], BadgeTone> = {
   stated: "info",
   inferred: "violet",
   default: "neutral",
 };
 
-function ParameterRow({
+const SCALE_TIERS: ScaleTier[] = ["small", "medium", "large", "massive"];
+
+/**
+ * Every enum trait in this app has exactly two options — but which two
+ * depends on kind, not just field name (both service and database have an
+ * `instanceCount` field, with different second options). Small and
+ * explicit rather than trying to derive this from the Zod schema at
+ * runtime, which would mean shipping schema internals to the client.
+ */
+const ENUM_OPTIONS: Partial<Record<Component["kind"], Record<string, [string, string]>>> = {
+  service: { instanceCount: ["single", "multiple"] },
+  cache: { ttl: ["short", "long"], keyspaceSize: ["small", "large"] },
+  database: { instanceCount: ["single", "has-replicas"], writeVolume: ["low", "high"] },
+  queue: { consumerScaling: ["fixed", "auto"] },
+};
+
+function SegmentedToggle({
+  options,
+  value,
+  onChange,
+}: {
+  options: readonly string[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div className="flex rounded-md border border-slate-200 p-0.5">
+      {options.map((opt) => (
+        <button
+          key={opt}
+          onClick={() => onChange(opt)}
+          className={
+            "rounded px-2 py-0.5 text-xs font-medium transition-colors " +
+            (opt === value ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100")
+          }
+        >
+          {opt}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function BooleanSwitch({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${checked ? "bg-slate-900" : "bg-slate-200"}`}
+    >
+      <span
+        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-4.5" : "translate-x-0.5"}`}
+      />
+    </button>
+  );
+}
+
+function TraitRow({
   componentId,
+  kind,
   field,
-  param,
+  trait,
 }: {
   componentId: string;
+  kind: Component["kind"];
   field: string;
-  param: Parameter;
+  trait: Trait<unknown>;
 }) {
-  const updateParameter = useAppStore((s) => s.updateParameter);
+  const updateTrait = useAppStore((s) => s.updateTrait);
 
   return (
     <div className="flex items-center justify-between gap-3 py-2">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-xs font-medium text-slate-700">{field}</span>
-          <Badge tone={PROVENANCE_TONE[param.provenance]}>{param.provenance}</Badge>
+          <Badge tone={PROVENANCE_TONE[trait.provenance]}>{trait.provenance}</Badge>
         </div>
-        <p className="truncate text-[11px] text-slate-400">{param.rationale}</p>
+        <p className="truncate text-[11px] text-slate-400">{trait.rationale}</p>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <input
-          type="number"
-          value={param.value}
-          onChange={(e) => {
-            const value = Number(e.target.value);
-            if (Number.isFinite(value)) updateParameter(componentId, field, value);
-          }}
-          className="w-20 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-right text-sm text-slate-900 focus:border-slate-400 focus:bg-white focus:outline-none"
-        />
-        <span className="w-10 shrink-0 text-xs text-slate-400">{param.unit}</span>
+      <div className="shrink-0">
+        {typeof trait.value === "boolean" ? (
+          <BooleanSwitch
+            checked={trait.value}
+            onChange={(next) => updateTrait(componentId, field, next)}
+          />
+        ) : (
+          <SegmentedToggle
+            options={ENUM_OPTIONS[kind]?.[field] ?? [String(trait.value)]}
+            value={String(trait.value)}
+            onChange={(next) => updateTrait(componentId, field, next)}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function componentParameters(component: Component): [string, Parameter][] {
-  return Object.entries(component).filter((entry): entry is [string, Parameter] =>
-    isParameter(entry[1]),
+function componentTraits(component: Component): [string, Trait<unknown>][] {
+  return Object.entries(component).filter((entry): entry is [string, Trait<unknown>] =>
+    isTrait(entry[1]),
   );
 }
 
 export function ControlPanel({ model }: { model: SystemModel }) {
-  const setWorkloadRps = useAppStore((s) => s.setWorkloadRps);
+  const setWorkloadScale = useAppStore((s) => s.setWorkloadScale);
   const history = useAppStore((s) => s.history);
   const undo = useAppStore((s) => s.undo);
-  const breakingPoint = useBreakingPoint(model);
-
-  // Range the traffic slider so the break (if any) is reachable by dragging.
-  const sliderMax = breakingPoint ? breakingPoint.rps * 2 : model.workload.rps * 4;
+  const breakingTier = useBreakingTier(model);
 
   return (
     <Card padding="sm" className="flex flex-col gap-1">
@@ -78,29 +137,25 @@ export function ControlPanel({ model }: { model: SystemModel }) {
       </div>
 
       <div className="border-b border-slate-100 pb-3 pt-2">
-        <div className="flex items-center justify-between text-xs text-slate-700">
-          <span className="font-medium">Traffic</span>
-          <span className="font-mono">{model.workload.rps.toLocaleString()} rps</span>
+        <span className="text-xs font-medium text-slate-700">Traffic scale</span>
+        <div className="mt-1.5">
+          <SegmentedToggle
+            options={SCALE_TIERS}
+            value={model.workload.scale.value}
+            onChange={(next) => setWorkloadScale(next as ScaleTier)}
+          />
         </div>
-        <input
-          type="range"
-          min={1}
-          max={Math.max(sliderMax, 1)}
-          value={model.workload.rps}
-          onChange={(e) => setWorkloadRps(Number(e.target.value))}
-          className="mt-2 w-full accent-slate-900"
-        />
-        <p className="mt-1 text-[11px] text-slate-400">
-          {breakingPoint
-            ? `Breaks around ${breakingPoint.rps.toLocaleString()} rps`
-            : "No breaking point found below the simulator's ceiling"}
+        <p className="mt-1.5 text-[11px] text-slate-400">
+          {breakingTier
+            ? `Breaks at ${breakingTier.scale} scale`
+            : "No risk found at any scale"}
         </p>
       </div>
 
       <div className="flex flex-col divide-y divide-slate-100">
         {model.components.map((component) => {
-          const params = componentParameters(component);
-          if (params.length === 0) return null;
+          const traits = componentTraits(component);
+          if (traits.length === 0) return null;
           return (
             <div key={component.id} className="py-1">
               <p className="pt-2 text-xs font-semibold text-slate-800">
@@ -108,12 +163,13 @@ export function ControlPanel({ model }: { model: SystemModel }) {
                 <span className="font-normal text-slate-400">· {component.id}</span>
               </p>
               <div className="flex flex-col divide-y divide-slate-50">
-                {params.map(([field, param]) => (
-                  <ParameterRow
+                {traits.map(([field, trait]) => (
+                  <TraitRow
                     key={field}
                     componentId={component.id}
+                    kind={component.kind}
                     field={field}
-                    param={param}
+                    trait={trait}
                   />
                 ))}
               </div>

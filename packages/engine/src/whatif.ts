@@ -1,26 +1,22 @@
 /**
- * What-if scenarios: structural or magnitude perturbations to a model you
- * already have, not new inferred parameters.
- *
- * PLAN-0.4 found that inferring absolute duration/capacity numbers from
- * prose is unreliable — bottleneck identity correct in only 30% of runs.
- * That failure is specific to getting an absolute number right (is this
- * query 15ms or 40ms?). It does not implicate the engine's queueing math,
- * which the golden tests hold to a real hand-derived standard. A relative
- * question — "what happens to THIS model if traffic triples, or a cache
- * goes cold, or half the fleet disappears" — only needs the mechanism to be
- * sound, not the baseline's absolute numbers to be exactly right. That is
- * what this module answers: given a model (however it was built), enumerate
- * plausible failure/stress scenarios, apply one, and diff the result against
- * the baseline.
- *
- * Findings are still computed by `simulate()`, never generated here — this
- * module only patches parameters and re-runs the same engine.
+ * What-if scenarios: a hypothetical DEGRADATION of a model you already
+ * have — never a new inferred model. Each scenario flips one trait toward
+ * its riskier value (a replica failing, a rate limiter getting disabled),
+ * or steps the workload up one scale tier. `compareScenario`'s diff logic
+ * only ever operates on `Finding[]` from `simulate()` — it never depended
+ * on numeric queueing math, which is exactly why this file barely changed
+ * shape across the architect-pivot, only what each scenario's `apply` does.
  */
 
 import { simulate } from "./solver.ts";
-import { isParameter } from "./types.ts";
-import type { Component, FindingCode, SimulationResult, SystemModel } from "./types.ts";
+import { isTrait } from "./types.ts";
+import type {
+  Component,
+  FindingCode,
+  ScaleTier,
+  SimulationResult,
+  SystemModel,
+} from "./types.ts";
 
 export interface Scenario {
   /** Stable, unique id — "<componentId>:<kind>" or "workload:<kind>". */
@@ -43,192 +39,123 @@ export function withComponent(
 }
 
 /**
- * Apply a user-supplied correction to one parameter. Unlike scenarios (which
+ * Apply a user-supplied correction to one trait. Unlike scenarios (which
  * model a hypothetical stress), this records that the user just told the
- * tool the real number — the edited field's provenance becomes "stated",
- * same as if it had been given up front.
+ * tool the real fact — the edited field's provenance becomes "stated",
+ * same as it would if it had been given up front.
  */
-export function setParameterValue(
+export function setTraitValue(
   model: SystemModel,
   componentId: string,
   field: string,
-  value: number,
+  value: string | boolean,
 ): SystemModel {
   return withComponent(model, componentId, (c) => {
     const record = c as unknown as Record<string, unknown>;
     const current = record[field];
-    if (!isParameter(current)) {
-      throw new Error(`"${field}" is not a parameter on component "${componentId}".`);
+    if (!isTrait(current)) {
+      throw new Error(`"${field}" is not a trait on component "${componentId}".`);
     }
     return { ...c, [field]: { ...current, value, provenance: "stated" } } as Component;
   });
 }
 
-function trafficScenarios(model: SystemModel): Scenario[] {
-  // 6x sits between 2x/5x/10x deliberately: for url-shortener specifically
-  // it lands the service at 90% utilization — a real HIGH_UTILIZATION
-  // warning with the system still healthy, not a jump straight to
-  // critical. Every other multiplier here skips past that "still fine,
-  // but say something" band for every reference model (verified by
-  // scanning 1x-10x across all three) — without it, nothing a user could
-  // actually click ever demonstrates PLAN-1.5's own stated point that
-  // warnings must surface before failure, not just critical findings.
-  return [2, 5, 6, 10].map((factor) => ({
-    id: `workload:traffic-${factor}x`,
-    label: `Traffic spikes to ${factor}x (${Math.round(model.workload.rps * factor).toLocaleString()} rps)`,
-    description: `A sudden ${factor}x surge — a sale, a viral post, a retry storm.`,
-    apply: (m) => ({ ...m, workload: { ...m.workload, rps: m.workload.rps * factor } }),
-  }));
+const SCALE_TIERS: ScaleTier[] = ["small", "medium", "large", "massive"];
+
+function workloadScenarios(model: SystemModel): Scenario[] {
+  const current = model.workload.scale.value;
+  const idx = SCALE_TIERS.indexOf(current);
+  if (idx === SCALE_TIERS.length - 1) return [];
+  const next = SCALE_TIERS[idx + 1]!;
+  return [
+    {
+      id: "workload:scale-up",
+      label: `Traffic grows to ${next} scale`,
+      description: `A sustained step up — real growth, not a spike — from ${current} to ${next}.`,
+      apply: (m) => ({ ...m, workload: { scale: { ...m.workload.scale, value: next } } }),
+    },
+  ];
 }
 
 function scenariosForComponent(component: Component): Scenario[] {
   switch (component.kind) {
     case "gateway":
-      // No failure mode of its own beyond traffic, which trafficScenarios
-      // already covers.
-      return [];
+      if (!component.hasRateLimiting.value) return [];
+      return [
+        {
+          id: `${component.id}:rate-limit-disabled`,
+          label: `${component.label}: rate limiter is disabled`,
+          description: "A misconfiguration or a deploy quietly turns off admission control.",
+          apply: (model) =>
+            withComponent(model, component.id, (c) =>
+              c.kind === "gateway" ? { ...c, hasRateLimiting: { ...c.hasRateLimiting, value: false } } : c,
+            ),
+        },
+      ];
 
     case "service":
+      if (component.instanceCount.value !== "multiple") return [];
       return [
         {
-          id: `${component.id}:instance-loss-50`,
-          label: `${component.label}: loses half its instances`,
-          description: "An AZ outage or a bad deploy takes out half the fleet.",
+          id: `${component.id}:loses-instance`,
+          label: `${component.label}: loses all but one instance`,
+          description: "An AZ outage or a bad deploy takes out the rest of the fleet.",
           apply: (model) =>
-            withComponent(model, component.id, (c) => {
-              if (c.kind !== "service") return c;
-              return {
-                ...c,
-                instances: {
-                  ...c.instances,
-                  value: Math.max(1, Math.floor(c.instances.value / 2)),
-                },
-              };
-            }),
-        },
-        {
-          id: `${component.id}:latency-spike-2x`,
-          label: `${component.label}: service time doubles`,
-          description: "A GC pause, a noisy neighbor, or a slow dependency call.",
-          apply: (model) =>
-            withComponent(model, component.id, (c) => {
-              if (c.kind !== "service") return c;
-              return {
-                ...c,
-                serviceTimeMs: { ...c.serviceTimeMs, value: c.serviceTimeMs.value * 2 },
-              };
-            }),
+            withComponent(model, component.id, (c) =>
+              c.kind === "service" ? { ...c, instanceCount: { ...c.instanceCount, value: "single" } } : c,
+            ),
         },
       ];
 
-    case "cache":
-      return [
-        {
-          id: `${component.id}:cold`,
-          label: `${component.label}: goes cold`,
-          description: "A flush or a redeploy wipes the cache; hit rate collapses.",
+    case "cache": {
+      const scenarios: Scenario[] = [];
+      if (component.hasStampedeProtection.value) {
+        scenarios.push({
+          id: `${component.id}:stampede-protection-fails`,
+          label: `${component.label}: stampede protection fails`,
+          description: "A bad deploy removes or bypasses the request-coalescing layer.",
           apply: (model) =>
-            withComponent(model, component.id, (c) => {
-              if (c.kind !== "cache") return c;
-              return { ...c, hitRate: { ...c.hitRate, value: 0.02 } };
-            }),
-        },
-        {
-          id: `${component.id}:slow-op-10x`,
-          label: `${component.label}: per-op time rises 10x`,
-          description: "Memory pressure or a noisy neighbor slows every operation.",
-          apply: (model) =>
-            withComponent(model, component.id, (c) => {
-              if (c.kind !== "cache") return c;
-              return { ...c, cpuTimeMs: { ...c.cpuTimeMs, value: c.cpuTimeMs.value * 10 } };
-            }),
-        },
-      ];
+            withComponent(model, component.id, (c) =>
+              c.kind === "cache" ? { ...c, hasStampedeProtection: { ...c.hasStampedeProtection, value: false } } : c,
+            ),
+        });
+      }
+      return scenarios;
+    }
 
     case "database":
+      if (component.instanceCount.value !== "has-replicas") return [];
       return [
         {
-          id: `${component.id}:query-latency-2x`,
-          label: `${component.label}: query time doubles`,
-          description: "A missing index, lock contention, or a noisy neighbor.",
+          id: `${component.id}:replica-fails`,
+          label: `${component.label}: the replica fails`,
+          description: "A crash, a botched failover, or maintenance takes the only copy down to one.",
           apply: (model) =>
-            withComponent(model, component.id, (c) => {
-              if (c.kind !== "database") return c;
-              return { ...c, queryTimeMs: { ...c.queryTimeMs, value: c.queryTimeMs.value * 2 } };
-            }),
-        },
-        {
-          id: `${component.id}:pool-shrink-50`,
-          label: `${component.label}: connection pool halves`,
-          description: "A leak, a misconfiguration, or a failover shrinks the pool.",
-          apply: (model) =>
-            withComponent(model, component.id, (c) => {
-              if (c.kind !== "database") return c;
-              return {
-                ...c,
-                connectionPoolSize: {
-                  ...c.connectionPoolSize,
-                  value: Math.max(1, Math.floor(c.connectionPoolSize.value / 2)),
-                },
-              };
-            }),
-        },
-        {
-          id: `${component.id}:write-spike-2x`,
-          label: `${component.label}: write share doubles`,
-          description: "A bulk import or backfill job temporarily spikes writes.",
-          apply: (model) =>
-            withComponent(model, component.id, (c) => {
-              if (c.kind !== "database") return c;
-              return {
-                ...c,
-                writeRatio: { ...c.writeRatio, value: Math.min(1, c.writeRatio.value * 2) },
-              };
-            }),
+            withComponent(model, component.id, (c) =>
+              c.kind === "database" ? { ...c, instanceCount: { ...c.instanceCount, value: "single" } } : c,
+            ),
         },
       ];
 
     case "queue":
+      if (component.consumerScaling.value !== "auto") return [];
       return [
         {
-          id: `${component.id}:consumer-loss-50`,
-          label: `${component.label}: loses half its consumers`,
-          description: "A deploy, a crash loop, or a scale-down takes out half the workers.",
+          id: `${component.id}:autoscaler-stuck`,
+          label: `${component.label}: the autoscaler gets stuck`,
+          description: "A quota limit or a stuck controller leaves the consumer pool fixed during a burst.",
           apply: (model) =>
-            withComponent(model, component.id, (c) => {
-              if (c.kind !== "queue") return c;
-              return {
-                ...c,
-                consumers: {
-                  ...c.consumers,
-                  value: Math.max(1, Math.floor(c.consumers.value / 2)),
-                },
-              };
-            }),
-        },
-        {
-          id: `${component.id}:consumer-slowdown-2x`,
-          label: `${component.label}: per-job time doubles`,
-          description: "A slow downstream dependency or larger jobs than usual.",
-          apply: (model) =>
-            withComponent(model, component.id, (c) => {
-              if (c.kind !== "queue") return c;
-              return {
-                ...c,
-                consumerServiceTimeMs: {
-                  ...c.consumerServiceTimeMs,
-                  value: c.consumerServiceTimeMs.value * 2,
-                },
-              };
-            }),
+            withComponent(model, component.id, (c) =>
+              c.kind === "queue" ? { ...c, consumerScaling: { ...c.consumerScaling, value: "fixed" } } : c,
+            ),
         },
       ];
   }
 }
 
-/** Every plausible failure/stress scenario for this model, model-agnostic. */
+/** Every plausible degradation for this model, model-agnostic. */
 export function listScenarios(model: SystemModel): Scenario[] {
-  return [...trafficScenarios(model), ...model.components.flatMap(scenariosForComponent)];
+  return [...workloadScenarios(model), ...model.components.flatMap(scenariosForComponent)];
 }
 
 export function applyScenario(model: SystemModel, scenarioId: string): SystemModel {
@@ -249,7 +176,6 @@ export interface ScenarioDelta {
   newlyUnhealthy: boolean;
   newFindingCodes: FindingCode[];
   resolvedFindingCodes: FindingCode[];
-  endToEndMeanDeltaMs: number;
 }
 
 /** Simulate a model both as-is and under one scenario, and diff the two. */
@@ -274,6 +200,5 @@ export function compareScenario(model: SystemModel, scenarioId: string): Scenari
     newlyUnhealthy: baseline.healthy && !underScenario.healthy,
     newFindingCodes: [...scenarioCodes].filter((c) => !baselineCodes.has(c)),
     resolvedFindingCodes: [...baselineCodes].filter((c) => !scenarioCodes.has(c)),
-    endToEndMeanDeltaMs: underScenario.endToEndMeanMs - baseline.endToEndMeanMs,
   };
 }

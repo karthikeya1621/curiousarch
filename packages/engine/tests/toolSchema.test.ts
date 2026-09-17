@@ -34,20 +34,29 @@ describe("tool input schema", () => {
     expect(schema.$schema).toBeUndefined();
   });
 
-  it("every $ref points into definitions, never at another path", () => {
-    // Live 400: "References must be defined under '$defs' or 'definitions',
-    // not 'properties'". zod-to-json-schema's $refStrategy "root" points a
-    // $ref at the first occurrence's own path for any object it recognizes
-    // as reused — Parameter deliberately (fixed via the explicit
-    // `definitions` map), and, until fixed, also the shared id/label
-    // instances from a spread base-fields object no one intended to reuse.
+  it("every $ref points at a top-level definitions entry, never a nested path within one", () => {
+    // Two distinct live 400s, both from the same root cause (a Zod object
+    // reused across multiple fields, without an explicit `definitions`
+    // entry for it):
+    //   1. "References must be defined under '$defs' or 'definitions', not
+    //      'properties'" — $ref pointed at a field's own in-document path
+    //      (e.g. #/properties/components/.../id).
+    //   2. "Reference to non-existent definition:
+    //      #/definitions/BooleanTrait/properties/provenance" — $ref pointed
+    //      *into* a definitions entry's nested property (ProvenanceSchema,
+    //      reused inside every trait schema) instead of a sibling top-level
+    //      entry, because only BooleanTraitSchema had been hoisted, not
+    //      ProvenanceSchema too. A regex that only checked the ref *starts
+    //      with* "#/definitions/" would pass this broken case — it does
+    //      start with that — so this asserts the ref is *exactly*
+    //      "#/definitions/<name>" with no further path segments.
     const schema = buildToolInputSchema();
     const refs = [...JSON.stringify(schema).matchAll(/"\$ref":"([^"]+)"/g)].map(
       (m) => m[1],
     );
     expect(refs.length).toBeGreaterThan(0);
     for (const ref of refs) {
-      expect(ref).toMatch(/^#\/(definitions|\$defs)\//);
+      expect(ref).toMatch(/^#\/(definitions|\$defs)\/[^/]+$/);
     }
   });
 

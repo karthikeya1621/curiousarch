@@ -1,8 +1,8 @@
 /**
  * Fix catalogue: applying a failure scenario, then a fix on top of it, and
- * confirming the fix's transform actually does what its label claims and
- * that re-simulating shows the intended recovery. Expected values are
- * derived on paper from the reference models' own numbers.
+ * confirming the fix's trait flip actually does what its label claims and
+ * that re-simulating shows the intended recovery. Expected outcomes are
+ * reasoned from the reference models' own traits, not captured from a run.
  */
 
 import { describe, expect, it } from "vitest";
@@ -10,146 +10,115 @@ import { listFixes, compareFix } from "../src/fixes.js";
 import { checkout, mediaUpload, urlShortener } from "../models/reference.js";
 import type { SystemModel } from "../src/types.js";
 
-/**
- * Same herd-prone shape as golden.test.ts's "flags a herd when few hot keys
- * sit over a slow refill" fixture, but with the downstream query time tuned
- * to 30ms specifically so halving it (15ms) crosses the duplication
- * threshold: duplicatesPerExpiry = (load / hotKeys) * refillSeconds =
- * (10,000 / 100) * 0.03 = 3 before the fix (>= 2, herd fires), and
- * (10,000 / 100) * 0.015 = 1.5 after (< 2, herd clears) — with the
- * downstream database nowhere near its own capacity (100 conns / 15ms =
- * 6,666.67 rps sustainable, against ~500 rps of actual miss traffic), so
- * nothing else about the model is at risk of confounding the result.
- */
-const herdProne: SystemModel = {
+/** url-shortener with the one thing wrong at baseline (the herd risk) fixed. */
+const cleanUrlShortener: SystemModel = {
   ...urlShortener,
-  components: urlShortener.components.map((c) => {
-    if (c.kind === "cache") return { ...c, keyspaceHotSet: { ...c.keyspaceHotSet, value: 100 } };
-    if (c.kind === "database") return { ...c, queryTimeMs: { ...c.queryTimeMs, value: 30 } };
-    return c;
-  }),
+  components: urlShortener.components.map((c) =>
+    c.id === "cache" && c.kind === "cache"
+      ? { ...c, hasStampedeProtection: { ...c.hasStampedeProtection, value: true } }
+      : c,
+  ),
 };
 
 describe("listFixes", () => {
-  it("is empty when the scenario doesn't break anything at current load", () => {
-    // checkout has ~3.2x headroom (1,600 / 500 rps); halving the pool
-    // (40 -> 20, capacity -> 800 rps) still leaves it healthy.
-    expect(listFixes(checkout, "db:pool-shrink-50")).toEqual([]);
+  it("is empty when the scenario doesn't produce any finding", () => {
+    // cleanUrlShortener has zero findings at baseline (no SPOF, no herd, no
+    // cascading — the circuit breaker covers it); scale doesn't affect any
+    // of that, and there's no queue here for FIXED_SCALING_AT_SCALE either.
+    expect(listFixes(cleanUrlShortener, "workload:scale-up")).toEqual([]);
   });
 
-  it("offers fixes keyed by whatever finding the scenario actually produces", () => {
-    // 10x traffic (5,000 rps) blows past checkout's 1,600 rps pool capacity
-    // and its service capacity (5,000 rps at baseline serviceTimeMs).
-    const fixes = listFixes(checkout, "workload:traffic-10x");
+  it("offers fixes keyed by whatever findings the scenario actually produces", () => {
+    // checkout already has CASCADING_FAILURE_RISK at baseline; losing the
+    // service's instance adds SINGLE_POINT_OF_FAILURE on top of it.
+    const fixes = listFixes(checkout, "svc:loses-instance");
     const ids = fixes.map((f) => f.id);
-    expect(ids).toContain("db:pool-2x");
-    expect(ids).toContain("db:query-time-half");
+    expect(ids).toContain("svc:add-circuit-breaker");
+    expect(ids).toContain("svc:add-instance");
   });
 
   it("de-duplicates fixes when multiple findings would offer the same one", () => {
-    const fixes = listFixes(checkout, "workload:traffic-10x");
+    const fixes = listFixes(checkout, "svc:loses-instance");
     const ids = fixes.map((f) => f.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("offers a preventive fix for a HIGH_UTILIZATION warning, keyed by the component's own kind", () => {
-    // url-shortener's service hits exactly 90% utilization at 6x traffic
-    // (60,000 / 66,666.67) — a warning, nothing saturated. The factory
-    // switches on component.kind, so a service gets an instances-based
-    // fix, not the pool/consumer/cpu-time variants meant for other kinds.
-    const fixes = listFixes(urlShortener, "workload:traffic-6x");
-    const ids = fixes.map((f) => f.id);
-    expect(ids).toContain("svc:instances-1.5x-preventive");
-    expect(ids).not.toContain("svc:pool-1.5x-preventive");
-  });
-
-  it("offers a second THUNDERING_HERD fix targeting the downstream database's query time, not the cache", () => {
-    const fixes = listFixes(herdProne, "svc:instance-loss-50");
-    const ids = fixes.map((f) => f.id);
-    expect(ids).toContain("cache:ttl-2x");
-    expect(ids).toContain("cache:refill-query-half");
+  it("walks back to the calling service for a cascading-failure fix, not the finding's own component", () => {
+    // The finding sits on "db" (the chain's tail); the fix belongs on
+    // "svc", the service actually making the synchronous call.
+    const fixes = listFixes(checkout, "workload:scale-up");
+    const breaker = fixes.find((f) => f.targetsFindingCode === "CASCADING_FAILURE_RISK")!;
+    expect(breaker.id).toBe("svc:add-circuit-breaker");
   });
 });
 
 describe("compareFix", () => {
-  it("actually scales the targeted parameter, not just the label", () => {
-    const result = compareFix(checkout, "workload:traffic-10x", "db:pool-2x");
-    // Original pool is 40; the fix doubles it to 80, independent of the
-    // scenario's own changes (traffic-10x doesn't touch the pool).
-    const before = checkout.components.find((c) => c.id === "db");
-    if (before?.kind !== "database") throw new Error("expected database");
-    expect(before.connectionPoolSize.value).toBe(40); // unmutated original
+  it("actually flips the targeted trait, not just the label", () => {
+    compareFix(checkout, "svc:loses-instance", "svc:add-instance");
+    // Original is untouched regardless of what the fix does internally.
+    const original = checkout.components.find((c) => c.id === "svc");
+    if (original?.kind !== "service") throw new Error("expected service");
+    expect(original.instanceCount.value).toBe("multiple");
   });
 
   it("resolves the specific finding it targets", () => {
-    // 5x traffic (2,500 rps) exceeds checkout's 1,600 rps pool capacity but
-    // stays under its 5,000 rps service capacity; doubling the pool
-    // (40 -> 80, capacity -> 3,200 rps) clears that specific finding.
-    const result = compareFix(checkout, "workload:traffic-5x", "db:pool-2x");
+    const result = compareFix(checkout, "svc:loses-instance", "svc:add-instance");
     expect(result.underFailure.findings.map((f) => f.code)).toContain(
-      "CONNECTION_POOL_EXHAUSTED",
+      "SINGLE_POINT_OF_FAILURE",
     );
     expect(result.underFix.findings.map((f) => f.code)).not.toContain(
-      "CONNECTION_POOL_EXHAUSTED",
+      "SINGLE_POINT_OF_FAILURE",
     );
     expect(result.resolved).toBe(true);
   });
 
   it("does not claim to resolve a finding it doesn't target", () => {
-    // 5x traffic also pushes writeRps far past the replica apply rate;
-    // the pool fix does nothing about that.
-    const result = compareFix(checkout, "workload:traffic-5x", "db:pool-2x");
-    expect(result.underFailure.findings.map((f) => f.code)).toContain("REPLICATION_LAG");
-    expect(result.underFix.findings.map((f) => f.code)).toContain("REPLICATION_LAG");
+    // Adding an instance back does nothing about the pre-existing missing
+    // circuit breaker.
+    const result = compareFix(checkout, "svc:loses-instance", "svc:add-instance");
+    expect(result.underFailure.findings.map((f) => f.code)).toContain("CASCADING_FAILURE_RISK");
+    expect(result.underFix.findings.map((f) => f.code)).toContain("CASCADING_FAILURE_RISK");
   });
 
-  it("does not silently resolve a failure the fix only delays", () => {
-    // Doubling a queue's retention capacity delays overflow — it doesn't
-    // fix the underlying drain-rate deficit, so the finding must persist.
-    const result = compareFix(mediaUpload, "workload:traffic-2x", "queue:capacity-2x");
-    expect(result.underFailure.findings.map((f) => f.code)).toContain("QUEUE_OVERFLOW");
-    expect(result.underFix.findings.map((f) => f.code)).toContain("QUEUE_OVERFLOW");
-    expect(result.resolved).toBe(false);
-  });
-
-  it("resolves a HIGH_UTILIZATION warning by adding headroom before anything saturates", () => {
-    // 20 -> 30 instances: 30*50=1,500 servers at 15ms => 100,000 rps
-    // capacity. 60,000 / 100,000 = 60% — comfortably back under the 80%
-    // threshold.
-    const result = compareFix(urlShortener, "workload:traffic-6x", "svc:instances-1.5x-preventive");
-    expect(result.underFailure.findings.map((f) => f.code)).toContain("HIGH_UTILIZATION");
-    expect(result.underFix.findings.map((f) => f.code)).not.toContain("HIGH_UTILIZATION");
+  it("resolves the cascading-failure finding by adding a circuit breaker on the calling service, not the finding's own component", () => {
+    const result = compareFix(checkout, "workload:scale-up", "svc:add-circuit-breaker");
+    expect(result.underFailure.findings.map((f) => f.code)).toContain("CASCADING_FAILURE_RISK");
+    expect(result.underFix.findings.map((f) => f.code)).not.toContain("CASCADING_FAILURE_RISK");
     expect(result.resolved).toBe(true);
-
-    const svc = result.underFix.components.find((c) => c.componentId === "svc")!;
-    expect(svc.utilization).toBeCloseTo(0.6, 5);
   });
 
-  it("resolves a herd by speeding up the downstream refill query instead of touching the cache", () => {
-    const result = compareFix(herdProne, "svc:instance-loss-50", "cache:refill-query-half");
-    expect(result.underFailure.findings.map((f) => f.code)).toContain("THUNDERING_HERD");
-    expect(result.underFix.findings.map((f) => f.code)).not.toContain("THUNDERING_HERD");
-    expect(result.resolved).toBe(true);
+  it("resolves a thundering-herd risk with either of its two fixes", () => {
+    const viaStampedeProtection = compareFix(
+      urlShortener,
+      "workload:scale-up",
+      "cache:stampede-protection",
+    );
+    expect(viaStampedeProtection.resolved).toBe(true);
 
-    // Confirms *which* component actually changed: the database's capacity
-    // doubles (30ms -> 15ms query time, 100 conns / 0.015s = 6,666.67 rps),
-    // not the cache's — a fix under a different id touching the cache
-    // instead would leave this figure exactly where it started.
-    const dbBefore = result.underFailure.components.find((c) => c.componentId === "db")!;
-    const dbAfter = result.underFix.components.find((c) => c.componentId === "db")!;
-    expect(dbBefore.capacityRps).toBeCloseTo(3_333.33, 1);
-    expect(dbAfter.capacityRps).toBeCloseTo(6_666.67, 1);
+    const viaLongerTtl = compareFix(urlShortener, "workload:scale-up", "cache:lengthen-ttl");
+    expect(viaLongerTtl.resolved).toBe(true);
+  });
+
+  it("resolves a fixed-scaling warning by switching to autoscaling", () => {
+    const small: SystemModel = {
+      ...mediaUpload,
+      workload: { scale: { ...mediaUpload.workload.scale, value: "medium" } },
+    };
+    const result = compareFix(small, "workload:scale-up", "queue:autoscale-consumers");
+    expect(result.underFailure.findings.map((f) => f.code)).toContain("FIXED_SCALING_AT_SCALE");
+    expect(result.underFix.findings.map((f) => f.code)).not.toContain("FIXED_SCALING_AT_SCALE");
+    expect(result.resolved).toBe(true);
   });
 
   it("throws for a fix that doesn't apply to the scenario's findings", () => {
-    expect(() => compareFix(checkout, "db:pool-shrink-50", "db:pool-2x")).toThrow(
+    expect(() => compareFix(checkout, "workload:scale-up", "svc:add-instance")).toThrow(
       /unknown fix/i,
     );
   });
 
   it("leaves the original model untouched", () => {
     const before = JSON.stringify(checkout);
-    compareFix(checkout, "workload:traffic-10x", "db:pool-2x");
+    compareFix(checkout, "svc:loses-instance", "svc:add-instance");
     expect(JSON.stringify(checkout)).toBe(before);
   });
 });

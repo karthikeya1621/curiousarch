@@ -22,9 +22,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "sim": "tsx bin/sim.ts",
-    "whatif": "tsx bin/whatif.ts",
-    "check-inference": "tsx bin/check-inference.ts",
-    "compare": "tsx bin/run-comparison.ts"
+    "whatif": "tsx bin/whatif.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",

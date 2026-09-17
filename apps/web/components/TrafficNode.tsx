@@ -9,7 +9,7 @@ type TrafficNodeData = { scenarios: Scenario[] };
 
 export function TrafficNode({ data }: NodeProps) {
   const { scenarios } = data as unknown as TrafficNodeData;
-  const rps = useAppStore((s) => s.model.workload.rps);
+  const scale = useAppStore((s) => s.model.workload.scale.value);
   const isOpen = useAppStore((s) => s.openComponentId === TRAFFIC_NODE_ID);
 
   return (
@@ -22,7 +22,7 @@ export function TrafficNode({ data }: NodeProps) {
       <Handle type="source" position={Position.Right} className="bg-slate-300!" />
       <ActivityIcon className="mx-auto h-3.5 w-3.5 text-slate-400" />
       <p className="mt-0.5 text-xs font-semibold text-slate-700">Traffic</p>
-      <p className="font-mono text-[10px] text-slate-400">{rps.toLocaleString()} rps</p>
+      <p className="font-mono text-[10px] text-slate-400">{scale} scale</p>
       <FailureIndicator
         nodeId={TRAFFIC_NODE_ID}
         scenarios={scenarios}

@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { checkout, setParameterValue } from "@archsim/engine";
-import type { SystemModel } from "@archsim/engine";
+import { checkout, setTraitValue } from "@archsim/engine";
+import type { ScaleTier, SystemModel } from "@archsim/engine";
 
 /**
  * Only ids are stored, never the Scenario/Fix/ScenarioDelta/FixResult
@@ -38,7 +38,7 @@ import type { SystemModel } from "@archsim/engine";
  * model), never `fix.apply(scenario.apply(model))`. Like a full model
  * swap, it clears the transient selections (the old scenario/fix/open
  * node no longer describe anything meaningful once the model has moved),
- * but like a parameter edit, it pushes undo history rather than clearing
+ * but like a trait edit, it pushes undo history rather than clearing
  * it — this is one step in an ongoing correction loop, not a fresh start.
  */
 interface AppState {
@@ -48,8 +48,8 @@ interface AppState {
   selectedFixId: string | null;
   openComponentId: string | null;
   setModel: (model: SystemModel) => void;
-  updateParameter: (componentId: string, field: string, value: number) => void;
-  setWorkloadRps: (rps: number) => void;
+  updateTrait: (componentId: string, field: string, value: string | boolean) => void;
+  setWorkloadScale: (scale: ScaleTier) => void;
   applyFix: (newModel: SystemModel) => void;
   undo: () => void;
   selectScenario: (id: string | null) => void;
@@ -73,18 +73,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       openComponentId: null,
     }),
 
-  updateParameter: (componentId, field, value) => {
+  updateTrait: (componentId, field, value) => {
     const { model, history } = get();
     set({
-      model: setParameterValue(model, componentId, field, value),
+      model: setTraitValue(model, componentId, field, value),
       history: [...history, model],
     });
   },
 
-  setWorkloadRps: (rps) => {
+  setWorkloadScale: (scale) => {
     const { model, history } = get();
     set({
-      model: { ...model, workload: { ...model.workload, rps } },
+      model: { ...model, workload: { scale: { ...model.workload.scale, value: scale, provenance: "stated" } } },
       history: [...history, model],
     });
   },

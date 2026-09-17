@@ -4,7 +4,6 @@ import { useAppStore } from "../lib/store";
 import { useScenarioDelta, useFixes } from "../lib/hooks";
 import { FindingsList } from "./FindingsList";
 import { FindingsCompareTable } from "./FindingsCompareTable";
-import { UtilizationTable } from "./UtilizationTable";
 import { FixResultPanel } from "./FixResultPanel";
 import { Badge } from "./Badge";
 import { XIcon, AlertTriangleIcon } from "./icons";
@@ -63,14 +62,6 @@ export function FailurePanel({
         </div>
       )}
 
-      <p className="mb-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-        Per-component utilization
-      </p>
-      <UtilizationTable
-        before={delta.baseline.components}
-        after={delta.underScenario.components}
-      />
-
       {delta.newlyUnhealthy && (
         <div className="mt-3 flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
           <AlertTriangleIcon className="h-4 w-4 shrink-0" />
@@ -80,7 +71,7 @@ export function FailurePanel({
 
       <p className="mb-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
         {fixes.length === 0
-          ? "No fixes to offer — this failure doesn't break anything at the current load."
+          ? "No fixes to offer — this failure doesn't break anything at the current scale."
           : `${fixes.length} fix(es) available`}
       </p>
       <div className="flex flex-col gap-1.5">

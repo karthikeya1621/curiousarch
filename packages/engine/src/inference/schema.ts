@@ -2,47 +2,62 @@
  * The structured-output schema an LLM fills to produce a `SystemModel`.
  *
  * This mirrors `types.ts` exactly — the structured output *is* the model,
- * not something translated into one afterward. Two rules from PLAN-0.1 shape
- * every field:
+ * not something translated into one afterward. Two rules shape every field:
  *
- *   1. Every parameter requires `provenance` and `rationale`. A value without
- *      a stated reason is unreviewable — the correction loop depends on the
- *      UI being able to show "we guessed 8ms because X".
+ *   1. Every trait requires `provenance` and `rationale`. A value without a
+ *      stated reason is unreviewable — the correction loop depends on the
+ *      UI being able to show "we assumed no rate limiting because nothing
+ *      was said".
  *   2. Reasoning fields come before value fields. Field order affects
  *      quality under constrained decoding: asking for a conclusion before
  *      its justification measurably degrades the justification.
  *
- * Cycles are rejected here, at parse time, rather than left for the solver to
- * throw on — `fromProse` should never hand `simulate()` a model it hasn't
- * already validated.
+ * Traits here are categorical (booleans and small enums), never numbers —
+ * this is the architect-pivot's whole point: "does this have a read
+ * replica" is a question an LLM can actually answer from a sentence,
+ * "what's the exact query time in milliseconds" never was.
+ *
+ * Cycles are rejected here, at parse time, rather than left for the solver
+ * to throw on — `fromProse` should never hand `simulate()` a model it
+ * hasn't already validated.
  */
 
 import { z } from "zod";
 import type { Component, Edge, SystemModel } from "../types.ts";
 
-const ProvenanceSchema = z.enum(["stated", "inferred", "default"]);
+// Exported for the same reason BooleanTraitSchema is below: this single
+// object is reused across every trait in the model (ten-plus occurrences),
+// and zod-to-json-schema's $refStrategy "root" needs it in an explicit
+// `definitions` map or it points $ref at the first occurrence's own nested
+// path (discovered live: "Reference to non-existent definition:
+// #/definitions/BooleanTrait/properties/provenance") instead of a real
+// top-level definition.
+export const ProvenanceSchema = z.enum(["stated", "inferred", "default"]);
 
-/**
- * Field order is deliberate: rationale (the reasoning) precedes provenance
- * (the classification that reasoning supports), which precedes value and
- * unit (the conclusion). Do not reorder this without re-reading PLAN-0.1.
- */
-export const ParameterSchema = z.object({
-  rationale: z
-    .string()
-    .min(1, "Every parameter needs a one-line reason, even for a default."),
-  provenance: ProvenanceSchema,
-  value: z.number(),
-  unit: z.string(),
-});
+function traitSchema<T extends z.ZodTypeAny>(valueSchema: T) {
+  return z.object({
+    rationale: z
+      .string()
+      .min(1, "Every trait needs a one-line reason, even for a default."),
+    provenance: ProvenanceSchema,
+    value: valueSchema,
+  });
+}
+
+// Exported (unlike the enum trait schemas below) specifically because it's
+// reused across multiple fields (hasRateLimiting, hasCircuitBreaker,
+// hasStampedeProtection, hasDeadLetterQueue) — zod-to-json-schema treats a
+// reused object identity as something to $ref, and fromProse.ts must hoist
+// it into an explicit `definitions` entry or that $ref points at the first
+// occurrence's own path, which the API rejects live. The enum trait
+// schemas below are each structurally distinct (different value enums), so
+// none of them hit this.
+export const BooleanTraitSchema = traitSchema(z.boolean());
 
 // A function, not a shared object: `id`/`label` must be a *fresh* ZodString
-// instance per component schema. zod-to-json-schema treats reused object
-// identity as something to $ref, and pointed that $ref straight at the first
-// occurrence's in-document path — the API rejects that live ("References
-// must be defined under '$defs' or 'definitions'"). Parameter is reused
-// deliberately and hoisted into `definitions` in fromProse.ts; these tiny
-// primitives aren't worth that ceremony, so each component just gets its own.
+// instance per component schema — zod-to-json-schema treats reused object
+// identity as something to $ref, and pointed that $ref straight at the
+// first occurrence's in-document path, which the API rejects live.
 const baseFields = () => ({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -51,43 +66,36 @@ const baseFields = () => ({
 const GatewaySchema = z.object({
   ...baseFields(),
   kind: z.literal("gateway"),
-  maxRps: ParameterSchema,
+  hasRateLimiting: BooleanTraitSchema,
 });
 
 const ServiceSchema = z.object({
   ...baseFields(),
   kind: z.literal("service"),
-  instances: ParameterSchema,
-  concurrencyPerInstance: ParameterSchema,
-  serviceTimeMs: ParameterSchema,
+  instanceCount: traitSchema(z.enum(["single", "multiple"])),
+  hasCircuitBreaker: BooleanTraitSchema,
 });
 
 const CacheSchema = z.object({
   ...baseFields(),
   kind: z.literal("cache"),
-  hitRate: ParameterSchema,
-  hitLatencyMs: ParameterSchema,
-  cpuTimeMs: ParameterSchema,
-  ttlSeconds: ParameterSchema,
-  keyspaceHotSet: ParameterSchema,
+  ttl: traitSchema(z.enum(["short", "long"])),
+  keyspaceSize: traitSchema(z.enum(["small", "large"])),
+  hasStampedeProtection: BooleanTraitSchema,
 });
 
 const DatabaseSchema = z.object({
   ...baseFields(),
   kind: z.literal("database"),
-  connectionPoolSize: ParameterSchema,
-  queryTimeMs: ParameterSchema,
-  writeRatio: ParameterSchema,
-  readReplicas: ParameterSchema,
-  replicaApplyRate: ParameterSchema,
+  instanceCount: traitSchema(z.enum(["single", "has-replicas"])),
+  writeVolume: traitSchema(z.enum(["low", "high"])),
 });
 
 const QueueSchema = z.object({
   ...baseFields(),
   kind: z.literal("queue"),
-  capacity: ParameterSchema,
-  consumers: ParameterSchema,
-  consumerServiceTimeMs: ParameterSchema,
+  hasDeadLetterQueue: BooleanTraitSchema,
+  consumerScaling: traitSchema(z.enum(["fixed", "auto"])),
 });
 
 /**
@@ -106,12 +114,10 @@ const ComponentSchema = z.discriminatedUnion("kind", [
 const EdgeSchema = z.object({
   from: z.string().min(1),
   to: z.string().min(1),
-  callsPerRequest: z.number().positive(),
 });
 
 const WorkloadSchema = z.object({
-  rps: z.number().positive(),
-  payloadKb: z.number().positive().optional(),
+  scale: traitSchema(z.enum(["small", "medium", "large", "massive"])),
 });
 
 export const SystemModelSchema = z
@@ -119,15 +125,13 @@ export const SystemModelSchema = z
     id: z.string().min(1),
     name: z.string().min(1),
     // .min(1) here, not .min(2) — this same declaration feeds
-    // buildToolInputSchema() as well as response parsing, and strict mode's
-    // constrained decoding rejects the request outright for an array
-    // `minItems` above 1 ("'minItems' values other than 0 or 1 are not
-    // supported"), discovered live. The real "at least one component beyond
-    // the gateway" check lives in superRefine below instead, which
-    // zodToJsonSchema never translates into the schema sent to the API in
-    // the first place (same reason the cycle/dangling-edge checks live
-    // there) — so it can be as strict as it needs to be without touching
-    // what the live call is allowed to ask for.
+    // buildToolInputSchema() as well as response parsing, and strict
+    // mode's constrained decoding rejects the request outright for an
+    // array `minItems` above 1 ("'minItems' values other than 0 or 1 are
+    // not supported"), discovered live against the old numeric schema.
+    // The real "at least one component beyond the gateway" check lives in
+    // superRefine below instead, which zodToJsonSchema never translates
+    // into the schema sent to the API in the first place.
     components: z.array(ComponentSchema).min(1),
     edges: z.array(EdgeSchema),
     workload: WorkloadSchema,
@@ -135,10 +139,7 @@ export const SystemModelSchema = z
   .superRefine((model, ctx) => {
     // A gateway alone does no work and models nothing — every reference
     // model has a gateway plus at least one thing actually processing the
-    // request. Found live: a bare-gateway model passed every other check
-    // here and reached simulate() as a trivially "healthy" system that said
-    // nothing, for a prose description that was clearly about more than
-    // admission control (see CONTEXT.md's movie-ticket-booking test).
+    // request.
     if (model.components.length < 2) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -183,7 +184,7 @@ export const SystemModelSchema = z
         code: z.ZodIssueCode.custom,
         message:
           "Model contains a cycle. Retries and circuit breakers are " +
-          "parameters, not edges back into an upstream component.",
+          "modelled as a trait, not an edge back into an upstream component.",
         path: ["edges"],
       });
     }

@@ -5,18 +5,18 @@
  *     Every node with a possible failure (an "indicator"), and what those
  *     failures are.
  *
- *   npx tsx bin/whatif.ts --model checkout --scenario db:query-latency-2x
+ *   npx tsx bin/whatif.ts --model checkout --scenario svc:loses-instance
  *     Applies that failure, shows the delta against baseline, and lists
  *     fixes (with tradeoffs) for whatever it broke.
  *
- *   npx tsx bin/whatif.ts --model checkout --scenario db:query-latency-2x --fix db:pool-2x
+ *   npx tsx bin/whatif.ts --model checkout --scenario svc:loses-instance --fix svc:add-instance
  *     Applies the failure, then the fix on top of it, and shows whether the
  *     fix actually resolved what the failure broke.
  *
  * Also accepts prose (via fromProse, needs ANTHROPIC_API_KEY) in place of
- * --model, same as bin/sim.ts. No new numbers are inferred by any of this —
- * every scenario and fix is a fixed, hand-written transform on whatever the
- * baseline model already has.
+ * --model, same as bin/sim.ts. No new facts are inferred by any of this —
+ * every scenario and fix is a fixed, hand-written trait flip on whatever
+ * the baseline model already has.
  */
 
 import { simulate } from "../src/solver.js";
@@ -39,10 +39,6 @@ function usage(): never {
     ].join("\n"),
   );
   process.exit(1);
-}
-
-function fmtMs(ms: number): string {
-  return Number.isFinite(ms) ? `${Math.round(ms * 10) / 10}ms` : "inf";
 }
 
 function findingsLine(findings: { code: string }[]): string {
@@ -93,8 +89,8 @@ async function main(): Promise<void> {
 
     console.log(`# ${model.name} (${model.id})`);
     console.log(
-      `baseline: ${model.workload.rps.toLocaleString()} rps, healthy=${baseline.healthy}, ` +
-        `end-to-end mean ${fmtMs(baseline.endToEndMeanMs)}, findings: ${findingsLine(baseline.findings)}\n`,
+      `baseline: ${model.workload.scale.value} scale, healthy=${baseline.healthy}, ` +
+        `findings: ${findingsLine(baseline.findings)}\n`,
     );
 
     const componentById = new Map(model.components.map((c) => [c.id, c] as [string, Component]));
@@ -154,24 +150,9 @@ async function main(): Promise<void> {
   console.log(`${delta.scenario.description}\n`);
 
   console.log("baseline:");
-  console.log(`  healthy=${delta.baseline.healthy}  end-to-end mean ${fmtMs(delta.baseline.endToEndMeanMs)}  findings: ${findingsLine(delta.baseline.findings)}`);
+  console.log(`  healthy=${delta.baseline.healthy}  findings: ${findingsLine(delta.baseline.findings)}`);
   console.log("under this failure:");
-  console.log(`  healthy=${delta.underScenario.healthy}  end-to-end mean ${fmtMs(delta.underScenario.endToEndMeanMs)}  findings: ${findingsLine(delta.underScenario.findings)}`);
-
-  console.log();
-  const deltaSign = delta.endToEndMeanDeltaMs >= 0 ? "+" : "";
-  console.log(`end-to-end mean latency: ${deltaSign}${fmtMs(delta.endToEndMeanDeltaMs)}`);
-
-  // Aggregate latency can hide the real early-warning signal: with enough
-  // pooled servers, utilization can climb a long way before Erlang-C wait
-  // time moves at all. Per-component utilization is what actually says "you
-  // are now much closer to the edge," so show it even when latency doesn't.
-  console.log("\nper-component utilization (baseline -> under failure):");
-  for (const before of delta.baseline.components) {
-    const after = delta.underScenario.components.find((c) => c.componentId === before.componentId)!;
-    const flag = after.saturated ? "  SATURATED" : after.utilization >= 0.8 ? "  high" : "";
-    console.log(`  ${before.componentId}: ${(before.utilization * 100).toFixed(1)}% -> ${(after.utilization * 100).toFixed(1)}%${flag}`);
-  }
+  console.log(`  healthy=${delta.underScenario.healthy}  findings: ${findingsLine(delta.underScenario.findings)}`);
 
   if (delta.newlyUnhealthy) {
     console.log("\n⚠ this failure breaks a system that was healthy at baseline.");
@@ -180,7 +161,7 @@ async function main(): Promise<void> {
   const fixes = listFixes(model, scenarioFlag);
   console.log();
   if (fixes.length === 0) {
-    console.log("No fixes to offer — this failure doesn't break anything at the current load.");
+    console.log("No fixes to offer — this failure doesn't break anything at the current scale.");
   } else {
     console.log(`${fixes.length} fix(es) available:\n`);
     for (const fix of fixes) {

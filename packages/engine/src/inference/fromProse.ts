@@ -12,7 +12,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { ParameterSchema, SystemModelSchema } from "./schema.ts";
+import { BooleanTraitSchema, ProvenanceSchema, SystemModelSchema } from "./schema.ts";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import type { SystemModel } from "../types.ts";
 
@@ -61,20 +61,25 @@ function stripNumericBounds(node: unknown): void {
  * this.
  */
 export function buildToolInputSchema(): Record<string, unknown> {
-  // SystemModelSchema reuses the same ParameterSchema object across ~20
-  // fields (maxRps, instances, queryTimeMs, ...). Inlining it at every
-  // occurrence ($refStrategy "none") produced a schema strict mode's
-  // compiled grammar rejected outright as too large — discovered live.
-  // $refStrategy "root" alone fixed the size but pointed $ref at the first
-  // inline occurrence's path (e.g. #/properties/components/.../id), which
-  // the API also rejects live: "References must be defined under '$defs' or
-  // 'definitions'". Passing `definitions` explicitly hoists ParameterSchema
-  // into a real definitions block with a proper #/definitions/Parameter
-  // $ref, satisfying both constraints.
+  // Two objects are reused across the schema and need an explicit
+  // `definitions` entry each, or zod-to-json-schema's $refStrategy "root"
+  // points their $ref at the first occurrence's own nested path instead of
+  // a real top-level definition — the API rejects that live either way it
+  // fails ("References must be defined under '$defs' or 'definitions'" for
+  // the first form found; "Reference to non-existent definition:
+  // #/definitions/BooleanTrait/properties/provenance" for the second,
+  // discovered only after fixing the first):
+  //   - BooleanTraitSchema itself, reused across the four boolean traits
+  //     (hasRateLimiting, hasCircuitBreaker, hasStampedeProtection,
+  //     hasDeadLetterQueue).
+  //   - ProvenanceSchema, reused inside *every* trait schema — including
+  //     the enum ones (instanceCount, ttl, ...), which are each otherwise
+  //     structurally distinct and don't need hoisting themselves, but all
+  //     share this one nested field.
   const schema = zodToJsonSchema(SystemModelSchema, {
     target: "jsonSchema7",
     $refStrategy: "root",
-    definitions: { Parameter: ParameterSchema },
+    definitions: { BooleanTrait: BooleanTraitSchema, Provenance: ProvenanceSchema },
   }) as Record<string, unknown>;
   // zodToJsonSchema stamps a draft-07 $schema pointer even under the
   // jsonSchema7 target; the actual shape it emits validates fine against

@@ -1,27 +1,29 @@
 /**
- * CLI harness — PLAN-0.3.
+ * CLI harness.
  *
  *   npx tsx bin/sim.ts "describe a system..."
- *   npx tsx bin/sim.ts --model url-shortener --rps 50000
+ *   npx tsx bin/sim.ts --model url-shortener --scale large
  *
- * Prints the model with every parameter's provenance, the simulation at the
- * given load, every finding with its evidence, and the breaking point. No
- * formatting effort beyond readability — this exists so 0.4/0.5's comparison
- * runs can be read in under ten seconds, not to be a product surface.
+ * Prints the model with every trait's provenance, the findings the pattern
+ * catalogue produces, and the breaking tier. No formatting effort beyond
+ * readability — this exists so a run can be read in under ten seconds, not
+ * to be a product surface.
  */
 
-import { simulate, findBreakingPoint } from "../src/solver.js";
+import { simulate, findBreakingTier } from "../src/solver.js";
 import { referenceModels } from "../models/reference.js";
 import { fromProse } from "../src/inference/fromProse.js";
-import { isParameter } from "../src/types.js";
-import type { Component, SystemModel } from "../src/types.js";
+import { isTrait } from "../src/types.js";
+import type { Component, ScaleTier, SystemModel } from "../src/types.js";
+
+const SCALE_TIERS: ScaleTier[] = ["small", "medium", "large", "massive"];
 
 function usage(): never {
   console.error(
     [
       "Usage:",
       '  npx tsx bin/sim.ts "<prose description of a system>"',
-      "  npx tsx bin/sim.ts --model <id> [--rps <n>]",
+      "  npx tsx bin/sim.ts --model <id> [--scale <small|medium|large|massive>]",
       "",
       `  Reference model ids: ${referenceModels.map((m) => m.id).join(", ")}`,
     ].join("\n"),
@@ -29,58 +31,33 @@ function usage(): never {
   process.exit(1);
 }
 
-function round(value: number, dp = 0): number {
-  if (!Number.isFinite(value)) return value;
-  const factor = 10 ** dp;
-  return Math.round(value * factor) / factor;
-}
-
-function fmtMs(ms: number): string {
-  return Number.isFinite(ms) ? `${round(ms, 1)}ms` : "inf";
-}
-
 function printModel(model: SystemModel, inferred: boolean): void {
   console.log(`# ${model.name} (${model.id})${inferred ? "  [inferred]" : ""}`);
-  console.log(`workload: ${model.workload.rps.toLocaleString()} rps\n`);
+  console.log(`workload scale: ${model.workload.scale.value} (${model.workload.scale.provenance}) ${model.workload.scale.rationale}\n`);
 
   for (const component of model.components) {
     console.log(`- ${component.id} [${component.kind}] ${component.label}`);
     for (const [key, value] of Object.entries(component as Component)) {
-      if (!isParameter(value)) continue;
-      console.log(
-        `    ${key} = ${value.value}${value.unit}  (${value.provenance}) ${value.rationale}`,
-      );
+      if (!isTrait(value)) continue;
+      console.log(`    ${key} = ${value.value}  (${value.provenance}) ${value.rationale}`);
     }
   }
 
   console.log("\nedges:");
   for (const edge of model.edges) {
-    console.log(`  ${edge.from} -> ${edge.to}  x${edge.callsPerRequest}`);
+    console.log(`  ${edge.from} -> ${edge.to}`);
   }
 }
 
 function printRun(model: SystemModel): void {
   const result = simulate(model);
 
-  console.log(`\n## Simulation at ${model.workload.rps.toLocaleString()} rps`);
-  console.log(`healthy: ${result.healthy}`);
-  console.log(
-    `end-to-end: mean ${fmtMs(result.endToEndMeanMs)}, p99 ${fmtMs(result.endToEndP99Ms)}\n`,
-  );
+  console.log(`\n## Findings at ${model.workload.scale.value} scale`);
+  console.log(`healthy: ${result.healthy}\n`);
 
-  for (const c of result.components) {
-    const flag = c.saturated ? "  SATURATED" : "";
-    console.log(
-      `  ${c.componentId}: arrival=${round(c.arrivalRps)}rps capacity=${round(c.capacityRps)}rps ` +
-        `util=${(c.utilization * 100).toFixed(1)}% mean=${fmtMs(c.meanLatencyMs)} p99=${fmtMs(c.p99LatencyMs)}${flag}`,
-    );
-  }
-
-  console.log();
   if (result.findings.length === 0) {
-    console.log("No findings at this load.");
+    console.log("No findings at this scale.");
   } else {
-    console.log("Findings:");
     for (const f of result.findings) {
       console.log(`  [${f.severity.toUpperCase()}] ${f.code} @ ${f.componentId}`);
       for (const [k, v] of Object.entries(f.evidence)) {
@@ -90,11 +67,11 @@ function printRun(model: SystemModel): void {
   }
 
   console.log();
-  const breaking = findBreakingPoint(model);
+  const breaking = findBreakingTier(model);
   if (breaking === null) {
-    console.log("Breaking point: not reached below 1,000,000 rps.");
+    console.log("Breaking tier: not reached at any scale.");
   } else {
-    console.log(`Breaking point: ${breaking.rps.toLocaleString()} rps`);
+    console.log(`Breaking tier: ${breaking.scale}`);
     for (const f of breaking.findings) {
       console.log(`  [${f.severity.toUpperCase()}] ${f.code} @ ${f.componentId}`);
     }
@@ -104,14 +81,14 @@ function printRun(model: SystemModel): void {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   let modelFlag: string | undefined;
-  let rpsFlag: number | undefined;
+  let scaleFlag: string | undefined;
   const prose: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--model") {
       modelFlag = args[++i];
-    } else if (args[i] === "--rps") {
-      rpsFlag = Number(args[++i]);
+    } else if (args[i] === "--scale") {
+      scaleFlag = args[++i];
     } else {
       prose.push(args[i]!);
     }
@@ -141,8 +118,12 @@ async function main(): Promise<void> {
     usage();
   }
 
-  if (rpsFlag !== undefined && !Number.isNaN(rpsFlag)) {
-    model = { ...model, workload: { ...model.workload, rps: rpsFlag } };
+  if (scaleFlag) {
+    if (!SCALE_TIERS.includes(scaleFlag as ScaleTier)) {
+      console.error(`Unknown --scale "${scaleFlag}". Options: ${SCALE_TIERS.join(", ")}`);
+      process.exit(1);
+    }
+    model = { ...model, workload: { scale: { ...model.workload.scale, value: scaleFlag as ScaleTier } } };
   }
 
   printModel(model, inferred);

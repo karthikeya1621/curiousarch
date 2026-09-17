@@ -1,7 +1,7 @@
 /**
  * useAppStore is a Zustand hook, but the hook itself exposes getState/
  * setState statically — no React rendering needed to exercise it. Expected
- * values are derived from the engine's own reference-model numbers, same
+ * values are derived from the engine's own reference-model traits, same
  * standard as packages/engine's tests.
  */
 
@@ -18,41 +18,49 @@ beforeEach(() => {
 describe("applyFix", () => {
   it("applies the fix to the real model, not the hypothetical failure+fix combination", () => {
     useAppStore.setState({ model: checkout });
-    const fix = listFixes(checkout, "workload:traffic-10x").find((f) => f.id === "db:pool-2x")!;
+    const fix = listFixes(checkout, "svc:loses-instance").find((f) => f.id === "svc:add-instance")!;
 
     // fix.apply(checkout) directly — never fix.apply(scenario.apply(checkout)).
     // Confirms the store commits the fix against the real baseline: checkout
-    // is healthy and untouched by the traffic-10x scenario, so the only
-    // change should be the pool doubling, nothing scenario-related.
+    // was never actually degraded by the "loses an instance" scenario, so
+    // the only change should be the instance count, nothing scenario-related.
     useAppStore.getState().applyFix(fix.apply(checkout));
 
-    const db = useAppStore.getState().model.components.find((c) => c.id === "db");
-    if (db?.kind !== "database") throw new Error("expected database");
-    expect(db.connectionPoolSize.value).toBe(80); // 40 * 2
-    expect(db.queryTimeMs.value).toBe(25); // untouched by traffic-10x's own changes
+    const svc = useAppStore.getState().model.components.find((c) => c.id === "svc");
+    if (svc?.kind !== "service") throw new Error("expected service");
+    expect(svc.instanceCount.value).toBe("multiple");
   });
 
   it("pushes undo history so the fix can be reverted", () => {
     useAppStore.setState({ model: checkout, history: [] });
-    const fix = listFixes(checkout, "workload:traffic-10x").find((f) => f.id === "db:pool-2x")!;
+    const degraded = {
+      ...checkout,
+      components: checkout.components.map((c) =>
+        c.id === "svc" && c.kind === "service"
+          ? { ...c, instanceCount: { ...c.instanceCount, value: "single" as const } }
+          : c,
+      ),
+    };
+    useAppStore.setState({ model: degraded });
+    const fix = listFixes(degraded, "workload:scale-up").find((f) => f.id === "svc:add-instance")!;
 
-    useAppStore.getState().applyFix(fix.apply(checkout));
+    useAppStore.getState().applyFix(fix.apply(degraded));
     expect(useAppStore.getState().history).toHaveLength(1);
 
     useAppStore.getState().undo();
-    const db = useAppStore.getState().model.components.find((c) => c.id === "db");
-    if (db?.kind !== "database") throw new Error("expected database");
-    expect(db.connectionPoolSize.value).toBe(40); // reverted
+    const svc = useAppStore.getState().model.components.find((c) => c.id === "svc");
+    if (svc?.kind !== "service") throw new Error("expected service");
+    expect(svc.instanceCount.value).toBe("single"); // reverted
   });
 
   it("clears the transient scenario/fix/open-node selections", () => {
     useAppStore.setState({
       model: checkout,
-      selectedScenarioId: "workload:traffic-10x",
-      selectedFixId: "db:pool-2x",
-      openComponentId: "db",
+      selectedScenarioId: "svc:loses-instance",
+      selectedFixId: "svc:add-instance",
+      openComponentId: "svc",
     });
-    const fix = listFixes(checkout, "workload:traffic-10x").find((f) => f.id === "db:pool-2x")!;
+    const fix = listFixes(checkout, "svc:loses-instance").find((f) => f.id === "svc:add-instance")!;
 
     useAppStore.getState().applyFix(fix.apply(checkout));
 

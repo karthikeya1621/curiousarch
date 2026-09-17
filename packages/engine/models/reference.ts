@@ -1,172 +1,156 @@
 /**
- * Three reference systems, hand-modelled BEFORE the engine was trusted.
+ * Three hand-modelled systems — the oracle for what a correct pattern match
+ * looks like, same role these played before the architect-pivot, just in
+ * trait terms now instead of numeric parameters.
  *
- * These exist to be an oracle. The expected failure points were written down
- * from operational experience first; the engine has to reproduce them. If the
- * engine and the hand-model disagree, the engine is wrong until proven
- * otherwise.
- *
- * Numbers here are deliberately round so they can be checked on paper.
+ * Deliberately spans the finding-severity spectrum: checkout starts with one
+ * real critical finding, url-shortener with a different one, media-upload
+ * with only warnings (healthy, but not risk-free) — the same "warnings
+ * before failure" point PLAN-1.5 made originally still matters here.
  */
 
-// .ts extension, not .js: Turbopack cannot resolve a .js-suffixed import
-// pointing at a .ts file for this workspace package at all (confirmed live —
-// see src/index.ts's doc comment for the full story). tsc/tsx/vitest accept
-// either under moduleResolution: "bundler", so this is safe for every
-// consumer, not just the web app.
-import { param } from "../src/types.ts";
+import { trait } from "../src/types.ts";
 import type { SystemModel } from "../src/types.ts";
 
 /**
- * 1. URL shortener — read-dominated, cache-fronted.
+ * 1. Checkout / order placement.
  *
- * Hand-model: cache absorbs 95%, so Postgres sees 5% of traffic. Pool of 100
- * at 8ms/query sustains 100/0.008 = 12,500 qps, so the DB caps the system at
- * roughly 250,000 RPS. The cache itself, at ~10us busy time per op (see
- * cpuTimeMs), sustains 1/0.00001 = 100,000 RPS — well above the service.
- * The service is the real limit: 20 instances x 50 concurrency = 1,000
- * servers at 15ms = 66,667 RPS.
- */
-export const urlShortener: SystemModel = {
-  id: "url-shortener",
-  name: "URL shortener",
-  workload: { rps: 10_000, payloadKb: 1 },
-  components: [
-    {
-      id: "gw",
-      label: "API Gateway",
-      kind: "gateway",
-      maxRps: param(100_000, "rps", "default", "ALB default account ceiling."),
-    },
-    {
-      id: "svc",
-      label: "Redirect service",
-      kind: "service",
-      instances: param(20, "count", "stated", "Current ASG size."),
-      concurrencyPerInstance: param(50, "count", "default", "Node event-loop slots."),
-      serviceTimeMs: param(15, "ms", "inferred", "Lookup plus 302 render."),
-    },
-    {
-      id: "cache",
-      label: "Redis",
-      kind: "cache",
-      hitRate: param(0.95, "ratio", "inferred", "Hot links dominate reads."),
-      hitLatencyMs: param(1, "ms", "default", "Same-AZ Redis round trip."),
-      cpuTimeMs: param(0.01, "ms", "default", "~10us per-op busy time, typical for a simple in-memory GET."),
-      ttlSeconds: param(300, "s", "stated", "Five-minute TTL."),
-      keyspaceHotSet: param(10_000, "count", "inferred", "Actively hit links."),
-    },
-    {
-      id: "db",
-      label: "PostgreSQL",
-      kind: "database",
-      connectionPoolSize: param(100, "count", "stated", "Pool max."),
-      queryTimeMs: param(8, "ms", "inferred", "Indexed primary-key lookup."),
-      writeRatio: param(0.02, "ratio", "inferred", "Creates are rare."),
-      readReplicas: param(0, "count", "stated", "None."),
-      replicaApplyRate: param(0, "ops", "default", "No replicas."),
-    },
-  ],
-  edges: [
-    { from: "gw", to: "svc", callsPerRequest: 1 },
-    { from: "svc", to: "cache", callsPerRequest: 1 },
-    { from: "cache", to: "db", callsPerRequest: 1 },
-  ],
-};
-
-/**
- * 2. Checkout — write-heavy, uncached, pool-bound.
- *
- * Hand-model: no cache, so every request is a 25ms write against a pool of 40.
- * Capacity is 40/0.025 = 1,600 RPS. This one should exhaust its pool early and
- * loudly; it is the canonical example from the concept doc.
+ * Well-provisioned against instance/replica loss (multiple order-service
+ * instances, a replicated database) but — like most real systems — was
+ * never built with a circuit breaker between the service and its database.
+ * That's a real, common gap, not a contrived one: CASCADING_FAILURE_RISK
+ * fires from the start rather than needing a scenario to surface it.
  */
 export const checkout: SystemModel = {
   id: "checkout",
   name: "Checkout / order placement",
-  workload: { rps: 500 },
+  workload: { scale: trait("small", "stated", "A single-region order-placement API, not yet at wide scale.") },
   components: [
     {
       id: "gw",
       label: "API Gateway",
       kind: "gateway",
-      maxRps: param(50_000, "rps", "default", "Account ceiling."),
+      hasRateLimiting: trait(true, "stated", "Requests pass through a rate-limited API gateway."),
     },
     {
       id: "svc",
       label: "Order service",
       kind: "service",
-      instances: param(8, "count", "stated", "Current deployment."),
-      concurrencyPerInstance: param(25, "count", "default", "Thread pool."),
-      serviceTimeMs: param(40, "ms", "inferred", "Validation plus payment call."),
+      instanceCount: trait("multiple", "stated", "Eight instances behind a load balancer."),
+      hasCircuitBreaker: trait(false, "default", "No circuit breaker mentioned — the common default for a first build."),
     },
     {
       id: "db",
       label: "PostgreSQL (primary)",
       kind: "database",
-      connectionPoolSize: param(40, "count", "stated", "PgBouncer absent."),
-      queryTimeMs: param(25, "ms", "inferred", "Multi-row transactional write."),
-      writeRatio: param(0.9, "ratio", "stated", "Order inserts dominate."),
-      readReplicas: param(2, "count", "stated", "Two read replicas."),
-      replicaApplyRate: param(800, "ops", "inferred", "Single-threaded apply."),
+      instanceCount: trait("has-replicas", "stated", "Two read replicas alongside the primary."),
+      writeVolume: trait("high", "stated", "Order inserts dominate this endpoint's traffic."),
     },
   ],
   edges: [
-    { from: "gw", to: "svc", callsPerRequest: 1 },
-    { from: "svc", to: "db", callsPerRequest: 1 },
+    { from: "gw", to: "svc" },
+    { from: "svc", to: "db" },
   ],
 };
 
 /**
- * 3. Media upload — async fan-out through a queue.
+ * 2. URL shortener.
  *
- * Hand-model: the API returns as soon as the job is enqueued, so end-to-end
- * synchronous latency must exclude the workers entirely. Consumers drain at
- * 12/2.0s = 6 jobs/sec, so anything above 6 RPS fills a 100k queue steadily.
+ * The classic cache-aside read path (gateway -> service -> cache ->
+ * database) with a small, short-lived hot keyspace and no request
+ * coalescing on refill — the textbook thundering-herd setup. A circuit
+ * breaker on the redirect service keeps CASCADING_FAILURE_RISK from also
+ * firing here, so the herd risk is the one thing on stage.
  */
-export const mediaUpload: SystemModel = {
-  id: "media-upload",
-  name: "Media upload with async processing",
-  workload: { rps: 50 },
+export const urlShortener: SystemModel = {
+  id: "url-shortener",
+  name: "URL shortener",
+  workload: { scale: trait("medium", "stated", "A popular consumer link shortener, moderate steady traffic.") },
   components: [
     {
       id: "gw",
       label: "API Gateway",
       kind: "gateway",
-      maxRps: param(10_000, "rps", "default", "Account ceiling."),
+      hasRateLimiting: trait(true, "default", "Typical default for a public-facing gateway."),
     },
     {
-      id: "api",
-      label: "Upload API",
+      id: "svc",
+      label: "Redirect service",
       kind: "service",
-      instances: param(6, "count", "stated", "Current deployment."),
-      concurrencyPerInstance: param(20, "count", "default", "Worker threads."),
-      serviceTimeMs: param(30, "ms", "inferred", "Accept and enqueue."),
+      instanceCount: trait("multiple", "stated", "Twenty instances handle redirect lookups."),
+      hasCircuitBreaker: trait(true, "stated", "Calls to the cache and database are wrapped in a circuit breaker."),
     },
     {
-      id: "queue",
-      label: "SQS",
-      kind: "queue",
-      capacity: param(100_000, "messages", "default", "Retention-bounded."),
-      consumers: param(12, "count", "stated", "Worker pool size."),
-      consumerServiceTimeMs: param(2_000, "ms", "inferred", "Transcode per file."),
+      id: "cache",
+      label: "Redis",
+      kind: "cache",
+      ttl: trait("short", "stated", "Five-minute TTL on cached redirects."),
+      keyspaceSize: trait("small", "stated", "A small number of frequently hit short links dominate traffic."),
+      hasStampedeProtection: trait(false, "default", "No request coalescing or refill locking mentioned."),
     },
     {
       id: "db",
       label: "PostgreSQL",
       kind: "database",
-      connectionPoolSize: param(30, "count", "stated", "Pool max."),
-      queryTimeMs: param(10, "ms", "inferred", "Metadata write."),
-      writeRatio: param(1, "ratio", "stated", "Workers only write."),
-      readReplicas: param(0, "count", "stated", "None."),
-      replicaApplyRate: param(0, "ops", "default", "No replicas."),
+      instanceCount: trait("has-replicas", "stated", "Two read replicas serve cache-miss lookups."),
+      writeVolume: trait("low", "stated", "Reads dominate; new short links are created rarely by comparison."),
     },
   ],
   edges: [
-    { from: "gw", to: "api", callsPerRequest: 1 },
-    { from: "api", to: "queue", callsPerRequest: 1 },
-    { from: "queue", to: "db", callsPerRequest: 1 },
+    { from: "gw", to: "svc" },
+    { from: "svc", to: "cache" },
+    { from: "cache", to: "db" },
   ],
 };
 
-export const referenceModels = [urlShortener, checkout, mediaUpload];
+/**
+ * 3. Media upload with async processing.
+ *
+ * Healthy — every finding here is a warning, not a critical — but not
+ * risk-free: no admission control, no dead-letter queue, and a fixed
+ * worker pool that's already operating at large scale. The same point
+ * this session's HIGH_UTILIZATION work made under the old numeric engine
+ * (warnings must be visible on an otherwise-healthy system, or an all-red
+ * UI trains people to ignore red) still has to hold here.
+ */
+export const mediaUpload: SystemModel = {
+  id: "media-upload",
+  name: "Media upload with async processing",
+  workload: { scale: trait("large", "stated", "Upload service for roughly a million registered users.") },
+  components: [
+    {
+      id: "gw",
+      label: "API Gateway",
+      kind: "gateway",
+      hasRateLimiting: trait(false, "default", "No admission limit mentioned."),
+    },
+    {
+      id: "api",
+      label: "Upload API",
+      kind: "service",
+      instanceCount: trait("multiple", "stated", "Six instances accept and enqueue uploads."),
+      hasCircuitBreaker: trait(false, "default", "No circuit breaker mentioned; the queue between it and processing is async anyway."),
+    },
+    {
+      id: "queue",
+      label: "Transcode queue",
+      kind: "queue",
+      hasDeadLetterQueue: trait(false, "default", "No dead-letter handling mentioned for messages that repeatedly fail."),
+      consumerScaling: trait("fixed", "stated", "A fixed pool of transcoder workers."),
+    },
+    {
+      id: "db",
+      label: "Media metadata DB",
+      kind: "database",
+      instanceCount: trait("has-replicas", "stated", "Read replicas serve metadata lookups."),
+      writeVolume: trait("low", "stated", "Metadata writes are small compared to the media itself."),
+    },
+  ],
+  edges: [
+    { from: "gw", to: "api" },
+    { from: "api", to: "queue" },
+    { from: "queue", to: "db" },
+  ],
+};
+
+export const referenceModels: SystemModel[] = [checkout, urlShortener, mediaUpload];

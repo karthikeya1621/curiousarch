@@ -1,10 +1,10 @@
 /**
  * `fromProse` against a fake Anthropic client — no network, no API cost.
  *
- * This exercises the part of PLAN-0.2 that doesn't need a live model: the
- * validate -> repair-retry -> give-up state machine. The actual "does the LLM
- * produce a good model" question (0.2's real acceptance criterion, and 0.4)
- * still needs a live key; this only proves the harness around it is correct.
+ * This exercises the part that doesn't need a live model: the validate ->
+ * repair-retry -> give-up state machine. The actual "does the LLM produce a
+ * sane rough model" question still needs a live key; this only proves the
+ * harness around it is correct.
  */
 
 import { describe, expect, it } from "vitest";
@@ -15,30 +15,31 @@ import { simulate } from "../src/solver.js";
 const validModelInput = {
   id: "toy",
   name: "Toy system",
-  workload: { rps: 100 },
+  workload: {
+    scale: { rationale: "No scale stated; assumed default.", provenance: "default", value: "medium" },
+  },
   components: [
     {
       id: "gw",
       label: "Gateway",
       kind: "gateway",
-      maxRps: { rationale: "No limit stated; assumed default.", provenance: "default", value: 10_000, unit: "rps" },
+      hasRateLimiting: { rationale: "No limit stated; assumed default.", provenance: "default", value: false },
     },
     {
       id: "svc",
       label: "Service",
       kind: "service",
-      instances: { rationale: "Two instances stated.", provenance: "stated", value: 2, unit: "count" },
-      concurrencyPerInstance: { rationale: "Default assumption.", provenance: "default", value: 25, unit: "count" },
-      serviceTimeMs: { rationale: "Stated 30ms.", provenance: "stated", value: 30, unit: "ms" },
+      instanceCount: { rationale: "Two instances stated.", provenance: "stated", value: "multiple" },
+      hasCircuitBreaker: { rationale: "Default assumption.", provenance: "default", value: false },
     },
   ],
-  edges: [{ from: "gw", to: "svc", callsPerRequest: 1 }],
+  edges: [{ from: "gw", to: "svc" }],
 };
 
 const invalidModelInput = {
   ...validModelInput,
   components: validModelInput.components.map((c) =>
-    c.id === "svc" ? { ...c, serviceTimeMs: { ...c.serviceTimeMs, rationale: "" } } : c,
+    c.id === "svc" ? { ...c, hasCircuitBreaker: { ...c.hasCircuitBreaker, rationale: "" } } : c,
   ),
 };
 

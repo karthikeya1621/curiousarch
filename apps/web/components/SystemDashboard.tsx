@@ -1,6 +1,6 @@
 import { simulate } from "@archsim/engine";
 import type { SystemModel } from "@archsim/engine";
-import { useBreakingPoint } from "../lib/hooks";
+import { useBreakingTier } from "../lib/hooks";
 import { FlowDiagram } from "./FlowDiagram";
 import { FindingsList } from "./FindingsList";
 import { Card } from "./Card";
@@ -8,13 +8,13 @@ import { Badge } from "./Badge";
 
 export function SystemDashboard({ model }: { model: SystemModel }) {
   const baseline = simulate(model);
-  const breakingPoint = useBreakingPoint(model);
+  const breakingTier = useBreakingTier(model);
 
-  const breakingPointText = !breakingPoint
-    ? "not reached below 1,000,000 rps"
+  const breakingTierText = !breakingTier
+    ? "no risk found at any scale"
     : baseline.healthy
-      ? `breaks around ${breakingPoint.rps.toLocaleString()} rps`
-      : `over capacity since ${breakingPoint.rps.toLocaleString()} rps`;
+      ? `breaks at ${breakingTier.scale} scale`
+      : "already unhealthy — this is structural, not a scale problem";
 
   return (
     <div className="flex flex-col gap-5">
@@ -26,9 +26,9 @@ export function SystemDashboard({ model }: { model: SystemModel }) {
           <div className="flex items-center gap-2">
             <Badge tone={baseline.healthy ? "success" : "critical"}>
               {baseline.healthy ? "Healthy" : "Unhealthy"} at{" "}
-              {model.workload.rps.toLocaleString()} rps
+              {model.workload.scale.value} scale
             </Badge>
-            <span className="text-xs text-slate-400">{breakingPointText}</span>
+            <span className="text-xs text-slate-400">{breakingTierText}</span>
           </div>
         </div>
         <div className="mt-3">

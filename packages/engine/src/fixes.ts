@@ -1,21 +1,20 @@
 /**
- * Fix catalogue: for a failure a node could plausibly suffer, what are the
- * deterministic remediations, each with a stated tradeoff — and does
- * applying one actually resolve it when re-simulated.
+ * Fix catalogue: for a pattern a component matched, what's the deterministic
+ * remediation — flip the trait toward its safer value — and does applying
+ * it actually clear the pattern when re-simulated.
  *
  * This is the third leg of the flow: indicator (every node with a possible
  * failure) -> failures (src/whatif.ts's Scenario catalogue) -> fixes (this
- * file) -> resimulate. No new numbers are inferred anywhere in this file —
- * every fix is a fixed, hand-written multiplier on whatever the model
- * already has, same as PLAN-1.6's "hand-written catalogue keyed by finding
- * code, not a model." The LLM's job, if this reaches Phase 1, is ranking
- * these and writing one sentence of explanation — never inventing the
- * transform or the tradeoff text.
+ * file) -> resimulate. No new facts are invented anywhere in this file —
+ * every fix is a fixed, hand-written trait flip, same as the original
+ * "hand-written catalogue keyed by finding code, not a model" principle.
+ * The LLM's job, if this reaches the UI, is ranking these and writing one
+ * sentence of explanation — never inventing the transform or the tradeoff.
  *
  * Fixes are looked up by the finding code a failure scenario actually
  * produces when simulated, not hardcoded per scenario — the same
- * CONNECTION_POOL_EXHAUSTED fix applies whether the pool got exhausted by a
- * traffic spike or a query-latency scenario.
+ * SINGLE_POINT_OF_FAILURE fix applies whether the instance was lost to a
+ * scenario or was already single at baseline.
  */
 
 import { simulate } from "./solver.ts";
@@ -35,185 +34,129 @@ export interface Fix {
 
 type FixTemplate = Omit<Fix, "targetsFindingCode">;
 /**
- * `component` is the one piece every other factory below doesn't need —
- * they're all keyed off a finding code that only ever fires on one kind
- * (CACHE_SATURATED only on a cache, etc.). HIGH_UTILIZATION is the
- * exception: it fires on any non-gateway kind, so its factory is the only
- * one that switches on `component.kind` to pick the right parameter.
+ * `component` lets a factory switch on kind or on the component's other
+ * traits — CASCADING_FAILURE_RISK's factory needs it to find which service
+ * in a chain to add a circuit breaker to; SINGLE_POINT_OF_FAILURE's needs
+ * it to phrase a database fix differently from a service fix.
  */
-type FixFactory = (componentId: string, component: Component) => FixTemplate[];
-
-function scale(component: Component, field: string, factor: number): Component {
-  const c = component as unknown as Record<string, { value: number; unit: string; provenance: string; rationale: string }>;
-  const param = c[field]!;
-  return { ...component, [field]: { ...param, value: param.value * factor } } as Component;
-}
+type FixFactory = (componentId: string, component: Component, model: SystemModel) => FixTemplate[];
 
 const FIX_CATALOG: Partial<Record<FindingCode, FixFactory>> = {
-  CONNECTION_POOL_EXHAUSTED: (componentId) => [
+  SINGLE_POINT_OF_FAILURE: (componentId, component) => {
+    if (component.kind === "service") {
+      return [
+        {
+          id: `${componentId}:add-instance`,
+          label: "Add a second instance",
+          tradeoff: "Doubles compute cost for this service; only helps if what it calls downstream can also absorb another instance's worth of traffic.",
+          apply: (model) =>
+            withComponent(model, componentId, (c) =>
+              c.kind === "service" ? { ...c, instanceCount: { ...c.instanceCount, value: "multiple" } } : c,
+            ),
+        },
+      ];
+    }
+    if (component.kind === "database") {
+      return [
+        {
+          id: `${componentId}:add-replica`,
+          label: "Add a read replica",
+          tradeoff: "Added infrastructure cost, and replication lag becomes a new (smaller) risk to watch — but a crash no longer means data loss.",
+          apply: (model) =>
+            withComponent(model, componentId, (c) =>
+              c.kind === "database" ? { ...c, instanceCount: { ...c.instanceCount, value: "has-replicas" } } : c,
+            ),
+        },
+      ];
+    }
+    return [];
+  },
+
+  THUNDERING_HERD_RISK: (componentId) => [
     {
-      id: `${componentId}:pool-2x`,
-      label: "Double the connection pool",
-      tradeoff:
-        "More memory and file descriptors on the database server; can hit the database's own connection ceiling. An external pooler (PgBouncer) often gets the same effect without provisioning more raw connections.",
+      id: `${componentId}:stampede-protection`,
+      label: "Add stampede protection (request coalescing)",
+      tradeoff: "Real engineering work — one in-flight refill per key, everyone else waits on it — not a config toggle.",
       apply: (model) =>
         withComponent(model, componentId, (c) =>
-          c.kind === "database" ? scale(c, "connectionPoolSize", 2) : c,
+          c.kind === "cache" ? { ...c, hasStampedeProtection: { ...c.hasStampedeProtection, value: true } } : c,
         ),
     },
     {
-      id: `${componentId}:query-time-half`,
-      label: "Halve query time (add an index, optimize the query)",
-      tradeoff: "Real engineering work, not a config change — not always possible without schema or access-pattern changes.",
+      id: `${componentId}:lengthen-ttl`,
+      label: "Lengthen the cache TTL",
+      tradeoff: "Serves staler data for longer — only safe if your staleness tolerance allows it, and it reduces frequency without fixing the coincidence if it does expire.",
       apply: (model) =>
-        withComponent(model, componentId, (c) => (c.kind === "database" ? scale(c, "queryTimeMs", 0.5) : c)),
-    },
-  ],
-
-  SERVICE_SATURATED: (componentId) => [
-    {
-      id: `${componentId}:instances-2x`,
-      label: "Double the instance count",
-      tradeoff: "Doubles compute cost for this service; only helps if what it calls downstream can absorb the added throughput too.",
-      apply: (model) => withComponent(model, componentId, (c) => (c.kind === "service" ? scale(c, "instances", 2) : c)),
-    },
-    {
-      id: `${componentId}:service-time-half`,
-      label: "Halve service time (optimize the hot path)",
-      tradeoff: "Profiling and optimization work, not a scaling knob — and not always achievable.",
-      apply: (model) =>
-        withComponent(model, componentId, (c) => (c.kind === "service" ? scale(c, "serviceTimeMs", 0.5) : c)),
-    },
-  ],
-
-  CACHE_SATURATED: (componentId) => [
-    {
-      id: `${componentId}:cpu-time-half`,
-      label: "Halve per-op processing time (faster cache tier, smaller payloads)",
-      tradeoff: "May require migrating to a faster cache tier or shrinking cached values — infrastructure or engineering cost, not free.",
-      apply: (model) => withComponent(model, componentId, (c) => (c.kind === "cache" ? scale(c, "cpuTimeMs", 0.5) : c)),
-    },
-  ],
-
-  QUEUE_OVERFLOW: (componentId) => [
-    {
-      id: `${componentId}:consumers-2x`,
-      label: "Double the consumer count",
-      tradeoff: "More worker cost; only helps if whatever consumers call downstream can absorb the added throughput.",
-      apply: (model) => withComponent(model, componentId, (c) => (c.kind === "queue" ? scale(c, "consumers", 2) : c)),
-    },
-    {
-      id: `${componentId}:capacity-2x`,
-      label: "Double the queue's retention capacity",
-      tradeoff: "Buys time, not throughput — delays the overflow rather than fixing the drain-rate deficit that causes it.",
-      apply: (model) => withComponent(model, componentId, (c) => (c.kind === "queue" ? scale(c, "capacity", 2) : c)),
-    },
-  ],
-
-  REPLICATION_LAG: (componentId) => [
-    {
-      id: `${componentId}:apply-rate-2x`,
-      label: "Double the replica apply rate (faster replica hardware)",
-      tradeoff: "Requires bigger/faster replica instances, or reducing what's replicated — added infrastructure cost.",
-      apply: (model) =>
-        withComponent(model, componentId, (c) => (c.kind === "database" ? scale(c, "replicaApplyRate", 2) : c)),
-    },
-  ],
-
-  GATEWAY_LIMIT_EXCEEDED: (componentId) => [
-    {
-      id: `${componentId}:max-rps-2x`,
-      label: "Double the gateway's admission ceiling",
-      tradeoff: "Often a soft account limit, not a technical one — check with your provider before assuming it's raisable, and confirm downstream can absorb the extra traffic.",
-      apply: (model) => withComponent(model, componentId, (c) => (c.kind === "gateway" ? scale(c, "maxRps", 2) : c)),
-    },
-  ],
-
-  THUNDERING_HERD: (componentId) => [
-    {
-      id: `${componentId}:ttl-2x`,
-      label: "Double the cache TTL",
-      tradeoff: "Serves staler data for longer — only safe if your staleness tolerance allows it.",
-      apply: (model) => withComponent(model, componentId, (c) => (c.kind === "cache" ? scale(c, "ttlSeconds", 2) : c)),
-    },
-    {
-      // Herd damage is duplicatesPerExpiry = (arrival / hotKeys) * refillSeconds,
-      // and refillSeconds is the DOWNSTREAM database's queryTimeMs, not any
-      // field on the cache itself (see herdFindings in solver.ts) — a faster
-      // refill query shrinks the window duplicate requests can pile up in,
-      // independent of TTL. This is the one finding in this catalogue whose
-      // second fix reaches past the component it's attached to.
-      id: `${componentId}:refill-query-half`,
-      label: "Halve the refill query time (optimize the query that repopulates this key)",
-      tradeoff: "Real engineering work on the downstream query, not a cache setting — and it only helps the herd window, not general database load.",
-      apply: (model) => {
-        const downstreamEdge = model.edges.find((e) => e.from === componentId);
-        if (!downstreamEdge) return model;
-        return withComponent(model, downstreamEdge.to, (c) =>
-          c.kind === "database" ? scale(c, "queryTimeMs", 0.5) : c,
-        );
-      },
+        withComponent(model, componentId, (c) => (c.kind === "cache" ? { ...c, ttl: { ...c.ttl, value: "long" } } : c)),
     },
   ],
 
   /**
-   * The one finding code every other entry above ignores: a warning, not a
-   * critical, and the whole reason it exists (PLAN-1.5) is to give an
-   * operator something to act on before a component saturates. Each branch
-   * adds roughly 50% headroom — a smaller lever than the matching
-   * SATURATED/EXHAUSTED fix's "double" or "halve", since this is a
-   * preventive move, not recovery from an already-broken state. Gateways
-   * are excluded from HIGH_UTILIZATION entirely in solver.ts, so there's no
-   * case for them here.
+   * The only fix in this catalogue that targets a DIFFERENT component than
+   * the one the finding is attached to: the finding sits on the chain's
+   * tail (the deepest dependency), but a circuit breaker belongs on the
+   * calling service. Walks the model's edges backward from the tail to
+   * find the nearest upstream service.
    */
-  HIGH_UTILIZATION: (componentId, component) => {
-    switch (component.kind) {
-      case "service":
-        return [
-          {
-            id: `${componentId}:instances-1.5x-preventive`,
-            label: "Add 50% more instances before it saturates",
-            tradeoff: "Extra compute cost paid ahead of need — the bet is that headroom now is cheaper than an incident later.",
-            apply: (model) =>
-              withComponent(model, componentId, (c) => (c.kind === "service" ? scale(c, "instances", 1.5) : c)),
-          },
-        ];
-      case "database":
-        return [
-          {
-            id: `${componentId}:pool-1.5x-preventive`,
-            label: "Add 50% more connection pool headroom",
-            tradeoff: "More memory and file descriptors reserved on the database server for load that hasn't arrived yet.",
-            apply: (model) =>
-              withComponent(model, componentId, (c) =>
-                c.kind === "database" ? scale(c, "connectionPoolSize", 1.5) : c,
-              ),
-          },
-        ];
-      case "queue":
-        return [
-          {
-            id: `${componentId}:consumers-1.5x-preventive`,
-            label: "Add 50% more consumers before it backs up",
-            tradeoff: "More worker cost paid ahead of need, same caveat as the full fix: only helps if what consumers call downstream can absorb it too.",
-            apply: (model) =>
-              withComponent(model, componentId, (c) => (c.kind === "queue" ? scale(c, "consumers", 1.5) : c)),
-          },
-        ];
-      case "cache":
-        return [
-          {
-            id: `${componentId}:cpu-time-preventive`,
-            label: "Cut per-op processing time by a third",
-            tradeoff: "Same infrastructure/engineering cost as the full fix, applied as a smaller, earlier intervention.",
-            apply: (model) =>
-              withComponent(model, componentId, (c) => (c.kind === "cache" ? scale(c, "cpuTimeMs", 2 / 3) : c)),
-          },
-        ];
-      case "gateway":
-        return [];
+  CASCADING_FAILURE_RISK: (componentId, _component, model) => {
+    const byId = new Map(model.components.map((c) => [c.id, c]));
+    let current = componentId;
+    const guarded = new Set<string>();
+    for (let i = 0; i < model.components.length; i++) {
+      const upstreamEdge = model.edges.find((e) => e.to === current);
+      if (!upstreamEdge) break;
+      const upstream = byId.get(upstreamEdge.from);
+      if (upstream?.kind === "service" && !guarded.has(upstream.id)) {
+        guarded.add(upstream.id);
+      }
+      current = upstreamEdge.from;
     }
+    return [...guarded].map((serviceId) => ({
+      id: `${serviceId}:add-circuit-breaker`,
+      label: `Add a circuit breaker on ${serviceId}'s downstream calls`,
+      tradeoff: "Failures now surface as fast errors instead of hangs once the breaker trips — callers must handle that, not just retry blindly.",
+      apply: (m: SystemModel) =>
+        withComponent(m, serviceId, (c) =>
+          c.kind === "service" ? { ...c, hasCircuitBreaker: { ...c.hasCircuitBreaker, value: true } } : c,
+        ),
+    }));
   },
+
+  UNBOUNDED_ADMISSION: (componentId) => [
+    {
+      id: `${componentId}:add-rate-limiting`,
+      label: "Add rate limiting",
+      tradeoff: "Legitimate bursts get throttled too unless the limit is tuned generously — better than nothing reaching downstream at all.",
+      apply: (model) =>
+        withComponent(model, componentId, (c) =>
+          c.kind === "gateway" ? { ...c, hasRateLimiting: { ...c.hasRateLimiting, value: true } } : c,
+        ),
+    },
+  ],
+
+  QUEUE_NO_DEAD_LETTER: (componentId) => [
+    {
+      id: `${componentId}:add-dlq`,
+      label: "Add a dead-letter queue",
+      tradeoff: "Poison messages stop blocking the pipeline, but now need a separate process to inspect and reprocess them — set up and forgotten, a DLQ just grows.",
+      apply: (model) =>
+        withComponent(model, componentId, (c) =>
+          c.kind === "queue" ? { ...c, hasDeadLetterQueue: { ...c.hasDeadLetterQueue, value: true } } : c,
+        ),
+    },
+  ],
+
+  FIXED_SCALING_AT_SCALE: (componentId) => [
+    {
+      id: `${componentId}:autoscale-consumers`,
+      label: "Switch to autoscaling consumers",
+      tradeoff: "More moving parts (scaling policy, cooldowns to tune) in exchange for absorbing bursts instead of falling behind.",
+      apply: (model) =>
+        withComponent(model, componentId, (c) =>
+          c.kind === "queue" ? { ...c, consumerScaling: { ...c.consumerScaling, value: "auto" } } : c,
+        ),
+    },
+  ],
 };
 
 /**
@@ -228,19 +171,22 @@ export function listFixes(model: SystemModel, scenarioId: string): Fix[] {
     throw new Error(`Unknown scenario "${scenarioId}". Run listScenarios(model) to see options.`);
   }
 
-  const underFailure = simulate(scenario.apply(model));
+  const failureModel = scenario.apply(model);
+  const underFailure = simulate(failureModel);
   const fixes: Fix[] = [];
   const seen = new Set<string>();
   for (const finding of underFailure.findings) {
     const factory = FIX_CATALOG[finding.code];
     if (!factory) continue;
-    // Scenarios never change a component's id or kind (whatif.ts's own
-    // scenarios only patch parameter values), so looking the component up
-    // on the original, unscaled model is safe even though the finding
-    // itself came from simulating the model *under* the scenario.
+    // Scenarios never change a component's id, kind, or the model's edges
+    // (whatif.ts's scenarios only flip trait values) — looking the
+    // component up on the original model is safe even though the finding
+    // came from simulating the model under the scenario. Passed alongside
+    // `failureModel` itself for factories (like CASCADING_FAILURE_RISK's)
+    // that need to walk edges to find a different component to fix.
     const component = model.components.find((c) => c.id === finding.componentId);
     if (!component) continue;
-    for (const template of factory(finding.componentId, component)) {
+    for (const template of factory(finding.componentId, component, failureModel)) {
       if (seen.has(template.id)) continue;
       seen.add(template.id);
       fixes.push({ ...template, targetsFindingCode: finding.code });

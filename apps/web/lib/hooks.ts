@@ -4,9 +4,9 @@ import {
   compareScenario,
   listFixes,
   compareFix,
-  findBreakingPoint,
+  findBreakingTier,
 } from "@archsim/engine";
-import type { SystemModel, Scenario, ScenarioDelta, Fix, FixResult, Finding } from "@archsim/engine";
+import type { SystemModel, Scenario, ScenarioDelta, Fix, FixResult, Finding, ScaleTier } from "@archsim/engine";
 
 /**
  * Every component derives from the engine through these four hooks, never
@@ -63,8 +63,8 @@ export function useFixResult(
   }, [model, scenarioId, fixId]);
 }
 
-export function useBreakingPoint(
+export function useBreakingTier(
   model: SystemModel,
-): { rps: number; findings: Finding[] } | null {
-  return useMemo(() => findBreakingPoint(model), [model]);
+): { scale: ScaleTier; findings: Finding[] } | null {
+  return useMemo(() => findBreakingTier(model), [model]);
 }

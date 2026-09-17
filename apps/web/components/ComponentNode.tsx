@@ -23,45 +23,33 @@ const KIND_TONE: Record<Component["kind"], string> = {
 };
 
 /**
- * Horizontal scaling — "how many parallel copies of this" — shown as a
- * plain "×N" appended to the existing subtitle text, not a separate
- * element: no extra DOM per node, so it costs nothing extra during
- * animateNodes' every-frame relayout re-render. Deliberately not the
- * combined ComponentProfile.servers figure (components.ts) for a service —
- * that's instances * concurrencyPerInstance, conflating this with vertical
- * scaling (concurrencyPerInstance, a per-instance property) — but each
- * kind's own count-type field: the one thing you'd literally add more of.
- * Cache has no such field (components.ts pins it at exactly 1 server,
- * always — there is no horizontal lever to show), and a gateway has no
- * server concept at all, so neither gets a count.
+ * A single instance of a service or database is exactly the condition
+ * patterns.ts's SINGLE_POINT_OF_FAILURE fires on — surfaced here as a
+ * subtle amber ring around the node itself, at-a-glance, without needing
+ * to open the sidebar. Rough-mode replacement for the old numeric "×N"
+ * instance-count badge: there's no count to show anymore, just a
+ * single/multiple category, so a risk cue reads better than a number.
  */
-function horizontalCount(component: Component): number | null {
-  switch (component.kind) {
-    case "service":
-      return component.instances.value;
-    case "database":
-      return component.connectionPoolSize.value;
-    case "queue":
-      return component.consumers.value;
-    case "cache":
-    case "gateway":
-      return null;
-  }
+function isSinglePointOfFailureRisk(component: Component): boolean {
+  if (component.kind === "service") return component.instanceCount.value === "single";
+  if (component.kind === "database") return component.instanceCount.value === "single";
+  return false;
 }
 
 export function ComponentNode({ data }: NodeProps) {
   const { component, scenarios } = data as unknown as ComponentNodeData;
   const isOpen = useAppStore((s) => s.openComponentId === component.id);
   const KindIcon = KIND_ICON[component.kind];
-  const count = horizontalCount(component);
+  const isRisk = isSinglePointOfFailureRisk(component);
+
+  const border = isOpen
+    ? "border-slate-400 ring-2 ring-slate-900/10"
+    : isRisk
+      ? "border-amber-300 ring-1 ring-amber-200"
+      : "border-slate-200";
 
   return (
-    <div
-      className={
-        "w-50 rounded-xl border bg-white p-3 shadow-sm transition-shadow " +
-        (isOpen ? "border-slate-400 ring-2 ring-slate-900/10" : "border-slate-200")
-      }
-    >
+    <div className={`w-50 rounded-xl border bg-white p-3 shadow-sm transition-shadow ${border}`}>
       <Handle type="target" position={Position.Left} className="bg-slate-300!" />
       <Handle type="source" position={Position.Right} className="bg-slate-300!" />
       <div className="flex items-start justify-between gap-2">
@@ -77,7 +65,6 @@ export function ComponentNode({ data }: NodeProps) {
             </p>
             <p className="truncate text-[11px] text-slate-400">
               {component.id} · {component.kind}
-              {count !== null ? ` · ×${count}` : ""}
             </p>
           </div>
         </div>
