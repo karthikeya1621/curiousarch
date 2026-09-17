@@ -1,17 +1,20 @@
 # archsim
 
-A capacity simulator for distributed systems. npm workspaces monorepo:
+An architect-in-a-box for distributed systems. npm workspaces monorepo:
 
 ```
-packages/engine/   Headless capacity-simulation engine — see packages/engine/README.md
-apps/web/          Next.js App Router UI (Phase 1, in progress)
+packages/engine/   Headless architecture-pattern engine — see packages/engine/README.md
+apps/web/          Next.js App Router UI (the full loop: diagram, controls, fixes)
 ```
 
-The engine takes a system model and computes where it breaks — queueing math,
-per-component capacity, findings, breaking-point search — plus a what-if/fix
-exploration flow (relative scenario comparisons rather than absolute
-forecasts; see `plans/PLAN-0.md`'s "Reframing: what-if over forecasting" for
-why). It has no UI dependencies and can be used standalone; `apps/web`
+The engine takes a rough system model — categorical traits, never numbers —
+and computes real architectural risk against it: single points of failure,
+thundering herds, cascading failures, unbounded admission, and more, via a
+deterministic pattern catalogue (`packages/engine/src/patterns.ts`), plus a
+what-if/fix exploration flow (flip a trait toward its riskier value, see what
+breaks, pick a fix, see whether it actually resolved it). See `CONTEXT.md`'s
+"Why the pivot" section for why this replaced an earlier numeric queueing
+engine. It has no UI dependencies and can be used standalone; `apps/web`
 consumes it as a workspace package (`@archsim/engine`).
 
 ```bash

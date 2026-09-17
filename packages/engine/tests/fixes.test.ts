@@ -110,6 +110,25 @@ describe("compareFix", () => {
     expect(result.resolved).toBe(true);
   });
 
+  it("resolves an unbounded-admission warning by adding rate limiting", () => {
+    // checkout's gateway is rate-limited at baseline; the "rate limiter is
+    // disabled" scenario is what actually produces UNBOUNDED_ADMISSION to
+    // fix here.
+    const result = compareFix(checkout, "gw:rate-limit-disabled", "gw:add-rate-limiting");
+    expect(result.underFailure.findings.map((f) => f.code)).toContain("UNBOUNDED_ADMISSION");
+    expect(result.underFix.findings.map((f) => f.code)).not.toContain("UNBOUNDED_ADMISSION");
+    expect(result.resolved).toBe(true);
+  });
+
+  it("resolves a queue's missing dead-letter warning", () => {
+    // media-upload's queue has no dead-letter queue at baseline — no
+    // scenario needed, the finding is already present.
+    const result = compareFix(mediaUpload, "workload:scale-up", "queue:add-dlq");
+    expect(result.underFailure.findings.map((f) => f.code)).toContain("QUEUE_NO_DEAD_LETTER");
+    expect(result.underFix.findings.map((f) => f.code)).not.toContain("QUEUE_NO_DEAD_LETTER");
+    expect(result.resolved).toBe(true);
+  });
+
   it("throws for a fix that doesn't apply to the scenario's findings", () => {
     expect(() => compareFix(checkout, "workload:scale-up", "svc:add-instance")).toThrow(
       /unknown fix/i,

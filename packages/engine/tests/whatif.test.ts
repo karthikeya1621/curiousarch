@@ -13,11 +13,13 @@ import { checkout, urlShortener, mediaUpload } from "../models/reference.js";
 describe("listScenarios", () => {
   it("only offers a scenario when the trait flip is meaningful", () => {
     // checkout: svc is "multiple" (can lose an instance), db "has-replicas"
-    // (can lose its replica) — both flips are offered. Nothing offers a
-    // scenario that would be a no-op or already-true.
+    // (can lose its replica), gw hasRateLimiting (can be disabled) — all
+    // three flips are offered. Nothing offers a scenario that would be a
+    // no-op or already-true.
     const ids = listScenarios(checkout).map((s) => s.id);
     expect(ids).toContain("svc:loses-instance");
     expect(ids).toContain("db:replica-fails");
+    expect(ids).toContain("gw:rate-limit-disabled");
   });
 
   it("does not offer a scenario a component is already living", () => {
@@ -34,6 +36,63 @@ describe("listScenarios", () => {
     expect(listScenarios(mediaUpload).map((s) => s.id)).not.toContain(
       "queue:autoscaler-stuck",
     );
+
+    // None of the three reference models ship a queue with "auto" scaling
+    // (media-upload's is deliberately "fixed", to demonstrate
+    // FIXED_SCALING_AT_SCALE) — so the *positive* path needs its own
+    // fixture, same as the "protectedModel" pattern below does for the
+    // cache scenario.
+    const autoScaling = {
+      ...mediaUpload,
+      components: mediaUpload.components.map((c) =>
+        c.id === "queue" && c.kind === "queue"
+          ? { ...c, consumerScaling: { ...c.consumerScaling, value: "auto" as const } }
+          : c,
+      ),
+    };
+    const scenario = listScenarios(autoScaling).find((s) => s.id === "queue:autoscaler-stuck");
+    expect(scenario).toBeDefined();
+
+    const degraded = scenario!.apply(autoScaling);
+    const queue = degraded.components.find((c) => c.id === "queue");
+    if (queue?.kind !== "queue") throw new Error("expected queue");
+    expect(queue.consumerScaling.value).toBe("fixed");
+  });
+
+  it("offers a cache's stampede-protection-fails scenario only when it currently has protection", () => {
+    // Same reason as the queue case above: none of the three reference
+    // models ship a cache with stampede protection already on (that would
+    // clear THUNDERING_HERD_RISK on url-shortener, the model built
+    // specifically to demonstrate it) — the positive path needs its own
+    // fixture.
+    const protectedCache = {
+      ...urlShortener,
+      components: urlShortener.components.map((c) =>
+        c.id === "cache" && c.kind === "cache"
+          ? { ...c, hasStampedeProtection: { ...c.hasStampedeProtection, value: true } }
+          : c,
+      ),
+    };
+    const scenario = listScenarios(protectedCache).find(
+      (s) => s.id === "cache:stampede-protection-fails",
+    );
+    expect(scenario).toBeDefined();
+
+    const degraded = scenario!.apply(protectedCache);
+    const cache = degraded.components.find((c) => c.id === "cache");
+    if (cache?.kind !== "cache") throw new Error("expected cache");
+    expect(cache.hasStampedeProtection.value).toBe(false);
+  });
+
+  it("flips a gateway's rate limiting off", () => {
+    // checkout's gateway has hasRateLimiting: true at baseline — the one
+    // reference model where this scenario's positive path is reachable
+    // without a custom fixture.
+    const scenario = listScenarios(checkout).find((s) => s.id === "gw:rate-limit-disabled")!;
+    const degraded = scenario.apply(checkout);
+    const gw = degraded.components.find((c) => c.id === "gw");
+    if (gw?.kind !== "gateway") throw new Error("expected gateway");
+    expect(gw.hasRateLimiting.value).toBe(false);
   });
 
   it("includes a workload scale-up scenario naming the next tier", () => {
