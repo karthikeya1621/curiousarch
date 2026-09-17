@@ -1,3 +1,16 @@
+**Historical record — the interaction loop this phase built (describe →
+controls → flow → indicator → choices → patch → re-simulate → delta) is
+still exactly how the app works.** But a later pivot rewrote the engine
+underneath it from numeric queueing simulation to categorical pattern
+matching, so specific identifiers this phase's "Met" notes cite no longer
+exist: `Parameter`/`isParameter` → `Trait`/`isTrait`, `updateParameter` →
+`updateTrait`, `setWorkloadRps` → `setWorkloadScale`, `findBreakingPoint` →
+`findBreakingTier`, and there is no `connectionPoolSize`, rps slider, or
+numeric control anywhere in the current `ControlPanel`. See `CONTEXT.md`'s
+"Why the pivot" for why, and `packages/engine/README.md` for the current
+shape. Treat every "Met" below as true of *the loop*, not of the exact
+names.
+
 # PLAN-1.md — The loop
 
 **Goal:** the complete interaction, working, for one person on localhost.

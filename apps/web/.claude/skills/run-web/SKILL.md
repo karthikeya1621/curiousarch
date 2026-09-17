@@ -58,11 +58,11 @@ SCREENSHOT_DIR=/tmp/shots node .claude/skills/run-web/driver.mjs <<'EOF'
 launch http://localhost:3000
 wait-text Checkout / order placement
 ss 01-initial
-click-card-badge PostgreSQL
-wait-text possible failure
+click-node-badge PostgreSQL
+wait-text Possible failures
 ss 02-indicator-open
-click-text connection pool halves
-wait-text Per-component utilization
+click-text the replica fails
+wait-text FINDINGS: BASELINE VS. UNDER THIS FAILURE
 ss 03-failure-selected
 quit
 EOF
@@ -84,8 +84,7 @@ which also works fine (see Gotchas) and needs no extra tooling either way.
 | `ss [name]` | full-page screenshot → `$SCREENSHOT_DIR/<name>.png` |
 | `click <css-sel>` | click via Playwright's normal click pipeline |
 | `click-text <text>` | click the first `button`/`a`/`[role=button]` whose text is or contains `<text>` |
-| `click-card-badge <text>` | archsim-specific — see Gotchas: click the failure-count badge on the `ComponentCard` whose title contains `<text>` |
-| `set-input <css-sel> <value>` | set a controlled `<input>` (number or range) to `<value>` and fire React's `onChange` — see Gotchas |
+| `click-node-badge <text>` | archsim-specific — see Gotchas: click the amber failure-count badge on the flow-diagram node whose text contains `<text>` |
 | `wait <css-sel>` | wait up to 10s for a selector |
 | `wait-text <text>` | wait up to 10s for `document.body.innerText` to contain `<text>` |
 | `text [css-sel]` | print `innerText` of the selector (or `document.body`) |
@@ -149,27 +148,28 @@ exercises `packages/engine`.
   handler runs) logs a spurious "readline was closed" — guarded here with
   `if (!rl.closed) rl.prompt()`.
 
-- **Tailwind utility classes aren't unique enough to target one card by
-  CSS selector, and button text alone is ambiguous** (multiple
-  `ComponentCard`s can show the same badge number). `click-card-badge`
-  works around this by finding the element with both `.rounded-lg` and
-  `.shadow-sm` classes whose `textContent` contains the given text —
-  that combination is unique to `ComponentCard` in this app (the baseline
-  summary and the failure/fix panels use `rounded-lg` without
-  `shadow-sm`). If `SystemDashboard.tsx`'s card styling changes, this
-  selector needs updating alongside it.
+- **Button text alone is ambiguous for finding a specific node's failure
+  badge** — every node with any scenarios renders the same kind of amber
+  circular button, distinguished only by its count and its `title`
+  attribute (which isn't part of `innerText`, so `wait-text`/`click-text`
+  can't see it). `click-node-badge` works around this by finding the
+  React-Flow-wrapped node (`.react-flow__node`) whose `textContent`
+  contains the given text — the node's label or id is enough to
+  disambiguate — then clicking the one `button[title*='possible failure']`
+  inside it. `ControlPanel` is entirely `<button>`-based now too (a
+  segmented toggle for enum traits, a switch for booleans) — plain
+  `click-text` on the option label reaches those directly, no custom
+  command needed.
 
-- **Neither `click` nor Playwright's own `.fill()` reliably drives
-  `ControlPanel`'s number/range inputs.** They're React-controlled — React
-  patches the element instance's `value` setter to track state, so setting
-  `el.value` directly and dispatching `input` (what `.fill()` does under
-  the hood for non-text input types, and what any hand-rolled `eval` tends
-  to do) never reaches `onChange`. `set-input` works around this by
-  calling the *prototype's* original `value` setter (via
-  `Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')`)
-  before dispatching `input`/`change` — the standard React-compatible
-  trick. Confirmed working for both a plain number input
-  (`connectionPoolSize`) and the traffic `<input type="range">`.
+- **`wait-text`/`click-text` see the rendered case, not the source JSX
+  string.** Both read `innerText` (or its equivalent, `textContent` for
+  matching), which reflects CSS `text-transform` — a heading written as
+  `Findings: baseline vs. under this failure` but styled `uppercase`
+  actually appears to the driver as `FINDINGS: BASELINE VS. UNDER THIS
+  FAILURE`. Confirmed by hitting exactly this timeout while verifying this
+  skill's own example script. If a `wait-text` you expect to match times
+  out, check the element's classes for `uppercase`/`lowercase`/`capitalize`
+  before assuming the text itself changed.
 
 - **`apps/web`'s own `tsc --noEmit` fails with `Cannot find name
   'LayoutProps'` unless Next's route types exist first.** `LayoutProps` is
@@ -187,9 +187,10 @@ exercises `packages/engine`.
   is intact (not reverted to a bare `async` line handler).
 - **`TIMEOUT waiting for text: ...` on a click that should have worked**:
   likely the hydration race — re-run; if it's consistent (not
-  intermittent), check the actual button label matches exactly (labels
-  in this app are lowercase mid-sentence, e.g. "connection pool halves",
-  not "Connection Pool Halves" — `click-text` matching is case-sensitive).
+  intermittent), check the actual scenario/trait label matches exactly
+  (labels in this app are lowercase mid-sentence, e.g. "the replica
+  fails", not "The Replica Fails" — `click-text` matching is
+  case-sensitive).
 - **`Cannot find name 'LayoutProps'` when running `tsc --noEmit`
   directly** (bypassing the `npm run typecheck` script): run
   `npx next typegen` first, or just use `npm run typecheck` instead of

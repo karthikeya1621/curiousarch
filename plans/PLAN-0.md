@@ -1,3 +1,12 @@
+**Historical record — read as an account of what happened, not of the
+current engine.** The "Reframing" section below (what-if over forecasting)
+was the first step away from numeric forecasting; a later pivot went
+further and replaced the numeric queueing engine itself with a categorical
+pattern-matching one (no `serviceTimeMs`/`queryTimeMs`/rps anywhere anymore).
+See the repo root `CONTEXT.md`'s "Why the pivot" section and
+`packages/engine/README.md`'s "Why there are no numbers here" for the
+current architecture and why this document's own findings motivated it.
+
 # PLAN-0.md — Prove the core
 
 **Goal, reframed after 0.4's result:** the original goal — does prose-derived

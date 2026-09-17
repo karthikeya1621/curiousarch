@@ -47,22 +47,25 @@ const COMMANDS = {
     }
   },
 
-  // archsim-specific: ComponentCard is the only element with both
-  // "rounded-lg" and "shadow-sm" classes (baseline summary and the
-  // failure/fix panels use rounded-lg without shadow-sm) - find the card
-  // whose text includes `cardText`, click the first button inside it.
-  async "click-card-badge"(cardText) {
+  // archsim-specific: the flow diagram (React Flow) wraps every custom node
+  // in a ".react-flow__node" element; find the one whose text includes
+  // `nodeText` (component label or id), then click its amber failure-count
+  // badge (the only button inside a node, titled "N possible failure(s)"
+  // by FailureIndicator.tsx). Replaces the old card-grid-era
+  // "click-card-badge", dead since ComponentCard was removed in favor of
+  // the flow diagram.
+  async "click-node-badge"(nodeText) {
     if (!page) return console.log("ERROR: launch first");
     const r = await page.evaluate((t) => {
-      const cards = [...document.querySelectorAll(".rounded-lg.shadow-sm")];
-      const card = cards.find((c) => c.textContent?.includes(t));
-      if (!card) return "CARD_NOT_FOUND";
-      const btn = card.querySelector("button");
-      if (!btn) return "NO_BADGE_ON_CARD";
+      const nodes = [...document.querySelectorAll(".react-flow__node")];
+      const node = nodes.find((n) => n.textContent?.includes(t));
+      if (!node) return "NODE_NOT_FOUND";
+      const btn = node.querySelector("button[title*='possible failure']");
+      if (!btn) return "NO_BADGE_ON_NODE";
       btn.click();
       return "OK";
-    }, cardText);
-    console.log("click-card-badge", JSON.stringify(cardText), "->", r);
+    }, nodeText);
+    console.log("click-node-badge", JSON.stringify(nodeText), "->", r);
   },
 
   async "click-text"(text) {
@@ -75,35 +78,6 @@ const COMMANDS = {
       return "OK: " + el.tagName;
     }, text);
     console.log("click-text", JSON.stringify(text), "->", r);
-  },
-
-  // React controlled inputs track their value via a patched setter on the
-  // element instance; setting el.value directly and dispatching "input"
-  // (or Playwright's own .fill() on non-text input types) does not trigger
-  // onChange. Calling the *prototype's* original value setter first, then
-  // dispatching "input", is what actually fires React's handler - the
-  // standard workaround. Needed for both the number inputs and the <input
-  // type="range"> slider in ControlPanel, neither of which Playwright's
-  // .fill() supports directly for range.
-  async "set-input"(rest) {
-    if (!page) return console.log("ERROR: launch first");
-    const spaceIdx = rest.indexOf(" ");
-    const sel = spaceIdx === -1 ? rest : rest.slice(0, spaceIdx);
-    const value = spaceIdx === -1 ? "" : rest.slice(spaceIdx + 1);
-    const r = await page.evaluate(
-      ({ sel, value }) => {
-        const el = document.querySelector(sel);
-        if (!el) return "NOT_FOUND";
-        const proto = Object.getPrototypeOf(el);
-        const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
-        descriptor.set.call(el, value);
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-        el.dispatchEvent(new Event("change", { bubbles: true }));
-        return "OK";
-      },
-      { sel, value },
-    );
-    console.log("set-input", sel, value, "->", r);
   },
 
   async wait(sel) {

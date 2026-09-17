@@ -16,11 +16,11 @@ import type { ScaleTier, SystemModel } from "@archsim/engine";
  * happen to produce a same-id fix on the same component. setModel clears
  * both selections and the undo history (a full model swap, e.g. from
  * prose inference, isn't something a user would expect to "undo" back
- * through). updateParameter/setWorkloadRps deliberately do NOT clear
+ * through). updateTrait/setWorkloadScale deliberately do NOT clear
  * selections: correcting a value never changes a component's id or kind,
  * so every selected id stays valid, and clearing them would hide the
- * effect of the edit the user just made. Only setModel/updateParameter/
- * setWorkloadRps/undo/selectScenario/selectFix are exported as mutators —
+ * effect of the edit the user just made. Only setModel/updateTrait/
+ * setWorkloadScale/undo/selectScenario/selectFix are exported as mutators —
  * no raw setters a component could call and forget the invariant.
  *
  * openComponentId tracks which flow-diagram node's failure list is showing
@@ -31,8 +31,8 @@ import type { ScaleTier, SystemModel } from "@archsim/engine";
  *
  * applyFix commits a fix's transform to the REAL model — not the
  * hypothetical failure+fix combination FixResultPanel previews. A scenario
- * models "what if this broke"; a fix is a real change ("double the pool")
- * a user could actually make. Applying one means "make that real change,"
+ * models "what if this broke"; a fix is a real change ("add a circuit
+ * breaker") a user could actually make. Applying one means "make that real change,"
  * not "also pretend the hypothetical failure happened forever" — so the
  * caller passes `fix.apply(model)` (the fix against the current real
  * model), never `fix.apply(scenario.apply(model))`. Like a full model
