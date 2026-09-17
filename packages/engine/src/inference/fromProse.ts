@@ -174,26 +174,63 @@ export async function runStructuredModelCall(
 
   let lastError = "";
   let lastRaw: unknown;
+  /**
+   * Set only when the previous attempt actually produced a tool_use block
+   * (its id is required to build a valid assistant/tool_result turn pair
+   * below). Left unset after a "no tool_use block" attempt, since there's
+   * no prior tool call to reference — the repair message falls back to a
+   * plain user turn in that case.
+   */
+  let lastToolUseId: string | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      // Discovered live: appending the repair instruction as a second,
+      // consecutive plain "user" message — with no assistant turn showing
+      // what the model actually output before — leaves the model repairing
+      // blind. It has no way to see its own prior (invalid) answer, only
+      // the terse validation error, and on a large input (reworkModel's
+      // whole current-model JSON, not fromProse's short prose) it can
+      // reconstruct something even more broken than the original rather
+      // than a precise fix (observed live: it dropped two components
+      // entirely while still emitting edges that referenced them). Anthropic's
+      // own tool-result feedback pattern — an assistant turn with the exact
+      // previous tool_use, followed by a user turn with a `tool_result`
+      // block marked `is_error: true` — gives the model its own prior
+      // output to correct against, not just a description of what was
+      // wrong with it.
+      if (lastToolUseId) {
+        messages.push(
+          { role: "assistant", content: [{ type: "tool_use", id: lastToolUseId, name: TOOL_NAME, input: lastRaw }] },
+          {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: lastToolUseId,
+                is_error: true,
+                content: `Your previous structured output did not validate: ${lastError}\n\nCall the tool again with a corrected model that fixes exactly this problem.`,
+              },
+            ],
+          },
+        );
+      } else {
+        messages.push({
+          role: "user",
+          content:
+            `Your previous response did not call the tool: ${lastError}\n\n` +
+            "Call the tool with the structured model.",
+        });
+      }
+    }
+
     const response = await client.messages.create({
       model,
       max_tokens: 4096,
       system: systemPrompt,
       tools: [tool],
       tool_choice: { type: "tool", name: TOOL_NAME },
-      messages:
-        attempt === 0
-          ? messages
-          : [
-              ...messages,
-              {
-                role: "user",
-                content:
-                  `Your previous structured output did not validate: ${lastError}\n\n` +
-                  "Call the tool again with a corrected model that fixes exactly this problem.",
-              },
-            ],
+      messages,
     });
 
     const toolUse = response.content.find(
@@ -203,6 +240,7 @@ export async function runStructuredModelCall(
     if (!toolUse) {
       lastError = "The model responded without calling the tool.";
       lastRaw = response.content;
+      lastToolUseId = undefined;
       if (process.env.FROMPROSE_DEBUG) {
         console.error(`[${label}] attempt ${attempt}: no tool_use block. content:`, JSON.stringify(response.content));
       }
@@ -219,6 +257,7 @@ export async function runStructuredModelCall(
     }
 
     lastRaw = toolUse.input;
+    lastToolUseId = toolUse.id;
     lastError = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
       .join("; ");

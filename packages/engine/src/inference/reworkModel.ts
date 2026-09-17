@@ -38,8 +38,19 @@ export async function reworkModel(
 ): Promise<FromProseResult> {
   return runStructuredModelCall(
     REWORK_PROMPT,
-    JSON.stringify(model, null, 2),
-    options,
+    // A short framing sentence before the JSON, not the bare object alone —
+    // observed live: a user turn that's pure `{...}` with no lead-in
+    // occasionally produced a degenerate first attempt (a model with only
+    // the gateway, everything else silently dropped). The repair retry
+    // (see fromProse.ts's runStructuredModelCall) recovers from this
+    // reliably now, but avoiding it in the first place is cheaper than
+    // relying on a retry every time.
+    `Here is the current model:\n\n${JSON.stringify(model, null, 2)}`,
+    // This input is larger and more complex than a typical prose
+    // description (a full existing model, not a paragraph) — one extra
+    // repair attempt of headroom over fromProse's default of 1, in case
+    // the first attempt needs more than one correction round.
+    { maxRetries: 2, ...options },
     "reworkModel",
   );
 }

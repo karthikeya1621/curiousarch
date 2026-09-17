@@ -98,12 +98,29 @@ describe("reworkModel", () => {
   });
 
   it("throws with the validation error after exhausting the repair retry", async () => {
+    // maxRetries explicit here, decoupled from reworkModel's own internal
+    // default (2, higher than fromProse's 1 — see reworkModel.ts) so this
+    // test doesn't silently need a 3rd canned response if that default
+    // ever changes again.
     const client = fakeClient([
       toolUseResponse(invalidReworkInput),
       toolUseResponse(invalidReworkInput),
     ]);
 
-    await expect(reworkModel(checkout, { client })).rejects.toThrow(/still failed validation/i);
+    await expect(reworkModel(checkout, { client, maxRetries: 1 })).rejects.toThrow(
+      /still failed validation/i,
+    );
+  });
+
+  it("defaults to 2 repair retries — more headroom than fromProse's 1, given a larger input", async () => {
+    const client = fakeClient([
+      toolUseResponse(invalidReworkInput),
+      toolUseResponse(invalidReworkInput),
+      toolUseResponse(validReworkInput),
+    ]);
+
+    const result = await reworkModel(checkout, { client });
+    expect(result.repaired).toBe(true);
   });
 
   it("requires an API key when no client is injected", async () => {

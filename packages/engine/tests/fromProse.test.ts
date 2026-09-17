@@ -123,4 +123,49 @@ describe("fromProse", () => {
       fromProse("a toy system", { client, maxRetries: 0 }),
     ).rejects.toThrow(/after 0 repair attempt/i);
   });
+
+  it("gives the repair attempt its own previous tool call to correct, not just an error string", async () => {
+    // Discovered live (reworkModel, same shared retry loop): appending the
+    // repair instruction as a second consecutive plain "user" message, with
+    // no assistant turn showing what the model actually output before,
+    // left it repairing blind — on a large input it reconstructed something
+    // even MORE broken than the original rather than a precise fix. The fix
+    // is Anthropic's own tool-result feedback pattern: an assistant turn
+    // with the exact previous tool_use, then a user turn with a
+    // `tool_result` block. This test inspects the actual second
+    // `messages.create` call to confirm that shape, not just the outcome.
+    const calls: unknown[] = [];
+    const client = {
+      messages: {
+        create: async (args: unknown) => {
+          calls.push(args);
+          return calls.length === 1 ? toolUseResponse(invalidModelInput) : toolUseResponse(validModelInput);
+        },
+      },
+    } as unknown as Anthropic;
+
+    await fromProse("a toy system", { client });
+
+    expect(calls).toHaveLength(2);
+    const secondCallMessages = (calls[1] as { messages: Anthropic.MessageParam[] }).messages;
+
+    // [user: original prose, assistant: the invalid tool_use, user: tool_result with the error]
+    expect(secondCallMessages).toHaveLength(3);
+    expect(secondCallMessages[0]!.role).toBe("user");
+
+    const assistantTurn = secondCallMessages[1]!;
+    expect(assistantTurn.role).toBe("assistant");
+    const assistantContent = assistantTurn.content as Anthropic.ToolUseBlockParam[];
+    expect(assistantContent[0]!.type).toBe("tool_use");
+    expect(assistantContent[0]!.id).toBe("call_1"); // the id from the first (invalid) response
+    expect(assistantContent[0]!.input).toEqual(invalidModelInput);
+
+    const repairTurn = secondCallMessages[2]!;
+    expect(repairTurn.role).toBe("user");
+    const repairContent = repairTurn.content as Anthropic.ToolResultBlockParam[];
+    expect(repairContent[0]!.type).toBe("tool_result");
+    expect(repairContent[0]!.tool_use_id).toBe("call_1");
+    expect(repairContent[0]!.is_error).toBe(true);
+    expect(String(repairContent[0]!.content)).toMatch(/did not validate/i);
+  });
 });
