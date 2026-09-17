@@ -149,6 +149,58 @@ describe("Media upload with async processing", () => {
   });
 });
 
+describe("UNCACHED_DATABASE_AT_SCALE", () => {
+  // None of the three reference models trigger this at baseline —
+  // checkout's db is write-heavy, url-shortener's already has a cache in
+  // the chain, media-upload's db is fed through a queue — so the positive
+  // path needs its own fixture, same as the cache/queue scenarios in
+  // whatif.test.ts do.
+  const readHeavyAtScale: SystemModel = {
+    ...checkout,
+    workload: { scale: { ...checkout.workload.scale, value: "large" } },
+    components: checkout.components.map((c) =>
+      c.id === "db" && c.kind === "database"
+        ? { ...c, writeVolume: { ...c.writeVolume, value: "low" } }
+        : c,
+    ),
+  };
+
+  it("flags a read-heavy database on a direct synchronous path at scale", () => {
+    const finding = simulate(readHeavyAtScale).findings.find(
+      (f) => f.code === "UNCACHED_DATABASE_AT_SCALE",
+    );
+    expect(finding).toBeDefined();
+    expect(finding!.severity).toBe("warning");
+    expect(finding!.componentId).toBe("db");
+  });
+
+  it("does not fire below large scale", () => {
+    const small: SystemModel = {
+      ...readHeavyAtScale,
+      workload: { scale: { ...readHeavyAtScale.workload.scale, value: "small" } },
+    };
+    expect(codes(small)).not.toContain("UNCACHED_DATABASE_AT_SCALE");
+  });
+
+  it("does not fire on a write-heavy database — checkout as-is, at any scale", () => {
+    const atScale: SystemModel = {
+      ...checkout,
+      workload: { scale: { ...checkout.workload.scale, value: "massive" } },
+    };
+    expect(codes(atScale)).not.toContain("UNCACHED_DATABASE_AT_SCALE");
+  });
+
+  it("does not fire once a cache already sits in the chain — url-shortener", () => {
+    expect(codes(urlShortener)).not.toContain("UNCACHED_DATABASE_AT_SCALE");
+  });
+
+  it("does not fire on a database fed through a queue — media-upload", () => {
+    // api -> queue -> db: the queue is an async boundary, so db is never
+    // the tail of a synchronous chain in the first place.
+    expect(codes(mediaUpload)).not.toContain("UNCACHED_DATABASE_AT_SCALE");
+  });
+});
+
 describe("simulate", () => {
   it("rejects a model with a cycle", () => {
     const cyclic: SystemModel = {

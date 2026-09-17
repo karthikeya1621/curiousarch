@@ -18,7 +18,8 @@
  */
 
 import { simulate } from "./solver.ts";
-import { listScenarios, withComponent, type Scenario } from "./whatif.ts";
+import { listScenarios, withComponent, withInsertedComponent, type Scenario } from "./whatif.ts";
+import { trait } from "./types.ts";
 import type { Component, FindingCode, SimulationResult, SystemModel } from "./types.ts";
 
 export interface Fix {
@@ -157,6 +158,45 @@ const FIX_CATALOG: Partial<Record<FindingCode, FixFactory>> = {
         ),
     },
   ],
+
+  /**
+   * The one fix in this catalogue whose remedy is structural, not a trait
+   * flip — there's no existing trait that means "has a cache in front of
+   * it." Inserts a brand-new cache component between the database and
+   * whatever currently calls it directly, rewiring the edge(s) around it.
+   * The new cache ships with safe defaults (long TTL, large keyspace,
+   * stampede protection on) specifically so this fix doesn't just relocate
+   * the problem into a fresh THUNDERING_HERD_RISK on the cache it just
+   * added.
+   */
+  UNCACHED_DATABASE_AT_SCALE: (componentId, component) => {
+    if (component.kind !== "database") return [];
+    const cacheId = `${componentId}-cache`;
+    return [
+      {
+        id: `${componentId}:add-cache`,
+        label: "Add a caching layer",
+        tradeoff: "One more moving part to run and keep warm, and cached data can go briefly stale — but repeat reads stop reaching the database at all.",
+        apply: (model) =>
+          withInsertedComponent(
+            model,
+            {
+              id: cacheId,
+              label: `${component.label} cache`,
+              kind: "cache",
+              ttl: trait("long", "default", "Long TTL by default — a freshly added cache shouldn't itself become a thundering-herd risk."),
+              keyspaceSize: trait("large", "default", "Assumed large until proven otherwise."),
+              hasStampedeProtection: trait(true, "default", "Request coalescing on by default, for the same reason."),
+            },
+            (edges) => [
+              ...edges.filter((e) => e.to !== componentId),
+              ...edges.filter((e) => e.to === componentId).map((e) => ({ from: e.from, to: cacheId })),
+              { from: cacheId, to: componentId },
+            ],
+          ),
+      },
+    ];
+  },
 };
 
 /**

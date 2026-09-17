@@ -12,6 +12,7 @@ import { simulate } from "./solver.ts";
 import { isTrait } from "./types.ts";
 import type {
   Component,
+  Edge,
   FindingCode,
   ScaleTier,
   SimulationResult,
@@ -35,6 +36,27 @@ export function withComponent(
   return {
     ...model,
     components: model.components.map((c) => (c.id === componentId ? patch(c) : c)),
+  };
+}
+
+/**
+ * The structural counterpart to `withComponent`: adds a brand-new
+ * component to the model rather than patching an existing one. `fixes.ts`
+ * uses this for a fix whose real remedy is architectural (e.g. inserting a
+ * caching layer) rather than a trait flip — `rewireIncoming` gets the
+ * model's current edges and returns the edges the new model should have,
+ * so the caller decides exactly how existing edges are redirected around
+ * the new component.
+ */
+export function withInsertedComponent(
+  model: SystemModel,
+  newComponent: Component,
+  rewireIncoming: (edges: Edge[]) => Edge[],
+): SystemModel {
+  return {
+    ...model,
+    components: [...model.components, newComponent],
+    edges: rewireIncoming(model.edges),
   };
 }
 

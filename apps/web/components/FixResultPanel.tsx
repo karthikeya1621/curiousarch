@@ -34,6 +34,14 @@ export function FixResultPanel({
     (f) => f.code !== result.fix.targetsFindingCode,
   );
 
+  // A fix is applied to the REAL model, never the hypothetical
+  // failure+fix combination previewed above (see store.ts's applyFix
+  // comment) — so a fix whose target trait already holds for real (the
+  // scenario only pretended it didn't) has nothing left to change. Catch
+  // that here rather than letting the click silently do nothing.
+  const realApplied = result.fix.apply(model);
+  const isNoOp = JSON.stringify(realApplied) === JSON.stringify(model);
+
   return (
     <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
       <div className="flex items-start justify-between gap-2">
@@ -93,14 +101,16 @@ export function FixResultPanel({
       )}
 
       <button
-        onClick={() => applyFix(result.fix.apply(model))}
-        className="mt-3 w-full rounded-lg bg-slate-900 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-700"
+        onClick={() => applyFix(realApplied)}
+        disabled={isNoOp}
+        className="mt-3 w-full rounded-lg bg-slate-900 px-3.5 py-2 text-sm font-medium text-white transition-colors enabled:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
       >
         Apply this fix
       </button>
       <p className="mt-1.5 text-center text-[11px] text-slate-400">
-        Makes this change to the real model — not the hypothetical failure
-        above. Undo reverts it.
+        {isNoOp
+          ? "Your real system already has this — the failure above was only hypothetical, so there's nothing to change."
+          : "Makes this change to the real model — not the hypothetical failure above. Undo reverts it."}
       </p>
     </div>
   );

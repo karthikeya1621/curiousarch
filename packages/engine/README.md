@@ -4,7 +4,7 @@ Architecture-pattern engine. No React, no DOM, no LLM at rest, no network.
 
 ```bash
 npm install
-npm test          # 60 tests
+npm test          # 70 tests
 npm run typecheck
 ```
 
@@ -33,8 +33,8 @@ rationale. Prose-derived modelling means the engine is guessing categories
 works if the UI can show what was guessed and let the user overwrite it.
 
 **A pattern earns its place by being real, well-known architectural
-wisdom — not by padding the catalogue for coverage.** Six patterns exist
-today (below); a seventh should be added because you have a specific,
+wisdom — not by padding the catalogue for coverage.** Seven patterns exist
+today (below); an eighth should be added because you have a specific,
 checkable failure mode in mind, never to hit a round number. A pattern that
 sounds plausible but doesn't correspond to something a real incident report
 would name is exactly the failure mode this whole approach exists to avoid.
@@ -72,6 +72,7 @@ query time in milliseconds" never was.
 | `UNBOUNDED_ADMISSION` | warning | A gateway has `hasRateLimiting: false` |
 | `QUEUE_NO_DEAD_LETTER` | warning | A queue has `hasDeadLetterQueue: false` |
 | `FIXED_SCALING_AT_SCALE` | warning | A queue has `consumerScaling: "fixed"` at `"large"`/`"massive"` workload scale |
+| `UNCACHED_DATABASE_AT_SCALE` | warning | A read-heavy (`writeVolume: "low"`) database sits directly on a synchronous chain with no cache anywhere in it, at `"large"`/`"massive"` scale |
 
 ## What the golden tests are for
 
@@ -94,9 +95,13 @@ when it should, doesn't when it shouldn't) before considering it done.
 
 Known gaps, listed so they can be added rather than silently assumed away:
 
-- The catalogue is six patterns, not an exhaustive list. Real wisdom not yet
-  encoded: idempotency/retry safety, multi-region risk, credential handling,
-  observability gaps.
+- The catalogue is seven patterns, not an exhaustive list. Real wisdom not
+  yet encoded: idempotency/retry safety, multi-region risk, credential
+  handling, observability gaps.
+- `UNCACHED_DATABASE_AT_SCALE` is the only pattern whose fix is structural
+  (it inserts a new cache component rather than flipping a trait) — see
+  `withInsertedComponent` in `whatif.ts`. This closes what was previously a
+  real gap: no fix could ever add a component to the topology.
 - `CASCADING_FAILURE_RISK` only checks whether *a* circuit breaker exists
   anywhere in the chain, not whether it's configured sensibly (a breaker
   with a threshold of 10,000 failures isn't meaningfully protective).

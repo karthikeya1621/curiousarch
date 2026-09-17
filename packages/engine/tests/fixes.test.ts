@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { listFixes, compareFix } from "../src/fixes.js";
+import { applyScenario } from "../src/whatif.js";
 import { checkout, mediaUpload, urlShortener } from "../models/reference.js";
 import type { SystemModel } from "../src/types.js";
 
@@ -127,6 +128,53 @@ describe("compareFix", () => {
     expect(result.underFailure.findings.map((f) => f.code)).toContain("QUEUE_NO_DEAD_LETTER");
     expect(result.underFix.findings.map((f) => f.code)).not.toContain("QUEUE_NO_DEAD_LETTER");
     expect(result.resolved).toBe(true);
+  });
+
+  it("resolves an uncached-database warning by structurally adding a cache", () => {
+    // No reference model triggers this at baseline — same reason as the
+    // cache/queue scenarios in whatif.test.ts — so this fixture (checkout
+    // with a read-heavy db at large scale) is the positive-path fixture,
+    // reused from golden.test.ts's UNCACHED_DATABASE_AT_SCALE suite.
+    // workload:scale-up (large -> massive) is a neutral vehicle scenario
+    // here, same role it plays in the QUEUE_NO_DEAD_LETTER test above —
+    // the finding is already present at baseline, not caused by the scenario.
+    const readHeavyAtScale: SystemModel = {
+      ...checkout,
+      workload: { scale: { ...checkout.workload.scale, value: "large" } },
+      components: checkout.components.map((c) =>
+        c.id === "db" && c.kind === "database"
+          ? { ...c, writeVolume: { ...c.writeVolume, value: "low" } }
+          : c,
+      ),
+    };
+
+    const result = compareFix(readHeavyAtScale, "workload:scale-up", "db:add-cache");
+    expect(result.underFailure.findings.map((f) => f.code)).toContain(
+      "UNCACHED_DATABASE_AT_SCALE",
+    );
+    expect(result.underFix.findings.map((f) => f.code)).not.toContain(
+      "UNCACHED_DATABASE_AT_SCALE",
+    );
+    expect(result.resolved).toBe(true);
+
+    // This is the one fix that changes the topology, not just a trait —
+    // confirm it actually did, rather than just trusting the finding diff.
+    const applied = result.fix.apply(applyScenario(readHeavyAtScale, "workload:scale-up"));
+    expect(applied.components.length).toBe(readHeavyAtScale.components.length + 1);
+    const newCache = applied.components.find((c) => c.id === "db-cache");
+    expect(newCache?.kind).toBe("cache");
+    expect(applied.edges).toContainEqual({ from: "svc", to: "db-cache" });
+    expect(applied.edges).toContainEqual({ from: "db-cache", to: "db" });
+    expect(applied.edges).not.toContainEqual({ from: "svc", to: "db" });
+
+    // A cache is not a circuit breaker — this fix correctly does not also
+    // resolve the unrelated cascading-failure risk on the same chain.
+    expect(result.underFailure.findings.map((f) => f.code)).toContain("CASCADING_FAILURE_RISK");
+    expect(result.underFix.findings.map((f) => f.code)).toContain("CASCADING_FAILURE_RISK");
+
+    // The freshly-added cache ships with safe-enough defaults that it
+    // doesn't just relocate the problem into a new thundering-herd risk.
+    expect(result.underFix.findings.map((f) => f.code)).not.toContain("THUNDERING_HERD_RISK");
   });
 
   it("throws for a fix that doesn't apply to the scenario's findings", () => {

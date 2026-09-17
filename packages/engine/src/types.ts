@@ -127,7 +127,8 @@ export type FindingCode =
   | "CASCADING_FAILURE_RISK"
   | "UNBOUNDED_ADMISSION"
   | "QUEUE_NO_DEAD_LETTER"
-  | "FIXED_SCALING_AT_SCALE";
+  | "FIXED_SCALING_AT_SCALE"
+  | "UNCACHED_DATABASE_AT_SCALE";
 
 export type Severity = "critical" | "warning";
 

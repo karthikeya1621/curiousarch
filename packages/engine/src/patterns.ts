@@ -95,11 +95,16 @@ function thunderingHerdRisk(model: SystemModel): Finding[] {
 
 /**
  * Every synchronous root-to-leaf path (stopping at a queue — the caller
- * doesn't wait for one to drain) of length >= 3 with no circuit breaker
- * anywhere in it: a slow leaf's latency (or failure) propagates all the way
- * back up the chain with nothing to stop it.
+ * doesn't wait for one to drain). A partial path that runs into a queue is
+ * dropped entirely, not truncated-and-kept: nothing past an async boundary
+ * is on anyone's live synchronous request path, so it's not a candidate
+ * chain for either consumer below. Shared by `cascadingFailureRisk` (long
+ * chains with no circuit breaker) and `uncachedDatabaseAtScale` (a
+ * database at the tail of one of these with no cache anywhere upstream) —
+ * the "is this really a live synchronous path" question is identical for
+ * both.
  */
-function cascadingFailureRisk(model: SystemModel): Finding[] {
+function synchronousChains(model: SystemModel): Component[][] {
   const byId = new Map(model.components.map((c) => [c.id, c]));
   const entries = model.components.filter((c) => !isLoadBearing(model, c.id));
   const chains: Component[][] = [];
@@ -117,7 +122,16 @@ function cascadingFailureRisk(model: SystemModel): Finding[] {
   }
 
   for (const entry of entries) walk(entry.id, []);
+  return chains;
+}
 
+/**
+ * Every synchronous chain (see `synchronousChains`) of length >= 3 with no
+ * circuit breaker anywhere in it: a slow leaf's latency (or failure)
+ * propagates all the way back up the chain with nothing to stop it.
+ */
+function cascadingFailureRisk(model: SystemModel): Finding[] {
+  const chains = synchronousChains(model);
   const flagged = new Set<string>();
   const findings: Finding[] = [];
   for (const chain of chains) {
@@ -206,6 +220,42 @@ function fixedScalingAtScale(model: SystemModel): Finding[] {
   return findings;
 }
 
+/**
+ * A read-heavy database (write volume low — reads dominate) sitting
+ * directly on a live synchronous request path with nothing absorbing
+ * repeat reads before they reach it. Gated on scale the same way
+ * `fixedScalingAtScale` is — a handful of direct reads is fine; this is
+ * specifically about a hot path that's outgrown going direct. Unlike every
+ * other pattern here, its real fix isn't a trait flip — it's inserting a
+ * cache, which `fixes.ts` does structurally for this one code.
+ */
+function uncachedDatabaseAtScale(model: SystemModel): Finding[] {
+  const scale = model.workload.scale.value;
+  if (scale !== "large" && scale !== "massive") return [];
+
+  const flagged = new Set<string>();
+  const findings: Finding[] = [];
+  for (const chain of synchronousChains(model)) {
+    const tail = chain[chain.length - 1];
+    if (!tail || tail.kind !== "database") continue;
+    if (tail.writeVolume.value !== "low") continue;
+    if (chain.some((c) => c.kind === "cache")) continue;
+    if (flagged.has(tail.id)) continue;
+    flagged.add(tail.id);
+    findings.push({
+      code: "UNCACHED_DATABASE_AT_SCALE",
+      severity: "warning",
+      componentId: tail.id,
+      evidence: {
+        reason: `A read-heavy database sits directly on a synchronous request path (${chain.map((c) => c.id).join(" -> ")}) at ${scale} scale with nothing absorbing repeat reads before they reach it.`,
+        writeVolume: "low",
+        scale,
+      },
+    });
+  }
+  return findings;
+}
+
 const PATTERNS = [
   singlePointOfFailure,
   thunderingHerdRisk,
@@ -213,6 +263,7 @@ const PATTERNS = [
   unboundedAdmission,
   queueNoDeadLetter,
   fixedScalingAtScale,
+  uncachedDatabaseAtScale,
 ];
 
 export function evaluatePatterns(model: SystemModel): Finding[] {

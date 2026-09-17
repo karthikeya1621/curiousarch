@@ -95,19 +95,27 @@ React Flow, programmatic layout, no dragging.
 
 **Acceptance:** adding a component via a fix moves existing nodes smoothly and
 leaves the reading order intact. Judge this by watching it, not by a test.
-**Built and verified, with a caveat**: `apps/web/lib/layout.ts` (ELK, layered,
-`elk.direction: "RIGHT"`), `components/FlowDiagram.tsx`/`ComponentNode.tsx`,
-`lib/animateNodes.ts` (rAF/lerp interpolation — no library supports this;
-confirmed via research this phase). Node ids are `component.id` directly, so
-identity is stable across relayout for free. Verified live by switching
-between the three reference models (a real topology change: 3 → 4 → 5 nodes)
-and watching new/moved nodes settle into ELK's new layout with `fitView`
-re-framing the viewport after each transition — smooth, no snapping, no
-off-screen clipping. The caveat: no fix in the current catalogue actually
-*adds* a new component (every entry in `fixes.ts` scales an existing
-parameter), so the literal "adding a component via a fix" case is untested
-against a real fix — only against a full model swap, which exercises the
-same code path (relayout + animate + refit) but isn't quite the same event.
+**Built and verified, caveat now closed**: `apps/web/lib/layout.ts` (ELK,
+layered, `elk.direction: "RIGHT"`), `components/FlowDiagram.tsx`/
+`ComponentNode.tsx`, `lib/animateNodes.ts` (rAF/lerp interpolation — no
+library supports this; confirmed via research this phase). Node ids are
+`component.id` directly, so identity is stable across relayout for free.
+The engine's `UNCACHED_DATABASE_AT_SCALE` pattern (added later, see
+`packages/engine/README.md`) is the first fix that actually adds a new
+component (`withInsertedComponent` in `whatif.ts`, a real cache node) —
+verified live via `/run-web`: applying "Add a caching layer" correctly
+inserts the node and rewires the edges, no console errors, positions
+settle to ELK's newly-computed layout once the 300ms interpolation
+finishes.
+
+**A real bug found during that same live check, still open**: at 5 nodes
+(traffic + 4 components — checkout-with-a-cache, but also plain
+`url-shortener` reached by an ordinary tab switch, no fix involved —
+confirmed this isn't specific to fix-triggered changes), `fitView` doesn't
+zoom out far enough and the rightmost node is clipped by the diagram
+container's edge. The earlier claim above ("no off-screen clipping") held
+for the 3-4 node cases it was actually checked against at the time, not
+for 5.
 
 **Risk:** ELK reflows by default and does not preserve prior layout. Budget real
 time here. If pinning proves unworkable, evaluate WebCola, which supports
