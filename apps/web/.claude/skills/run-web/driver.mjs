@@ -36,6 +36,15 @@ const COMMANDS = {
     console.log("launched, url:", page.url());
   },
 
+  // `<width> <height>` - resizes the viewport, for checking responsive
+  // breakpoints (archsim's layout has lg=1024px/xl=1280px breakpoints).
+  async resize(rest) {
+    if (!page) return console.log("ERROR: launch first");
+    const [w, h] = rest.split(/\s+/).map(Number);
+    await page.setViewportSize({ width: w, height: h || 900 });
+    console.log("resized to", w, "x", h || 900);
+  },
+
   // Reloads the current page in the SAME browser context - unlike calling
   // `launch` again (a no-op once a browser exists), this is how to verify
   // anything backed by localStorage (e.g. archsim's saved-session restore),

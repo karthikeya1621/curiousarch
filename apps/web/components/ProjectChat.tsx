@@ -77,7 +77,8 @@ export function ProjectChat() {
           onKeyDown={(e) => {
             if (e.key === "Enter") submit();
           }}
-          placeholder="Ask a question or request a change…"
+          placeholder="Ask about this system…"
+          aria-label="Ask a question or request a change"
           className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none"
         />
         <button

@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { useAppStore } from "../lib/store";
 import { PlusIcon } from "./icons";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 /**
  * The only intentional way to abandon the current session and start a
@@ -12,21 +14,29 @@ import { PlusIcon } from "./icons";
  */
 export function NewProjectButton() {
   const startNewProject = useAppStore((s) => s.startNewProject);
-
-  function handleClick() {
-    const confirmed = window.confirm(
-      "Start a new project? This clears the current one from view — save it first if you want to come back to it.",
-    );
-    if (confirmed) startNewProject();
-  }
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   return (
-    <button
-      onClick={handleClick}
-      className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50"
-    >
-      <PlusIcon className="h-3.5 w-3.5" />
-      New Project
-    </button>
+    <>
+      <button
+        onClick={() => setConfirmOpen(true)}
+        className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50"
+      >
+        <PlusIcon className="h-3.5 w-3.5" />
+        New Project
+      </button>
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Start a new project?"
+        message="This clears the current one from view — save it first if you want to come back to it."
+        confirmLabel="Start new project"
+        cancelLabel="Keep this project"
+        onConfirm={() => {
+          setConfirmOpen(false);
+          startNewProject();
+        }}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </>
   );
 }
