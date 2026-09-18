@@ -23,7 +23,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      {/* suppressHydrationWarning: browser extensions (Grammarly, etc.)
+          inject attributes like data-gr-ext-installed onto <body> before
+          React hydrates - a real mismatch, but not one caused by our own
+          code, and not one worth failing hydration over. Scoped to this
+          one element only, so it won't hide a genuine mismatch elsewhere. */}
+      <body className="min-h-full flex flex-col" suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   );
 }
