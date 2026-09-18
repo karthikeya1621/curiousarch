@@ -1,33 +1,47 @@
 "use client";
 
+import { useEffect } from "react";
 import { useAppStore } from "../lib/store";
 import { SystemDashboard } from "../components/SystemDashboard";
 import { ControlPanel } from "../components/ControlPanel";
 import { FailureSidebar } from "../components/FailureSidebar";
 import { ProseInput } from "../components/ProseInput";
 import { ResimulateButton } from "../components/ResimulateButton";
+import { SaveSessionButton } from "../components/SaveSessionButton";
 import { ActivityIcon } from "../components/icons";
 
 export default function Home() {
   const model = useAppStore((s) => s.model);
+  const hydrateFromStorage = useAppStore((s) => s.hydrateFromStorage);
   const isBlank = model.components.length === 0;
 
+  // Client-only, post-mount: the store's initial state (blank canvas) must
+  // match on the server-rendered and first client render to avoid a
+  // hydration mismatch, so restoring a saved session has to happen after
+  // that first render, not during it.
+  useEffect(() => {
+    hydrateFromStorage();
+  }, [hydrateFromStorage]);
+
   return (
-    <main className="w-full px-6 py-8 lg:px-10">
-      <header className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
-          <ActivityIcon className="h-5 w-5" />
+    <main className="w-full px-6 py-5 lg:px-10">
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
+            <ActivityIcon className="h-4 w-4" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold tracking-tight text-slate-900">
+              archsim
+            </h1>
+            <p className="max-w-xl text-xs text-slate-500">
+              {isBlank
+                ? "Describe a system to get started — an AI architect will sketch it, flag what could go wrong, and suggest fixes as you grow it."
+                : "Every node with a possible failure carries an indicator. Click one, pick a finding, pick a fix, see how the architecture adapts."}
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">
-            archsim
-          </h1>
-          <p className="mt-0.5 max-w-2xl text-sm text-slate-500">
-            {isBlank
-              ? "Describe a system to get started — an AI architect will sketch it, flag what could go wrong, and suggest fixes as you grow it."
-              : "Every node with a possible failure carries an indicator. Click one, pick a finding, pick a fix, see how the architecture adapts."}
-          </p>
-        </div>
+        {!isBlank && <SaveSessionButton />}
       </header>
 
       {isBlank ? (
@@ -36,11 +50,11 @@ export default function Home() {
         </div>
       ) : (
         <>
-          <div className="mt-6 flex justify-end">
+          <div className="mt-4 flex justify-end">
             <ResimulateButton model={model} />
           </div>
 
-          <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-[300px_minmax(0,1fr)_320px]">
+          <div className="mt-4 grid grid-cols-1 gap-5 xl:grid-cols-[300px_minmax(0,1fr)_320px]">
             <div className="order-2 xl:order-1">
               <ControlPanel model={model} />
             </div>

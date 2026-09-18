@@ -30,6 +30,17 @@ const COMMANDS = {
     console.log("launched, url:", page.url());
   },
 
+  // Reloads the current page in the SAME browser context - unlike calling
+  // `launch` again (a no-op once a browser exists), this is how to verify
+  // anything backed by localStorage (e.g. archsim's saved-session restore),
+  // since localStorage is scoped to the context/origin, not a single page.
+  async reload() {
+    if (!page) return console.log("ERROR: launch first");
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForTimeout(500);
+    console.log("reloaded, url:", page.url());
+  },
+
   async ss(name) {
     if (!page) return console.log("ERROR: launch first");
     const f = path.join(SHOT_DIR, (name || `ss-${Date.now()}`) + ".png");

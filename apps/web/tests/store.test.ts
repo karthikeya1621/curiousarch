@@ -123,3 +123,65 @@ describe("setWorkloadTier", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Node's test environment has no real `localStorage` (only a browser does),
+ * so `sessionStorage.ts`'s own try/catch is exercised for free by every
+ * other test in this file (a bare ReferenceError, caught, so nothing here
+ * crashes without a stub) — these tests stub in a minimal in-memory
+ * Storage-alike to actually exercise the save/restore round trip.
+ */
+describe("save/restore session", () => {
+  function fakeLocalStorage(): Storage {
+    const data = new Map<string, string>();
+    return {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v),
+      removeItem: (k: string) => void data.delete(k),
+      clear: () => data.clear(),
+      key: () => null,
+      get length() {
+        return data.size;
+      },
+    };
+  }
+
+  it("saveToStorage then hydrateFromStorage round-trips the session", () => {
+    vi.stubGlobal("localStorage", fakeLocalStorage());
+    const model = degradedModel();
+    useAppStore.setState({ model, history: [], findings: [], canResimulate: true });
+
+    useAppStore.getState().saveToStorage();
+    expect(useAppStore.getState().lastSavedAt).not.toBeNull();
+
+    useAppStore.setState(initialState, true);
+    expect(useAppStore.getState().model.components).toHaveLength(0);
+
+    useAppStore.getState().hydrateFromStorage();
+    expect(useAppStore.getState().model.id).toBe(model.id);
+    expect(useAppStore.getState().canResimulate).toBe(true);
+  });
+
+  it("hydrateFromStorage is a no-op when nothing was saved", () => {
+    vi.stubGlobal("localStorage", fakeLocalStorage());
+
+    useAppStore.getState().hydrateFromStorage();
+
+    expect(useAppStore.getState().model).toEqual(initialState.model);
+  });
+
+  it("degrades gracefully when localStorage is unavailable (private browsing, blocked site data)", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new DOMException("blocked");
+      },
+      setItem: () => {
+        throw new DOMException("blocked");
+      },
+    });
+
+    expect(() => useAppStore.getState().saveToStorage()).not.toThrow();
+    expect(() => useAppStore.getState().hydrateFromStorage()).not.toThrow();
+    expect(useAppStore.getState().lastSavedAt).toBeNull();
+  });
+});

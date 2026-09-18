@@ -59,6 +59,16 @@ export function UndoIcon({ className }: IconProps) {
   );
 }
 
+export function SaveIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M5 3.5h11L20 7.5V20.5H5z" />
+      <path d="M8 3.5v6h8v-6" />
+      <path d="M8 20.5v-7h8v7" />
+    </svg>
+  );
+}
+
 export function ActivityIcon({ className }: IconProps) {
   return (
     <svg {...base} className={className}>

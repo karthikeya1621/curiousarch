@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { AiFinding, SystemModel } from "@archsim/engine";
+import { loadSession, saveSession } from "./sessionStorage";
 
 /**
  * Blank canvas is the actual starting state — no preset system, no
@@ -52,6 +53,7 @@ interface AppState {
   selectedFindingId: string | null;
   selectedFixId: string | null;
   canResimulate: boolean;
+  lastSavedAt: number | null;
   setModel: (model: SystemModel) => void;
   setWorkloadTier: (dimension: "users" | "requests", tier: number) => void;
   applyFix: (newModel: SystemModel) => void;
@@ -60,6 +62,10 @@ interface AppState {
   setOpenComponentId: (id: string | null) => void;
   selectFinding: (id: string | null) => void;
   selectFix: (id: string | null) => void;
+  /** Restores the one saved session slot, if one exists — a no-op otherwise. */
+  hydrateFromStorage: () => void;
+  /** Snapshots the current session into the one saved slot, overwriting it. */
+  saveToStorage: () => void;
 }
 
 async function refreshFindings(
@@ -99,6 +105,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedFindingId: null,
   selectedFixId: null,
   canResimulate: false,
+  lastSavedAt: null,
 
   setModel: (model) => {
     set({
@@ -163,4 +170,36 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectFinding: (id) => set({ selectedFindingId: id, selectedFixId: null }),
 
   selectFix: (id) => set({ selectedFixId: id }),
+
+  hydrateFromStorage: () => {
+    const session = loadSession();
+    if (!session) return;
+    set({
+      model: session.model,
+      history: session.history,
+      findings: session.findings,
+      // A save can never be mid-flight ("loading") by the time it's read
+      // back — there's no request left to resume, so treat it as settled.
+      findingsStatus: session.findingsStatus === "loading" ? "done" : session.findingsStatus,
+      findingsError: session.findingsError,
+      canResimulate: session.canResimulate,
+      lastSavedAt: session.savedAt,
+      openComponentId: null,
+      selectedFindingId: null,
+      selectedFixId: null,
+    });
+  },
+
+  saveToStorage: () => {
+    const { model, history, findings, findingsStatus, findingsError, canResimulate } = get();
+    const saved = saveSession({
+      model,
+      history,
+      findings,
+      findingsStatus: findingsStatus === "loading" ? "done" : findingsStatus,
+      findingsError,
+      canResimulate,
+    });
+    if (saved) set({ lastSavedAt: saved.savedAt });
+  },
 }));
