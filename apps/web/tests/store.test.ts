@@ -124,6 +124,42 @@ describe("applyFix", () => {
     expect(state.selectedFixId).toBeNull();
     expect(state.openComponentId).toBeNull();
   });
+
+  it("logs an AppliedFixRecord when one is passed, appended to appliedFixes", () => {
+    useAppStore.setState({ model: degradedModel(), appliedFixes: [] });
+
+    useAppStore.getState().applyFix(fixedModel(), {
+      componentId: "svc",
+      findingTitle: "Single instance",
+      fixLabel: "Add a second instance",
+      appliedAt: 123,
+    });
+
+    expect(useAppStore.getState().appliedFixes).toEqual([
+      { componentId: "svc", findingTitle: "Single instance", fixLabel: "Add a second instance", appliedAt: 123 },
+    ]);
+  });
+
+  it("leaves appliedFixes untouched when no record is passed (a chat-driven change)", () => {
+    useAppStore.setState({ model: degradedModel(), appliedFixes: [] });
+
+    useAppStore.getState().applyFix(fixedModel());
+
+    expect(useAppStore.getState().appliedFixes).toEqual([]);
+  });
+});
+
+describe("component detail modal", () => {
+  it("openComponentDetail/closeComponentDetail toggle viewingComponent", () => {
+    const component = degradedModel().components[0]!;
+    useAppStore.setState({ viewingComponent: null });
+
+    useAppStore.getState().openComponentDetail(component);
+    expect(useAppStore.getState().viewingComponent).toBe(component);
+
+    useAppStore.getState().closeComponentDetail();
+    expect(useAppStore.getState().viewingComponent).toBeNull();
+  });
 });
 
 describe("findingsStale", () => {
@@ -157,6 +193,63 @@ describe("findingsStale", () => {
   });
 });
 
+describe("versions", () => {
+  it("records a version on setModel (the initial build)", async () => {
+    const model = degradedModel();
+
+    useAppStore.getState().setModel(model);
+
+    await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
+    const [version] = useAppStore.getState().versions;
+    expect(version!.model).toEqual(model);
+    expect(version!.findings).toEqual([]);
+  });
+
+  it("records another version on commitRework (Re-simulate), not on undo or applyFix", async () => {
+    useAppStore.setState({ model: degradedModel(), history: [], versions: [] });
+    useAppStore.getState().setWorkloadTier("users", 10_000); // no version — not a resimulation
+    useAppStore.getState().applyFix(fixedModel()); // no version either
+    expect(useAppStore.getState().versions).toHaveLength(0);
+
+    useAppStore.getState().commitRework(fixedModel());
+    await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
+
+    useAppStore.getState().undo(); // reverting is not a resimulation either
+    await vi.waitFor(() => expect(useAppStore.getState().findingsStatus).toBe("done"));
+    expect(useAppStore.getState().versions).toHaveLength(1);
+  });
+
+  it("restoreVersion makes a past version live, preserves the full versions list, and pushes onto history", async () => {
+    useAppStore.setState({ model: degradedModel(), history: [], versions: [] });
+    useAppStore.getState().commitRework(fixedModel());
+    await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
+    const v1 = useAppStore.getState().versions[0]!;
+
+    const laterModel = degradedModel();
+    useAppStore.setState({ model: laterModel, history: [] });
+
+    useAppStore.getState().restoreVersion(v1.id);
+
+    const state = useAppStore.getState();
+    expect(state.model).toEqual(v1.model);
+    expect(state.findings).toEqual(v1.findings);
+    expect(state.canResimulate).toBe(false);
+    expect(state.previewVersionId).toBeNull();
+    expect(state.versions).toEqual([v1]); // restoring never shrinks the list
+    expect(state.history).toEqual([laterModel]); // one Undo away
+  });
+
+  it("previewVersion just sets previewVersionId, mutating nothing else", () => {
+    useAppStore.setState({ previewVersionId: null });
+
+    useAppStore.getState().previewVersion("some-id");
+    expect(useAppStore.getState().previewVersionId).toBe("some-id");
+
+    useAppStore.getState().previewVersion(null);
+    expect(useAppStore.getState().previewVersionId).toBeNull();
+  });
+});
+
 describe("setWorkloadTier", () => {
   it("updates the tier and enables Re-simulate without refreshing findings", () => {
     const model: SystemModel = {
@@ -182,11 +275,23 @@ describe("setWorkloadTier", () => {
  * Storage-alike to actually exercise the save/restore round trip.
  */
 describe("save/restore session", () => {
-  it("saveToStorage then hydrateFromStorage round-trips the session, chat included", () => {
+  it("saveToStorage then hydrateFromStorage round-trips the session, chat/fixes/versions included", () => {
     vi.stubGlobal("localStorage", fakeLocalStorage());
     const model = degradedModel();
     const chatMessages = [{ role: "user" as const, text: "why is this a single instance?" }];
-    useAppStore.setState({ model, history: [], findings: [], canResimulate: true, chatMessages });
+    const appliedFixes = [
+      { componentId: "svc", findingTitle: "Single instance", fixLabel: "Add a second instance", appliedAt: 1 },
+    ];
+    const versions = [{ id: "v1", model, findings: [], createdAt: 1 }];
+    useAppStore.setState({
+      model,
+      history: [],
+      findings: [],
+      canResimulate: true,
+      chatMessages,
+      appliedFixes,
+      versions,
+    });
 
     useAppStore.getState().saveToStorage();
     expect(useAppStore.getState().lastSavedAt).not.toBeNull();
@@ -198,6 +303,8 @@ describe("save/restore session", () => {
     expect(useAppStore.getState().model.id).toBe(model.id);
     expect(useAppStore.getState().canResimulate).toBe(true);
     expect(useAppStore.getState().chatMessages).toEqual(chatMessages);
+    expect(useAppStore.getState().appliedFixes).toEqual(appliedFixes);
+    expect(useAppStore.getState().versions).toEqual(versions);
   });
 
   it("hydrateFromStorage is a no-op when nothing was saved", () => {
@@ -225,12 +332,17 @@ describe("save/restore session", () => {
 });
 
 describe("startNewProject", () => {
-  it("resets the session to a blank canvas, chat included", () => {
+  it("resets the session to a blank canvas, chat/fixes/versions/modal included", () => {
+    const component = degradedModel().components[0]!;
     useAppStore.setState({
       model: degradedModel(),
       history: [degradedModel()],
       canResimulate: true,
       chatMessages: [{ role: "user", text: "hi" }],
+      appliedFixes: [{ componentId: "svc", findingTitle: "x", fixLabel: "y", appliedAt: 1 }],
+      versions: [{ id: "v1", model: degradedModel(), findings: [], createdAt: 1 }],
+      previewVersionId: "v1",
+      viewingComponent: component,
     });
 
     useAppStore.getState().startNewProject();
@@ -240,6 +352,10 @@ describe("startNewProject", () => {
     expect(state.history).toHaveLength(0);
     expect(state.canResimulate).toBe(false);
     expect(state.chatMessages).toHaveLength(0);
+    expect(state.appliedFixes).toHaveLength(0);
+    expect(state.versions).toHaveLength(0);
+    expect(state.previewVersionId).toBeNull();
+    expect(state.viewingComponent).toBeNull();
   });
 
   it("never touches the saved localStorage slot", () => {

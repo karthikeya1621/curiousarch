@@ -21,17 +21,30 @@ import { TrafficNode } from "./TrafficNode";
 
 const nodeTypes = { component: ComponentNode, traffic: TrafficNode };
 
-export function FlowDiagram({ model }: { model: SystemModel }) {
+export function FlowDiagram({
+  model,
+  findingsOverride,
+}: {
+  model: SystemModel;
+  findingsOverride?: AiFinding[];
+}) {
   return (
     <ReactFlowProvider>
-      <FlowDiagramInner model={model} />
+      <FlowDiagramInner model={model} findingsOverride={findingsOverride} />
     </ReactFlowProvider>
   );
 }
 
-function FlowDiagramInner({ model }: { model: SystemModel }) {
+function FlowDiagramInner({
+  model,
+  findingsOverride,
+}: {
+  model: SystemModel;
+  findingsOverride?: AiFinding[];
+}) {
   const { fitView } = useReactFlow();
-  const findings = useAppStore((s) => s.findings);
+  const liveFindings = useAppStore((s) => s.findings);
+  const findings = findingsOverride ?? liveFindings;
 
   const findingsByComponent = useMemo(() => {
     const map = new Map<string, AiFinding[]>();

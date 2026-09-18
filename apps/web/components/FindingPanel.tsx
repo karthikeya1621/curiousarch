@@ -61,7 +61,12 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to apply fix.");
-      applyFix(body.model as SystemModel);
+      applyFix(body.model as SystemModel, {
+        componentId: finding.componentId,
+        findingTitle: finding.title,
+        fixLabel: fix.label,
+        appliedAt: Date.now(),
+      });
     } catch (err) {
       setApplyError(err instanceof Error ? err.message : "Failed to apply fix.");
     } finally {

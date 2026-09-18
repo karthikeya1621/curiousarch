@@ -1,14 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { Modal } from "./Modal";
 
 /**
  * Replaces window.confirm() for New Project / Save's overwrite prompt — a
  * native dialog can't be styled, uses generic OK/Cancel labels instead of
  * the app's own verbs, and looks jarring next to the rest of the rounded-
- * card aesthetic. `position: fixed` needs no portal here: nothing in this
- * app gives an ancestor a transform/filter, which is the only thing that
- * would create a containing block and break fixed positioning.
+ * card aesthetic.
  */
 export function ConfirmDialog({
   open,
@@ -27,30 +25,9 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onCancel]);
-
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
-      onClick={onCancel}
-    >
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="confirm-dialog-title"
-        aria-describedby="confirm-dialog-message"
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 shadow-lg"
-      >
+    <Modal open={open} onClose={onCancel}>
+      <div role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-message">
         <h2 id="confirm-dialog-title" className="text-sm font-semibold text-slate-900">
           {title}
         </h2>
@@ -72,6 +49,6 @@ export function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

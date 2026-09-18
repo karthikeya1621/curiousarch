@@ -1,16 +1,9 @@
-import { isTrait, USER_TIERS, REQUEST_TIERS } from "@archsim/engine";
-import type { Component, Trait, SystemModel, WorkloadDimensionValue } from "@archsim/engine";
+import { USER_TIERS, REQUEST_TIERS } from "@archsim/engine";
+import type { SystemModel, WorkloadDimensionValue } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { formatTier } from "../lib/formatTier";
 import { Card } from "./Card";
-import { Badge, type BadgeTone } from "./Badge";
 import { UndoIcon } from "./icons";
-
-const PROVENANCE_TONE: Record<Trait<unknown>["provenance"], BadgeTone> = {
-  stated: "info",
-  inferred: "violet",
-  default: "neutral",
-};
 
 function SegmentedToggle({
   options,
@@ -85,38 +78,6 @@ function TierControl({
   );
 }
 
-/**
- * Read-only: traits are no longer a control surface. This app's whole
- * premise is that the architecture only evolves by applying a fix to a
- * real failure point (or by re-describing the system) — a free toggle
- * here would let you route around that loop entirely. Provenance and
- * rationale stay visible for exactly the reason they always were —
- * understanding what was assumed and why — just without a way to
- * hand-edit it.
- */
-function TraitRow({ field, trait }: { field: string; trait: Trait<unknown> }) {
-  return (
-    <div className="flex items-center justify-between gap-3 py-2">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate text-xs font-medium text-slate-700">{field}</span>
-          <Badge tone={PROVENANCE_TONE[trait.provenance]}>{trait.provenance}</Badge>
-        </div>
-        <p className="truncate text-[11px] text-slate-400">{trait.rationale}</p>
-      </div>
-      <span className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-        {typeof trait.value === "boolean" ? (trait.value ? "on" : "off") : String(trait.value)}
-      </span>
-    </div>
-  );
-}
-
-function componentTraits(component: Component): [string, Trait<unknown>][] {
-  return Object.entries(component).filter((entry): entry is [string, Trait<unknown>] =>
-    isTrait(entry[1]),
-  );
-}
-
 export function ControlPanel({ model }: { model: SystemModel }) {
   const history = useAppStore((s) => s.history);
   const undo = useAppStore((s) => s.undo);
@@ -144,28 +105,9 @@ export function ControlPanel({ model }: { model: SystemModel }) {
       )}
 
       <div className="border-t border-slate-100 pt-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-          System — read-only, evolves via fixes
+        <p className="text-xs text-slate-500">
+          Click any node in the diagram to see its properties and fix history.
         </p>
-        <div className="flex flex-col divide-y divide-slate-100">
-          {model.components.map((component) => {
-            const traits = componentTraits(component);
-            if (traits.length === 0) return null;
-            return (
-              <div key={component.id} className="py-1">
-                <p className="pt-2 text-xs font-semibold text-slate-800">
-                  {component.label}{" "}
-                  <span className="font-normal text-slate-400">· {component.id}</span>
-                </p>
-                <div className="flex flex-col divide-y divide-slate-50">
-                  {traits.map(([field, trait]) => (
-                    <TraitRow key={field} field={field} trait={trait} />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
       </div>
     </Card>
   );

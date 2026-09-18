@@ -9,6 +9,22 @@ export interface ChatMessage {
   changed?: boolean;
 }
 
+/** A log entry, not a live-derived list — see store.ts's own comment on `appliedFixes`. */
+export interface AppliedFixRecord {
+  componentId: string;
+  findingTitle: string;
+  fixLabel: string;
+  appliedAt: number;
+}
+
+/** A checkpoint recorded on the initial build and every completed Re-simulate — see store.ts's own comment on `versions`. */
+export interface Version {
+  id: string;
+  model: SystemModel;
+  findings: AiFinding[];
+  createdAt: number;
+}
+
 export interface SavedSession {
   model: SystemModel;
   history: SystemModel[];
@@ -19,6 +35,8 @@ export interface SavedSession {
   /** True when the model changed (a raised tier) since `findings` was last actually computed for it. */
   findingsStale: boolean;
   chatMessages: ChatMessage[];
+  appliedFixes: AppliedFixRecord[];
+  versions: Version[];
   savedAt: number;
 }
 

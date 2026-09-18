@@ -1,6 +1,14 @@
 import { create } from "zustand";
-import type { AiFinding, SystemModel } from "@archsim/engine";
-import { loadSession, saveSession, type ChatMessage } from "./sessionStorage";
+import type { AiFinding, Component, SystemModel } from "@archsim/engine";
+import {
+  loadSession,
+  saveSession,
+  type AppliedFixRecord,
+  type ChatMessage,
+  type Version,
+} from "./sessionStorage";
+
+export type { AppliedFixRecord, Version };
 
 /**
  * Blank canvas is the actual starting state — no preset system, no
@@ -78,14 +86,45 @@ interface AppState {
   chatMessages: ChatMessage[];
   chatStatus: "idle" | "loading";
   chatError: string | null;
+  /**
+   * A log of fixes actually applied, not derived from the model — kept
+   * even across an Undo (same relationship a git log has to `git
+   * revert`), so a component's modal can show its history honestly. Only
+   * the formal finding->fix flow (`FindingPanel`) records an entry; a
+   * chat-driven change can't be reliably attributed to one component
+   * without diffing the model, so it doesn't.
+   */
+  appliedFixes: AppliedFixRecord[];
+  /**
+   * The component object behind the currently-open detail modal — an
+   * object, not just an id, so it works correctly whether the diagram on
+   * screen is the live model or a previewed past version (see
+   * `previewVersionId`): whichever was actually clicked is what's shown.
+   */
+  viewingComponent: Component | null;
+  /**
+   * A checkpoint recorded on the initial build and every completed
+   * Re-simulate (never on a fix/tier-change/undo — those are the finer-
+   * grained `history`/Undo stack's job). Only ever grows: browsing or
+   * restoring an old version never removes anything from this list,
+   * which is exactly why "read-only preview + explicit restore" is safe.
+   */
+  versions: Version[];
+  /** Which version (if any) is being browsed read-only. `null` = viewing the live model. */
+  previewVersionId: string | null;
   setModel: (model: SystemModel) => void;
   setWorkloadTier: (dimension: "users" | "requests", tier: number) => void;
-  applyFix: (newModel: SystemModel) => void;
+  applyFix: (newModel: SystemModel, appliedFix?: AppliedFixRecord) => void;
   commitRework: (newModel: SystemModel) => void;
   undo: () => void;
   setOpenComponentId: (id: string | null) => void;
   selectFinding: (id: string | null) => void;
   selectFix: (id: string | null) => void;
+  openComponentDetail: (component: Component) => void;
+  closeComponentDetail: () => void;
+  previewVersion: (id: string | null) => void;
+  /** Makes a past version live again — pushes the current model onto `history` first, so it's one Undo away. Never touches `versions` itself. */
+  restoreVersion: (id: string) => void;
   /** Restores the one saved session slot, if one exists — a no-op otherwise. */
   hydrateFromStorage: () => void;
   /** Snapshots the current session into the one saved slot, overwriting it. */
@@ -104,8 +143,9 @@ interface AppState {
 }
 
 async function refreshFindings(
-  set: (partial: Partial<AppState>) => void,
+  set: (partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)) => void,
   get: () => AppState,
+  options: { recordVersion?: boolean } = {},
 ): Promise<void> {
   const { model } = get();
   if (model.components.length === 0) {
@@ -121,7 +161,18 @@ async function refreshFindings(
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? "Failed to identify failures.");
-    set({ findings: body.findings as AiFinding[], findingsStatus: "done", findingsStale: false });
+    const findings = body.findings as AiFinding[];
+    set((state) => ({
+      findings,
+      findingsStatus: "done",
+      findingsStale: false,
+      // `model` — the value fetched against, captured before the
+      // `await` above — not `state.model`: nothing else changes it while
+      // a build/rework's own refreshFindings call is in flight.
+      versions: options.recordVersion
+        ? [...state.versions, { id: crypto.randomUUID(), model, findings, createdAt: Date.now() }]
+        : state.versions,
+    }));
   } catch (err) {
     set({
       findingsStatus: "done",
@@ -145,6 +196,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   chatMessages: [],
   chatStatus: "idle",
   chatError: null,
+  appliedFixes: [],
+  viewingComponent: null,
+  versions: [],
+  previewVersionId: null,
 
   setModel: (model) => {
     set({
@@ -158,8 +213,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatMessages: [],
       chatStatus: "idle",
       chatError: null,
+      appliedFixes: [],
+      viewingComponent: null,
+      versions: [],
+      previewVersionId: null,
     });
-    void refreshFindings(set, get);
+    void refreshFindings(set, get, { recordVersion: true });
   },
 
   setWorkloadTier: (dimension, tier) => {
@@ -174,8 +233,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  applyFix: (newModel) => {
-    const { model, history } = get();
+  applyFix: (newModel, appliedFix) => {
+    const { model, history, appliedFixes } = get();
     set({
       model: newModel,
       history: [...history, model],
@@ -188,6 +247,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // than spending an identifyFailures call on every single fix/chat
       // change. See this file's own top comment.
       findingsStale: true,
+      appliedFixes: appliedFix ? [...appliedFixes, appliedFix] : appliedFixes,
     });
   },
 
@@ -201,7 +261,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedFixId: null,
       canResimulate: false,
     });
-    void refreshFindings(set, get);
+    void refreshFindings(set, get, { recordVersion: true });
   },
 
   undo: () => {
@@ -218,6 +278,31 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selectFix: (id) => set({ selectedFixId: id }),
 
+  openComponentDetail: (component) => set({ viewingComponent: component }),
+
+  closeComponentDetail: () => set({ viewingComponent: null }),
+
+  previewVersion: (id) => set({ previewVersionId: id }),
+
+  restoreVersion: (id) => {
+    const { model, history, versions } = get();
+    const version = versions.find((v) => v.id === id);
+    if (!version) return;
+    set({
+      model: version.model,
+      history: [...history, model],
+      findings: version.findings,
+      findingsStatus: "done",
+      findingsError: null,
+      findingsStale: false,
+      canResimulate: false,
+      previewVersionId: null,
+      openComponentId: null,
+      selectedFindingId: null,
+      selectedFixId: null,
+    });
+  },
+
   hydrateFromStorage: () => {
     const session = loadSession();
     if (!session) return;
@@ -233,19 +318,33 @@ export const useAppStore = create<AppState>((set, get) => ({
       // `?? false` covers a session saved before this field existed.
       findingsStale: session.findingsStale ?? false,
       lastSavedAt: session.savedAt,
-      // `?? []` covers a session saved before chat existed at all.
+      // `?? []` covers a session saved before chat/fixes/versions existed.
       chatMessages: session.chatMessages ?? [],
+      appliedFixes: session.appliedFixes ?? [],
+      versions: session.versions ?? [],
       chatStatus: "idle",
       chatError: null,
       openComponentId: null,
       selectedFindingId: null,
       selectedFixId: null,
+      viewingComponent: null,
+      previewVersionId: null,
     });
   },
 
   saveToStorage: () => {
-    const { model, history, findings, findingsStatus, findingsError, canResimulate, findingsStale, chatMessages } =
-      get();
+    const {
+      model,
+      history,
+      findings,
+      findingsStatus,
+      findingsError,
+      canResimulate,
+      findingsStale,
+      chatMessages,
+      appliedFixes,
+      versions,
+    } = get();
     const saved = saveSession({
       model,
       history,
@@ -255,6 +354,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       canResimulate,
       findingsStale,
       chatMessages,
+      appliedFixes,
+      versions,
     });
     if (saved) set({ lastSavedAt: saved.savedAt });
   },
@@ -274,6 +375,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatMessages: [],
       chatStatus: "idle",
       chatError: null,
+      appliedFixes: [],
+      viewingComponent: null,
+      versions: [],
+      previewVersionId: null,
     });
   },
 

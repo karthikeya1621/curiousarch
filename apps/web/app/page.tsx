@@ -10,12 +10,18 @@ import { ProjectChat } from "../components/ProjectChat";
 import { ResimulateButton } from "../components/ResimulateButton";
 import { SaveSessionButton } from "../components/SaveSessionButton";
 import { NewProjectButton } from "../components/NewProjectButton";
+import { VersionHistory } from "../components/VersionHistory";
+import { PreviewBanner } from "../components/PreviewBanner";
+import { ComponentDetailModal } from "../components/ComponentDetailModal";
 import { ActivityIcon } from "../components/icons";
 
 export default function Home() {
   const model = useAppStore((s) => s.model);
   const hydrateFromStorage = useAppStore((s) => s.hydrateFromStorage);
+  const versions = useAppStore((s) => s.versions);
+  const previewVersionId = useAppStore((s) => s.previewVersionId);
   const isBlank = model.components.length === 0;
+  const previewVersion = versions.find((v) => v.id === previewVersionId) ?? null;
 
   // Client-only, post-mount: the store's initial state (blank canvas) must
   // match on the server-rendered and first client render to avoid a
@@ -55,10 +61,24 @@ export default function Home() {
         <div className="mx-auto mt-10 max-w-xl">
           <ProseInput />
         </div>
+      ) : previewVersion ? (
+        <>
+          <div className="mt-4 flex items-center gap-3">
+            <VersionHistory />
+          </div>
+
+          <div className="mt-4 flex flex-col gap-4">
+            <PreviewBanner />
+            <SystemDashboard model={previewVersion.model} findingsOverride={previewVersion.findings} />
+          </div>
+        </>
       ) : (
         <>
-          <div className="mt-4 flex justify-end">
-            <ResimulateButton model={model} />
+          <div className="mt-4 flex items-center gap-3">
+            <VersionHistory />
+            <div className="ml-auto">
+              <ResimulateButton model={model} />
+            </div>
           </div>
 
           {/* Three widths, not two: below `lg` everything stacks (Dashboard,
@@ -84,6 +104,8 @@ export default function Home() {
           </div>
         </>
       )}
+
+      <ComponentDetailModal />
     </main>
   );
 }

@@ -25,6 +25,7 @@ const KIND_TONE: Record<Component["kind"], string> = {
 export function ComponentNode({ data }: NodeProps) {
   const { component, findings } = data as unknown as ComponentNodeData;
   const isOpen = useAppStore((s) => s.openComponentId === component.id);
+  const openComponentDetail = useAppStore((s) => s.openComponentDetail);
   const KindIcon = KIND_ICON[component.kind];
   const hasCriticalFinding = findings.some((f) => f.severity === "critical");
 
@@ -35,7 +36,10 @@ export function ComponentNode({ data }: NodeProps) {
       : "border-slate-200";
 
   return (
-    <div className={`w-50 rounded-xl border bg-white p-3 shadow-sm transition-shadow ${border}`}>
+    <div
+      onClick={() => openComponentDetail(component)}
+      className={`w-50 cursor-pointer rounded-xl border bg-white p-3 shadow-sm transition-shadow ${border}`}
+    >
       <Handle type="target" position={Position.Left} className="bg-slate-300!" />
       <Handle type="source" position={Position.Right} className="bg-slate-300!" />
       <div className="flex items-start justify-between gap-2">

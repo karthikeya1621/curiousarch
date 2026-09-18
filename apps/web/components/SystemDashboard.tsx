@@ -1,27 +1,44 @@
 "use client";
 
-import type { SystemModel } from "@archsim/engine";
+import type { AiFinding, SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { findingKey } from "../lib/findingKey";
 import { FlowDiagram } from "./FlowDiagram";
 import { Card } from "./Card";
 import { Badge } from "./Badge";
 
-export function SystemDashboard({ model }: { model: SystemModel }) {
-  const findings = useAppStore((s) => s.findings);
+/**
+ * `findingsOverride`, when provided, replaces the store's live findings
+ * entirely — used to render a past version's static snapshot (see
+ * page.tsx's preview layout) without touching `findingsStatus`/
+ * `findingsStale`, neither of which applies to a snapshot that's already
+ * settled and can never go stale relative to itself.
+ */
+export function SystemDashboard({
+  model,
+  findingsOverride,
+}: {
+  model: SystemModel;
+  findingsOverride?: AiFinding[];
+}) {
+  const liveFindings = useAppStore((s) => s.findings);
   const findingsStatus = useAppStore((s) => s.findingsStatus);
   const findingsStale = useAppStore((s) => s.findingsStale);
+  const isPreview = findingsOverride !== undefined;
+  const findings = isPreview ? findingsOverride : liveFindings;
 
   const criticalCount = findings.filter((f) => f.severity === "critical").length;
-  const healthy = findingsStatus === "done" && findings.length === 0;
+  const healthy = !isPreview && findingsStatus === "done" && findings.length === 0;
+  const isPreviewHealthy = isPreview && findings.length === 0;
   // Muted only once a fetch isn't already in flight — while loading, the
-  // "Reviewing…" badge already carries that signal on its own.
-  const isStale = findingsStale && findingsStatus !== "loading";
+  // "Reviewing…" badge already carries that signal on its own. Never
+  // stale for a static preview snapshot.
+  const isStale = !isPreview && findingsStale && findingsStatus !== "loading";
 
   const healthBadge =
-    findingsStatus === "loading" ? (
+    !isPreview && findingsStatus === "loading" ? (
       <Badge tone="neutral">Reviewing…</Badge>
-    ) : healthy ? (
+    ) : healthy || isPreviewHealthy ? (
       <Badge tone="success">Healthy</Badge>
     ) : (
       <Badge tone={criticalCount > 0 ? "critical" : "warning"}>
@@ -66,7 +83,7 @@ export function SystemDashboard({ model }: { model: SystemModel }) {
         )}
       </Card>
 
-      <FlowDiagram model={model} />
+      <FlowDiagram model={model} findingsOverride={findingsOverride} />
     </div>
   );
 }

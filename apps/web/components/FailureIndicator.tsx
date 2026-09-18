@@ -38,7 +38,12 @@ export function FailureIndicator({
           (isOpen ? "bg-amber-600" : "bg-amber-400 hover:bg-amber-500")
         }
         onMouseDown={(e) => e.stopPropagation()}
-        onClick={() => setOpenComponentId(isOpen ? null : nodeId)}
+        onClick={(e) => {
+          // Otherwise this bubbles up into ComponentNode's own onClick and
+          // opens the property-detail modal underneath at the same time.
+          e.stopPropagation();
+          setOpenComponentId(isOpen ? null : nodeId);
+        }}
         title={`${findings.length} possible failure(s)`}
       >
         {findings.length}
