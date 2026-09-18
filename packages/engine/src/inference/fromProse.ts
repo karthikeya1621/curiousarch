@@ -1,23 +1,33 @@
 /**
  * Prose in, `SystemModel` out.
  *
- * One LLM call using tool-use for structured output, Zod validation, one
- * repair retry if validation fails — per PLAN-0.2. The tool's input schema is
- * derived from `SystemModelSchema` rather than hand-duplicated, so the two
- * cannot drift out of sync.
+ * Two independent LLM calls run in parallel, not one: the topology
+ * (components/edges) via tool-use for structured output, Zod validation,
+ * one repair retry if validation fails — per PLAN-0.2, via
+ * `structuredCall.ts`'s shared retry core (also used by `reworkModel`/
+ * `identifyFailures`/`applyAiFix`) — and `workloadParameters.ts`'s own
+ * small call for workload.users/workload.requests, genuinely separate
+ * because the topology schema had no compiled-grammar room left for
+ * workload parameters too (discovered live — see that file's own
+ * comment). The tool's input schema is derived from `SystemModelSchema`
+ * rather than hand-duplicated, so the two cannot drift out of sync.
  *
  * This function does not compute a single finding. It only produces the
- * model; `simulate()` in solver.ts is what decides what's wrong.
+ * model; the AI-driven findings flow (`identifyFailures.ts`) is what decides
+ * what's wrong, now that the web app's primary flow no longer calls the
+ * deterministic `patterns.ts`/`solver.ts` engine (kept, dormant, still
+ * tested — see packages/engine/README.md).
  */
 
 import Anthropic from "@anthropic-ai/sdk";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { BooleanTraitSchema, ProvenanceSchema, SystemModelSchema } from "./schema.ts";
 import { SYSTEM_PROMPT } from "./prompt.ts";
+import { extractWorkloadParameters } from "./workloadParameters.ts";
+import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import type { SystemModel } from "../types.ts";
 
 const TOOL_NAME = "emit_system_model";
-const DEFAULT_MODEL = "claude-sonnet-5";
 
 /**
  * Recursively strips numeric bound keywords from a JSON Schema tree.
@@ -115,20 +125,10 @@ export function buildTool(): Anthropic.Tool {
  * Live latency for this call has been observed ranging ~4s-60s call to call
  * (same prompt, same model) — the tool schema is non-trivial and generation
  * length varies with how many components the model decides to emit. 90s
- * gives real headroom above the worst case seen without leaving a hung
- * request to run indefinitely on the SDK's own default.
+ * (structuredCall.ts's own default) gives real headroom above the worst
+ * case seen without leaving a hung request to run indefinitely.
  */
-const DEFAULT_TIMEOUT_MS = 90_000;
-
-export interface FromProseOptions {
-  apiKey?: string;
-  model?: string;
-  /** Repair attempts after the first call. PLAN-0.2 specifies one. */
-  maxRetries?: number;
-  /** Per-request timeout in ms. Defaults to DEFAULT_TIMEOUT_MS. */
-  timeoutMs?: number;
-  client?: Anthropic;
-}
+export type FromProseOptions = StructuredCallOptions;
 
 export interface FromProseResult {
   model: SystemModel;
@@ -138,141 +138,24 @@ export interface FromProseResult {
   repaired: boolean;
 }
 
-/**
- * The shared core behind both `fromProse` (userContent = a prose
- * description) and `reworkModel.ts`'s `reworkModel` (userContent = the
- * current model as JSON) — one LLM call for structured output, Zod
- * validation, one repair retry, per PLAN-0.2. Extracted (not duplicated)
- * specifically because this loop has already had multiple separate
- * live-discovered strict-mode bugs fixed in it; a second hand-copied
- * version would risk a future fix landing in only one place.
- *
- * `label` only affects error-message text (which caller to blame in a
- * thrown error) and the `*_DEBUG` env var checked for verbose logging.
- */
-export async function runStructuredModelCall(
-  systemPrompt: string,
-  userContent: string,
-  options: FromProseOptions = {},
-  label = "fromProse",
-): Promise<FromProseResult> {
-  const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (!options.client && !apiKey) {
-    throw new Error(
-      `${label} requires an Anthropic API key. Set ANTHROPIC_API_KEY or pass { apiKey }.`,
-    );
-  }
-
-  const client = options.client ?? new Anthropic({ apiKey, timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
-  const model = options.model ?? DEFAULT_MODEL;
-  const tool = buildTool();
-  const maxRetries = options.maxRetries ?? 1;
-
-  const messages: Anthropic.MessageParam[] = [
-    { role: "user", content: userContent },
-  ];
-
-  let lastError = "";
-  let lastRaw: unknown;
-  /**
-   * Set only when the previous attempt actually produced a tool_use block
-   * (its id is required to build a valid assistant/tool_result turn pair
-   * below). Left unset after a "no tool_use block" attempt, since there's
-   * no prior tool call to reference — the repair message falls back to a
-   * plain user turn in that case.
-   */
-  let lastToolUseId: string | undefined;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    if (attempt > 0) {
-      // Discovered live: appending the repair instruction as a second,
-      // consecutive plain "user" message — with no assistant turn showing
-      // what the model actually output before — leaves the model repairing
-      // blind. It has no way to see its own prior (invalid) answer, only
-      // the terse validation error, and on a large input (reworkModel's
-      // whole current-model JSON, not fromProse's short prose) it can
-      // reconstruct something even more broken than the original rather
-      // than a precise fix (observed live: it dropped two components
-      // entirely while still emitting edges that referenced them). Anthropic's
-      // own tool-result feedback pattern — an assistant turn with the exact
-      // previous tool_use, followed by a user turn with a `tool_result`
-      // block marked `is_error: true` — gives the model its own prior
-      // output to correct against, not just a description of what was
-      // wrong with it.
-      if (lastToolUseId) {
-        messages.push(
-          { role: "assistant", content: [{ type: "tool_use", id: lastToolUseId, name: TOOL_NAME, input: lastRaw }] },
-          {
-            role: "user",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: lastToolUseId,
-                is_error: true,
-                content: `Your previous structured output did not validate: ${lastError}\n\nCall the tool again with a corrected model that fixes exactly this problem.`,
-              },
-            ],
-          },
-        );
-      } else {
-        messages.push({
-          role: "user",
-          content:
-            `Your previous response did not call the tool: ${lastError}\n\n` +
-            "Call the tool with the structured model.",
-        });
-      }
-    }
-
-    const response = await client.messages.create({
-      model,
-      max_tokens: 4096,
-      system: systemPrompt,
-      tools: [tool],
-      tool_choice: { type: "tool", name: TOOL_NAME },
-      messages,
-    });
-
-    const toolUse = response.content.find(
-      (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
-    );
-
-    if (!toolUse) {
-      lastError = "The model responded without calling the tool.";
-      lastRaw = response.content;
-      lastToolUseId = undefined;
-      if (process.env.FROMPROSE_DEBUG) {
-        console.error(`[${label}] attempt ${attempt}: no tool_use block. content:`, JSON.stringify(response.content));
-      }
-      continue;
-    }
-
-    if (process.env.FROMPROSE_DEBUG) {
-      console.error(`[${label}] attempt ${attempt}: raw tool input:`, JSON.stringify(toolUse.input));
-    }
-
-    const parsed = SystemModelSchema.safeParse(toolUse.input);
-    if (parsed.success) {
-      return { model: parsed.data, raw: toolUse.input, repaired: attempt > 0 };
-    }
-
-    lastRaw = toolUse.input;
-    lastToolUseId = toolUse.id;
-    lastError = parsed.error.issues
-      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-      .join("; ");
-  }
-
-  const rawSnippet = JSON.stringify(lastRaw)?.slice(0, 500);
-  throw new Error(
-    `${label}: structured output still failed validation after ${maxRetries} ` +
-      `repair attempt(s). Last error: ${lastError}\nLast raw output (truncated): ${rawSnippet}`,
-  );
-}
-
 export async function fromProse(
   description: string,
   options: FromProseOptions = {},
 ): Promise<FromProseResult> {
-  return runStructuredModelCall(SYSTEM_PROMPT, description, options, "fromProse");
+  // Two independent calls, not one — see workloadParameters.ts's own top
+  // comment on why the topology schema had no room left for a workload
+  // parameters field, discovered live. Run in parallel: the workload call
+  // needs nothing from the topology call's result.
+  const [topology, workloadParameters] = await Promise.all([
+    runStructuredCall(SYSTEM_PROMPT, description, SystemModelSchema, buildTool(), options, "fromProse"),
+    extractWorkloadParameters(description, options),
+  ]);
+  return {
+    model: {
+      ...topology.data,
+      workload: { ...topology.data.workload, ...workloadParameters },
+    },
+    raw: topology.raw,
+    repaired: topology.repaired,
+  };
 }

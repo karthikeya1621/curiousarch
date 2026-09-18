@@ -84,7 +84,12 @@ export function setTraitValue(
 
 const SCALE_TIERS: ScaleTier[] = ["small", "medium", "large", "massive"];
 
+// `scale` is optional on the type (the AI-driven flow doesn't produce it
+// — see types.ts's Workload comment); every model this dormant scenario
+// generator is actually called with (models/reference.ts's fixtures, via
+// this file's own tests) always provides it.
 function workloadScenarios(model: SystemModel): Scenario[] {
+  if (!model.workload.scale) return [];
   const current = model.workload.scale.value;
   const idx = SCALE_TIERS.indexOf(current);
   if (idx === SCALE_TIERS.length - 1) return [];
@@ -94,7 +99,7 @@ function workloadScenarios(model: SystemModel): Scenario[] {
       id: "workload:scale-up",
       label: `Traffic grows to ${next} scale`,
       description: `A sustained step up — real growth, not a spike — from ${current} to ${next}.`,
-      apply: (m) => ({ ...m, workload: { scale: { ...m.workload.scale, value: next } } }),
+      apply: (m) => ({ ...m, workload: { ...m.workload, scale: { ...m.workload.scale!, value: next } } }),
     },
   ];
 }

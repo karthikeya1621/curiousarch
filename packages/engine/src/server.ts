@@ -17,3 +17,8 @@ export { explainFix } from "./inference/explainFix.ts";
 export type { FixRationale, ExplainFixOptions } from "./inference/explainFix.ts";
 export { reworkModel } from "./inference/reworkModel.ts";
 export type { ReworkModelOptions, ReworkModelResult } from "./inference/reworkModel.ts";
+export { identifyFailures } from "./inference/identifyFailures.ts";
+export { applyAiFix } from "./inference/applyAiFix.ts";
+export type { ApplyAiFixResult } from "./inference/applyAiFix.ts";
+export { extractWorkloadParameters } from "./inference/workloadParameters.ts";
+export type { WorkloadParameters } from "./inference/workloadParameters.ts";

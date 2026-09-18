@@ -12,13 +12,10 @@ import { simulate } from "../src/solver.js";
 const fixture = {
   id: "checkout-fixture",
   name: "Checkout / order placement",
-  workload: {
-    scale: {
-      rationale: "A single-region order-placement API, not yet at wide scale.",
-      provenance: "stated",
-      value: "small",
-    },
-  },
+  // Empty — SystemModelSchema's own workload field asks for nothing at
+  // all now; see schema.ts's WorkloadSchema comment for why (workload
+  // parameters are extracted by a separate call, workloadParameters.ts).
+  workload: {},
   components: [
     {
       id: "gw",

@@ -89,7 +89,7 @@ async function main(): Promise<void> {
 
     console.log(`# ${model.name} (${model.id})`);
     console.log(
-      `baseline: ${model.workload.scale.value} scale, healthy=${baseline.healthy}, ` +
+      `baseline: ${model.workload.scale?.value ?? "unspecified"} scale, healthy=${baseline.healthy}, ` +
         `findings: ${findingsLine(baseline.findings)}\n`,
     );
 

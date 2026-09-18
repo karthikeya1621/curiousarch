@@ -33,7 +33,9 @@ function usage(): never {
 
 function printModel(model: SystemModel, inferred: boolean): void {
   console.log(`# ${model.name} (${model.id})${inferred ? "  [inferred]" : ""}`);
-  console.log(`workload scale: ${model.workload.scale.value} (${model.workload.scale.provenance}) ${model.workload.scale.rationale}\n`);
+  if (model.workload.scale) {
+    console.log(`workload scale: ${model.workload.scale.value} (${model.workload.scale.provenance}) ${model.workload.scale.rationale}\n`);
+  }
 
   for (const component of model.components) {
     console.log(`- ${component.id} [${component.kind}] ${component.label}`);
@@ -52,7 +54,7 @@ function printModel(model: SystemModel, inferred: boolean): void {
 function printRun(model: SystemModel): void {
   const result = simulate(model);
 
-  console.log(`\n## Findings at ${model.workload.scale.value} scale`);
+  console.log(`\n## Findings at ${model.workload.scale?.value ?? "unspecified"} scale`);
   console.log(`healthy: ${result.healthy}\n`);
 
   if (result.findings.length === 0) {
@@ -123,7 +125,18 @@ async function main(): Promise<void> {
       console.error(`Unknown --scale "${scaleFlag}". Options: ${SCALE_TIERS.join(", ")}`);
       process.exit(1);
     }
-    model = { ...model, workload: { scale: { ...model.workload.scale, value: scaleFlag as ScaleTier } } };
+    model = {
+      ...model,
+      workload: {
+        ...model.workload,
+        scale: {
+          provenance: "stated",
+          rationale: "Set via --scale.",
+          ...model.workload.scale,
+          value: scaleFlag as ScaleTier,
+        },
+      },
+    };
   }
 
   printModel(model, inferred);

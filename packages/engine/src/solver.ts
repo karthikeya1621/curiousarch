@@ -48,8 +48,12 @@ export function simulate(model: SystemModel): SimulationResult {
 
 const SCALE_TIERS: ScaleTier[] = ["small", "medium", "large", "massive"];
 
+// `model.workload.scale` is optional on the type (see types.ts's Workload
+// comment — the AI-driven flow doesn't produce it) but every model this
+// dormant function is actually ever called with (models/reference.ts's
+// fixtures, via this file's own tests) always provides it.
 function withScale(model: SystemModel, scale: ScaleTier): SystemModel {
-  return { ...model, workload: { scale: { ...model.workload.scale, value: scale } } };
+  return { ...model, workload: { ...model.workload, scale: { ...model.workload.scale!, value: scale } } };
 }
 
 /**

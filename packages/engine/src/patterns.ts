@@ -200,7 +200,12 @@ function queueNoDeadLetter(model: SystemModel): Finding[] {
 /** A fixed worker pool can't absorb a burst once the system is operating at real scale. */
 function fixedScalingAtScale(model: SystemModel): Finding[] {
   const findings: Finding[] = [];
-  const scale = model.workload.scale.value;
+  // `scale` is optional on the type (the AI-driven flow doesn't produce
+  // it — see types.ts's Workload comment); every model this dormant
+  // pattern is actually evaluated against (models/reference.ts's
+  // fixtures, via golden.test.ts) always provides it. No scale info means
+  // this pattern simply has nothing to gate on.
+  const scale = model.workload.scale?.value;
   if (scale !== "large" && scale !== "massive") return findings;
   for (const component of model.components) {
     if (component.kind !== "queue") continue;
@@ -230,7 +235,10 @@ function fixedScalingAtScale(model: SystemModel): Finding[] {
  * cache, which `fixes.ts` does structurally for this one code.
  */
 function uncachedDatabaseAtScale(model: SystemModel): Finding[] {
-  const scale = model.workload.scale.value;
+  // See fixedScalingAtScale's own comment: `scale` is optional on the
+  // type now, always present on every model this dormant pattern is
+  // actually evaluated against.
+  const scale = model.workload.scale?.value;
   if (scale !== "large" && scale !== "massive") return [];
 
   const flagged = new Set<string>();

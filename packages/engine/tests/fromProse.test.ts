@@ -5,6 +5,15 @@
  * repair-retry -> give-up state machine. The actual "does the LLM produce a
  * sane rough model" question still needs a live key; this only proves the
  * harness around it is correct.
+ *
+ * `fromProse` makes TWO independent calls in parallel now (topology +
+ * workloadParameters — see fromProse.ts's own comment on why), so the fake
+ * client here routes canned responses by which tool is being called rather
+ * than a single shared sequential queue. These tests are all about the
+ * TOPOLOGY call's retry behavior; the workload-parameters call is always
+ * given one simple valid response so it never interferes with what's being
+ * tested. `workloadParameters.test.ts` covers that call's own retry
+ * behavior independently.
  */
 
 import { describe, expect, it } from "vitest";
@@ -15,9 +24,7 @@ import { simulate } from "../src/solver.js";
 const validModelInput = {
   id: "toy",
   name: "Toy system",
-  workload: {
-    scale: { rationale: "No scale stated; assumed default.", provenance: "default", value: "medium" },
-  },
+  workload: {},
   components: [
     {
       id: "gw",
@@ -43,9 +50,14 @@ const invalidModelInput = {
   ),
 };
 
-function toolUseResponse(input: unknown): Anthropic.Message {
+const validWorkloadParamsInput = {
+  users: { included: true, tier: 100, target: 100 },
+  requests: { included: false, tier: 1000, target: 1000 },
+};
+
+function toolUseResponse(toolName: string, input: unknown): Anthropic.Message {
   return {
-    content: [{ type: "tool_use", id: "call_1", name: "emit_system_model", input }],
+    content: [{ type: "tool_use", id: "call_1", name: toolName, input }],
   } as unknown as Anthropic.Message;
 }
 
@@ -53,15 +65,30 @@ function textOnlyResponse(): Anthropic.Message {
   return { content: [{ type: "text", text: "I have a question first." }] } as unknown as Anthropic.Message;
 }
 
-/** A fake Anthropic client returning one canned response per call, in order. */
-function fakeClient(responses: Anthropic.Message[]): Anthropic {
-  let call = 0;
+function toolNameOf(args: unknown): string {
+  return (args as { tool_choice?: { name?: string } }).tool_choice?.name ?? "";
+}
+
+/**
+ * Routes by which tool is being called (`emit_system_model` vs
+ * `emit_workload_parameters`), since fromProse now runs both concurrently.
+ * Each tool gets its own sequential queue of canned responses.
+ */
+function fakeClient(topologyResponses: Anthropic.Message[]): Anthropic {
+  let topologyCall = 0;
+  let workloadCall = 0;
   return {
     messages: {
-      create: async () => {
-        const response = responses[call];
-        call++;
-        if (!response) throw new Error("fakeClient: no more canned responses");
+      create: async (args: unknown) => {
+        if (toolNameOf(args) === "emit_workload_parameters") {
+          const response = workloadCall === 0 ? toolUseResponse("emit_workload_parameters", validWorkloadParamsInput) : undefined;
+          workloadCall++;
+          if (!response) throw new Error("fakeClient: no more canned workload-parameters responses");
+          return response;
+        }
+        const response = topologyResponses[topologyCall];
+        topologyCall++;
+        if (!response) throw new Error("fakeClient: no more canned topology responses");
         return response;
       },
     },
@@ -70,18 +97,20 @@ function fakeClient(responses: Anthropic.Message[]): Anthropic {
 
 describe("fromProse", () => {
   it("returns a model unrepaired when the first attempt validates", async () => {
-    const client = fakeClient([toolUseResponse(validModelInput)]);
+    const client = fakeClient([toolUseResponse("emit_system_model", validModelInput)]);
     const result = await fromProse("a toy system", { client });
 
     expect(result.repaired).toBe(false);
     expect(() => simulate(result.model)).not.toThrow();
     expect(result.model.id).toBe("toy");
+    // The workload-parameters call's result is merged in alongside the topology.
+    expect(result.model.workload.users?.tier).toBe(100);
   });
 
   it("repairs once when the first attempt fails validation", async () => {
     const client = fakeClient([
-      toolUseResponse(invalidModelInput),
-      toolUseResponse(validModelInput),
+      toolUseResponse("emit_system_model", invalidModelInput),
+      toolUseResponse("emit_system_model", validModelInput),
     ]);
     const result = await fromProse("a toy system", { client });
 
@@ -90,7 +119,7 @@ describe("fromProse", () => {
   });
 
   it("treats a response with no tool_use block as a failed attempt, not a crash", async () => {
-    const client = fakeClient([textOnlyResponse(), toolUseResponse(validModelInput)]);
+    const client = fakeClient([textOnlyResponse(), toolUseResponse("emit_system_model", validModelInput)]);
     const result = await fromProse("a toy system", { client });
 
     expect(result.repaired).toBe(true);
@@ -98,8 +127,8 @@ describe("fromProse", () => {
 
   it("throws with the validation error after exhausting the repair retry", async () => {
     const client = fakeClient([
-      toolUseResponse(invalidModelInput),
-      toolUseResponse(invalidModelInput),
+      toolUseResponse("emit_system_model", invalidModelInput),
+      toolUseResponse("emit_system_model", invalidModelInput),
     ]);
 
     await expect(fromProse("a toy system", { client })).rejects.toThrow(
@@ -118,7 +147,7 @@ describe("fromProse", () => {
   });
 
   it("respects maxRetries: 0 by giving up after the first failure", async () => {
-    const client = fakeClient([toolUseResponse(invalidModelInput)]);
+    const client = fakeClient([toolUseResponse("emit_system_model", invalidModelInput)]);
     await expect(
       fromProse("a toy system", { client, maxRetries: 0 }),
     ).rejects.toThrow(/after 0 repair attempt/i);
@@ -133,21 +162,27 @@ describe("fromProse", () => {
     // is Anthropic's own tool-result feedback pattern: an assistant turn
     // with the exact previous tool_use, then a user turn with a
     // `tool_result` block. This test inspects the actual second
-    // `messages.create` call to confirm that shape, not just the outcome.
-    const calls: unknown[] = [];
+    // `messages.create` call (for the topology tool specifically) to
+    // confirm that shape, not just the outcome.
+    const topologyCalls: unknown[] = [];
     const client = {
       messages: {
         create: async (args: unknown) => {
-          calls.push(args);
-          return calls.length === 1 ? toolUseResponse(invalidModelInput) : toolUseResponse(validModelInput);
+          if (toolNameOf(args) === "emit_workload_parameters") {
+            return toolUseResponse("emit_workload_parameters", validWorkloadParamsInput);
+          }
+          topologyCalls.push(args);
+          return topologyCalls.length === 1
+            ? toolUseResponse("emit_system_model", invalidModelInput)
+            : toolUseResponse("emit_system_model", validModelInput);
         },
       },
     } as unknown as Anthropic;
 
     await fromProse("a toy system", { client });
 
-    expect(calls).toHaveLength(2);
-    const secondCallMessages = (calls[1] as { messages: Anthropic.MessageParam[] }).messages;
+    expect(topologyCalls).toHaveLength(2);
+    const secondCallMessages = (topologyCalls[1] as { messages: Anthropic.MessageParam[] }).messages;
 
     // [user: original prose, assistant: the invalid tool_use, user: tool_result with the error]
     expect(secondCallMessages).toHaveLength(3);

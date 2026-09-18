@@ -1,12 +1,16 @@
 /**
- * The AI call behind every fix except `UNCACHED_DATABASE_AT_SCALE`'s
- * "add-cache" (see `proposeCacheTraits.ts` for that one). Those 6 fixes
- * are pure binary trait flips with nothing for an AI to decide — this
- * produces one sentence explaining why the fix fits THIS specific system,
- * purely narrative. Its output never reaches `Fix.apply`: it cannot change
- * the transform or a finding, only the words shown next to it. If it
- * fails, there's no fallback to compute — the caller just shows nothing
- * extra, since this was never load-bearing.
+ * The AI call behind the web app's "Ask AI" affordance on a fix from
+ * `identifyFailures.ts`: one sentence explaining why THIS specific fix
+ * fits THIS specific system, deeper than the fix's own always-visible
+ * `tradeoff`. Purely narrative and manually triggered — never fired
+ * automatically on selection, never applied to the model. If it fails,
+ * there's no fallback to compute — the caller just shows nothing extra,
+ * since this was never load-bearing.
+ *
+ * Signature is plain strings (`componentId`/`fixLabel`/`findingCode`),
+ * not tied to any particular finding/fix type — works unchanged whether
+ * called with the old catalogue's `Fix`/`FindingCode` (dormant, see
+ * `fixes.ts`) or the new `AiFinding`/`AiFix` from `identifyFailures.ts`.
  */
 
 import Anthropic from "@anthropic-ai/sdk";

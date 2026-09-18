@@ -104,7 +104,7 @@ describe("listScenarios", () => {
   it("offers no further scale-up scenario once already at massive", () => {
     const atMax = {
       ...checkout,
-      workload: { scale: { ...checkout.workload.scale, value: "massive" as const } },
+      workload: { scale: { ...checkout.workload.scale!, value: "massive" as const } },
     };
     expect(listScenarios(atMax).map((s) => s.id)).not.toContain("workload:scale-up");
   });
@@ -190,7 +190,7 @@ describe("compareScenario", () => {
     // scale-up instead, from small (no scale-dependent findings apply).
     const small = {
       ...mediaUpload,
-      workload: { scale: { ...mediaUpload.workload.scale, value: "small" as const } },
+      workload: { scale: { ...mediaUpload.workload.scale!, value: "small" as const } },
     };
     const delta = compareScenario(small, "workload:scale-up"); // small -> medium
     expect(delta.newFindingCodes).toEqual([]);
@@ -203,7 +203,7 @@ describe("compareScenario", () => {
     // introduces it.
     const small = {
       ...mediaUpload,
-      workload: { scale: { ...mediaUpload.workload.scale, value: "medium" as const } },
+      workload: { scale: { ...mediaUpload.workload.scale!, value: "medium" as const } },
     };
     const delta = compareScenario(small, "workload:scale-up"); // medium -> large
     expect(delta.newFindingCodes).toContain("FIXED_SCALING_AT_SCALE");

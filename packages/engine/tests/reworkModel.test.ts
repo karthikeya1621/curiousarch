@@ -12,13 +12,17 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { reworkModel } from "../src/inference/reworkModel.js";
 import { checkout } from "../models/reference.js";
 import { simulate } from "../src/solver.js";
+import type { SystemModel } from "../src/types.js";
 
+// reworkModel's own schema no longer asks for workload at all (see
+// reworkModel.ts's top comment — the user sets a tier by moving a
+// control, not by describing one) — `workload: {}` is what the AI is
+// actually asked to produce; `users`/`requests` are carried forward from
+// the input model in code, tested separately below.
 const validReworkInput = {
   id: "checkout",
   name: "Checkout / order placement",
-  workload: {
-    scale: { rationale: "Still a single-region API.", provenance: "stated", value: "small" },
-  },
+  workload: {},
   components: [
     {
       id: "gw",
@@ -131,5 +135,21 @@ describe("reworkModel", () => {
     } finally {
       if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
     }
+  });
+
+  it("carries workload.users/requests forward unchanged — the AI's own schema never asks for them", async () => {
+    const withParameters: SystemModel = {
+      ...checkout,
+      workload: {
+        ...checkout.workload,
+        users: { included: true, tier: 10_000, target: 1_000_000 },
+        requests: { included: false, tier: 1000, target: 1000 },
+      },
+    };
+    const client = fakeClient([toolUseResponse(validReworkInput)]);
+    const result = await reworkModel(withParameters, { client });
+
+    expect(result.model.workload.users).toEqual({ included: true, tier: 10_000, target: 1_000_000 });
+    expect(result.model.workload.requests).toEqual({ included: false, tier: 1000, target: 1000 });
   });
 });

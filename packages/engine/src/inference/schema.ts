@@ -119,9 +119,28 @@ const EdgeSchema = z.object({
   to: z.string().min(1),
 });
 
-const WorkloadSchema = z.object({
-  scale: traitSchema(z.enum(["small", "medium", "large", "massive"])),
-});
+/**
+ * Discovered live: this schema (components/edges — the topology) was
+ * already close enough to strict mode's compiled-grammar size limit
+ * ("The compiled grammar is too large... simplify your tool schemas" — a
+ * straight 400 on the request itself, not a validation failure any
+ * repair retry could recover from) that there was no room left to add
+ * `workload.users`/`workload.requests` here too — confirmed by binary
+ * search: even a single flat 3-field object pushed it over, regardless of
+ * how that object was shaped. The AI-driven flow's users/requests
+ * parameters are a genuinely SEPARATE, small structured call instead
+ * (`inference/workloadParameters.ts`, sized like `proposeCacheTraits.ts`/
+ * `explainFix.ts`, both confirmed live to have real headroom), run
+ * alongside this one and merged into the final `SystemModel` in code.
+ *
+ * `workload` here is an EMPTY object — not even `scale` (the dormant
+ * deterministic engine's own field, see types.ts's Workload comment) is
+ * asked for anymore, once it was clear `scale` is optional on the type
+ * and genuinely unread by anything the AI-driven flow does: every extra
+ * field costs real, scarce grammar budget, and this one was free to drop
+ * entirely rather than just minimize.
+ */
+const WorkloadSchema = z.object({});
 
 export const SystemModelSchema = z
   .object({

@@ -103,7 +103,7 @@ describe("compareFix", () => {
   it("resolves a fixed-scaling warning by switching to autoscaling", () => {
     const small: SystemModel = {
       ...mediaUpload,
-      workload: { scale: { ...mediaUpload.workload.scale, value: "medium" } },
+      workload: { scale: { ...mediaUpload.workload.scale!, value: "medium" } },
     };
     const result = compareFix(small, "workload:scale-up", "queue:autoscale-consumers");
     expect(result.underFailure.findings.map((f) => f.code)).toContain("FIXED_SCALING_AT_SCALE");
@@ -140,7 +140,7 @@ describe("compareFix", () => {
     // the finding is already present at baseline, not caused by the scenario.
     const readHeavyAtScale: SystemModel = {
       ...checkout,
-      workload: { scale: { ...checkout.workload.scale, value: "large" } },
+      workload: { scale: { ...checkout.workload.scale!, value: "large" } },
       components: checkout.components.map((c) =>
         c.id === "db" && c.kind === "database"
           ? { ...c, writeVolume: { ...c.writeVolume, value: "low" } }
@@ -183,7 +183,7 @@ describe("compareFix", () => {
 
     const readHeavyAtScale: SystemModel = {
       ...checkout,
-      workload: { scale: { ...checkout.workload.scale, value: "large" } },
+      workload: { scale: { ...checkout.workload.scale!, value: "large" } },
       components: checkout.components.map((c) =>
         c.id === "db" && c.kind === "database"
           ? { ...c, writeVolume: { ...c.writeVolume, value: "low" } }
@@ -199,7 +199,7 @@ describe("compareFix", () => {
   it("uses AI-proposed cache values, with inferred provenance, when supplied", () => {
     const readHeavyAtScale: SystemModel = {
       ...checkout,
-      workload: { scale: { ...checkout.workload.scale, value: "large" } },
+      workload: { scale: { ...checkout.workload.scale!, value: "large" } },
       components: checkout.components.map((c) =>
         c.id === "db" && c.kind === "database"
           ? { ...c, writeVolume: { ...c.writeVolume, value: "low" } }

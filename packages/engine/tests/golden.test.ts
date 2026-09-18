@@ -131,7 +131,7 @@ describe("Media upload with async processing", () => {
     // likely to outrun it — the pattern is specifically about scale.
     const smaller: SystemModel = {
       ...mediaUpload,
-      workload: { scale: { ...mediaUpload.workload.scale, value: "small" } },
+      workload: { scale: { ...mediaUpload.workload.scale!, value: "small" } },
     };
     expect(codes(smaller)).not.toContain("FIXED_SCALING_AT_SCALE");
   });
@@ -157,7 +157,7 @@ describe("UNCACHED_DATABASE_AT_SCALE", () => {
   // whatif.test.ts do.
   const readHeavyAtScale: SystemModel = {
     ...checkout,
-    workload: { scale: { ...checkout.workload.scale, value: "large" } },
+    workload: { scale: { ...checkout.workload.scale!, value: "large" } },
     components: checkout.components.map((c) =>
       c.id === "db" && c.kind === "database"
         ? { ...c, writeVolume: { ...c.writeVolume, value: "low" } }
@@ -177,7 +177,7 @@ describe("UNCACHED_DATABASE_AT_SCALE", () => {
   it("does not fire below large scale", () => {
     const small: SystemModel = {
       ...readHeavyAtScale,
-      workload: { scale: { ...readHeavyAtScale.workload.scale, value: "small" } },
+      workload: { scale: { ...readHeavyAtScale.workload.scale!, value: "small" } },
     };
     expect(codes(small)).not.toContain("UNCACHED_DATABASE_AT_SCALE");
   });
@@ -185,7 +185,7 @@ describe("UNCACHED_DATABASE_AT_SCALE", () => {
   it("does not fire on a write-heavy database — checkout as-is, at any scale", () => {
     const atScale: SystemModel = {
       ...checkout,
-      workload: { scale: { ...checkout.workload.scale, value: "massive" } },
+      workload: { scale: { ...checkout.workload.scale!, value: "massive" } },
     };
     expect(codes(atScale)).not.toContain("UNCACHED_DATABASE_AT_SCALE");
   });
