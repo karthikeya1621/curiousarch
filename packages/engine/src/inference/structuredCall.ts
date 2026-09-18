@@ -36,6 +36,17 @@ export interface StructuredCallResult<T> {
 }
 
 const DEFAULT_MODEL = "claude-sonnet-5";
+/**
+ * For calls that don't need full reasoning quality — a mechanical
+ * classification or a single narrative sentence, not judging an
+ * architecture. Still a current-generation model, not a stale cheap one:
+ * Haiku 4.5, not an older Haiku. Callers opt into this explicitly (see
+ * workloadParameters.ts, chatWithProject.ts's route call, explainFix.ts) —
+ * every call that actually reasons about the architecture's quality
+ * (fromProse/reworkModel's topology, identifyFailures, applyAiFix,
+ * chatWithProject's change-implementation call) keeps the default above.
+ */
+export const CHEAP_MODEL = "claude-haiku-4-5-20251001";
 const DEFAULT_TIMEOUT_MS = 90_000;
 
 /**
@@ -61,6 +72,21 @@ export async function runStructuredCall<T>(
   const client = options.client ?? new Anthropic({ apiKey, timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
   const model = options.model ?? DEFAULT_MODEL;
   const maxRetries = options.maxRetries ?? 1;
+
+  // Prompt caching: the system prompt and tool schema are identical across
+  // every call this label makes (every identifyFailures call shares the
+  // same instructions; every repair-retry attempt within one call reuses
+  // them too), so marking both as cache breakpoints lets Anthropic skip
+  // reprocessing that prefix on a cache hit — a large fraction of the cost
+  // on a call whose actual per-request payload (the model/message) is
+  // usually much smaller than its instructions. Two breakpoints, not one:
+  // system and tools are separate segments in the request, and marking
+  // only the tool doesn't reliably extend the cached range backward over
+  // the system text before it.
+  const cachedSystem: Anthropic.TextBlockParam[] = [
+    { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+  ];
+  const cachedTool: Anthropic.Tool = { ...tool, cache_control: { type: "ephemeral" } };
 
   const messages: Anthropic.MessageParam[] = [
     { role: "user", content: userContent },
@@ -117,8 +143,8 @@ export async function runStructuredCall<T>(
     const response = await client.messages.create({
       model,
       max_tokens: 4096,
-      system: systemPrompt,
-      tools: [tool],
+      system: cachedSystem,
+      tools: [cachedTool],
       tool_choice: { type: "tool", name: tool.name },
       messages,
     });

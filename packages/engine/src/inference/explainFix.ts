@@ -16,6 +16,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { CHEAP_MODEL } from "./structuredCall.ts";
 import type { SystemModel } from "../types.ts";
 
 // A fresh, single-use z.object() (not a shared singleton) - same reason
@@ -30,7 +31,9 @@ const FixRationaleSchema = z.object({
 export type FixRationale = z.infer<typeof FixRationaleSchema>;
 
 const TOOL_NAME = "explain_fix";
-const DEFAULT_MODEL = "claude-sonnet-5";
+// A one-sentence narrative rationale doesn't need Sonnet's full reasoning
+// budget — see structuredCall.ts's own comment on CHEAP_MODEL.
+const DEFAULT_MODEL = CHEAP_MODEL;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 const EXPLAIN_FIX_PROMPT = `You are an experienced architect. A real, computed risk was found in this system on one component, and a specific, already-decided fix is about to be applied to it - the fix itself is fixed and hand-chosen; you are not choosing it or evaluating whether it's right.
@@ -91,8 +94,10 @@ export async function explainFix(
   const response = await client.messages.create({
     model: modelName,
     max_tokens: 512,
-    system: EXPLAIN_FIX_PROMPT,
-    tools: [buildTool()],
+    // Cached: every "Ask AI" click within a session reuses this exact
+    // system prompt and tool schema (see structuredCall.ts's own comment).
+    system: [{ type: "text", text: EXPLAIN_FIX_PROMPT, cache_control: { type: "ephemeral" } }],
+    tools: [{ ...buildTool(), cache_control: { type: "ephemeral" } }],
     tool_choice: { type: "tool", name: TOOL_NAME },
     messages: [
       {
