@@ -59,7 +59,7 @@ export function SystemDashboard({ model }: { model: SystemModel }) {
             </div>
             {isStale && (
               <p className="mt-1.5 text-[11px] text-slate-400">
-                Based on the previous configuration — click Re-simulate to refresh.
+                Based on the previous version of this system — click Re-simulate to refresh.
               </p>
             )}
           </>

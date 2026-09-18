@@ -1,11 +1,14 @@
 /**
  * useAppStore is a Zustand hook, but the hook itself exposes getState/
  * setState statically — no React rendering needed to exercise it.
- * `applyFix`/`commitRework`/`setModel`/`undo` all trigger `refreshFindings`,
- * which hits /api/identify-failures — stubbed here via a mocked global
- * `fetch`, never a live call. Expected model values are derived from the
- * engine's own dormant reference models, same standard as packages/engine's
- * tests.
+ * `setModel`/`commitRework`/`undo` trigger `refreshFindings`, which hits
+ * /api/identify-failures — stubbed here via a mocked global `fetch`,
+ * never a live call. `applyFix` (and chat's change path, which commits
+ * through it) deliberately does NOT — it only marks findings stale, to
+ * avoid spending an extra live call on every fix/chat change; only an
+ * explicit Re-simulate (`commitRework`) actually refreshes them. Expected
+ * model values are derived from the engine's own dormant reference
+ * models, same standard as packages/engine's tests.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -85,16 +88,13 @@ describe("applyFix", () => {
     expect(useAppStore.getState().canResimulate).toBe(true);
   });
 
-  it("refreshes findings for the new model", async () => {
+  it("marks findings stale instead of refreshing them — costs no identifyFailures call", () => {
     useAppStore.setState({ model: degradedModel(), history: [] });
 
     useAppStore.getState().applyFix(fixedModel());
 
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/identify-failures",
-      expect.objectContaining({ method: "POST" }),
-    );
+    expect(useAppStore.getState().findingsStale).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("pushes undo history so the fix can be reverted", () => {
@@ -127,7 +127,7 @@ describe("applyFix", () => {
 });
 
 describe("findingsStale", () => {
-  it("clears once refreshFindings actually completes for the changed model", async () => {
+  it("set by setWorkloadTier and applyFix, only cleared by an actual refresh (commitRework)", async () => {
     const model: SystemModel = {
       ...checkout,
       workload: { ...checkout.workload, users: { included: true, tier: 100, target: 1_000_000 } },
@@ -136,11 +136,24 @@ describe("findingsStale", () => {
     useAppStore.getState().setWorkloadTier("users", 10_000);
     expect(useAppStore.getState().findingsStale).toBe(true);
 
+    // applyFix (a fix, or a chat-driven change) doesn't clear it either —
+    // neither one spends an identifyFailures call on its own anymore.
     useAppStore.getState().applyFix(fixedModel());
+    expect(useAppStore.getState().findingsStale).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
+
+    // Only an explicit Re-simulate (commitRework) actually refreshes
+    // findings and clears the staleness once that fetch resolves.
+    useAppStore.getState().commitRework(fixedModel());
     expect(useAppStore.getState().findingsStale).toBe(true); // still true until the fetch resolves
 
     await vi.waitFor(() => expect(useAppStore.getState().findingsStatus).toBe("done"));
     expect(useAppStore.getState().findingsStale).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/identify-failures",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 });
 
@@ -265,33 +278,31 @@ describe("sendChatMessage", () => {
     expect(state.canResimulate).toBe(false);
   });
 
-  it("applies a change request exactly like a fix: commits the model and enables Re-simulate", async () => {
+  it("applies a change request exactly like a fix: commits the model, enables Re-simulate, no identifyFailures call", async () => {
     const model = degradedModel();
     const changed = fixedModel();
     useAppStore.setState({ model, chatMessages: [], history: [] });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        if (url === "/api/chat") {
-          return Promise.resolve(
-            jsonResponse({ isQuestion: false, reply: "Added a second instance.", model: changed }),
-          );
-        }
-        return Promise.resolve(jsonResponse({ findings: [] }));
-      }),
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse({ isQuestion: false, reply: "Added a second instance.", model: changed })),
     );
+    vi.stubGlobal("fetch", fetchMock);
 
     await useAppStore.getState().sendChatMessage("add another instance");
 
     const state = useAppStore.getState();
     expect(state.model).toEqual(changed);
     expect(state.canResimulate).toBe(true);
+    expect(state.findingsStale).toBe(true);
     expect(state.history).toHaveLength(1);
     expect(state.chatMessages.at(-1)).toEqual({
       role: "assistant",
       text: "Added a second instance.",
       changed: true,
     });
+    // Only the chat call itself — applying the resulting change no longer
+    // spends a second (identifyFailures) call on its own.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("/api/chat", expect.objectContaining({ method: "POST" }));
   });
 
   it("surfaces an error without losing the user's own message", async () => {

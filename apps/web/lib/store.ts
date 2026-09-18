@@ -28,14 +28,17 @@ const EMPTY_MODEL: SystemModel = {
  * deterministic function call.
  *
  * `refreshFindings` is NOT called from every model change — only from
- * `setModel`/`applyFix`/`commitRework`, the three actions where the user
- * just took an action whose direct result they'd want reviewed.
- * `setWorkloadTier` deliberately does NOT trigger it: moving the tier
- * slider is a passive setting change, not a request for the AI's
- * opinion — that's what the (now-enabled) Re-simulate button is for. This
- * is also why `findings` can go visibly stale relative to the model after
- * a tier change: that's the intended signal to click Re-simulate, not a
- * bug to paper over with an automatic call.
+ * `setModel`/`commitRework`, the two actions that themselves represent
+ * "the user asked to see the current state of a system" (a fresh build,
+ * or a completed Re-simulate). `setWorkloadTier` and `applyFix`
+ * deliberately do NOT trigger it: moving the tier slider or applying a
+ * fix (including a chat-driven change, which commits through `applyFix`
+ * too) is a change to review, not an automatic request for the AI's
+ * opinion — that's what the Re-simulate button is for. Every live
+ * inference call costs real money, so this is a deliberate cost/
+ * freshness tradeoff, not an oversight: `findings` visibly goes stale
+ * relative to `model` after any of these, and that's the intended signal
+ * to click Re-simulate, not a bug to paper over with an automatic call.
  *
  * `canResimulate` starts `false` and flips `true` on `setWorkloadTier`/
  * `applyFix` (something changed since the last review) and back to
@@ -54,12 +57,14 @@ interface AppState {
   selectedFixId: string | null;
   canResimulate: boolean;
   /**
-   * True once the model has changed (a raised tier) without `findings`
-   * having been recomputed for it yet — the dashboard mutes the findings
-   * list and shows a caption while this is true, since otherwise a stale
-   * and a fresh findings list are visually identical. Only `setWorkloadTier`
-   * sets it; every successful `refreshFindings` clears it, since that's the
-   * only thing that makes `findings` actually match `model` again.
+   * True once the model has changed (a raised tier, an applied fix, a
+   * chat-driven change) without `findings` having been recomputed for it
+   * yet — the dashboard mutes the findings list and shows a caption while
+   * this is true, since otherwise a stale and a fresh findings list are
+   * visually identical. Set by `setWorkloadTier`/`applyFix`; only a
+   * successful `refreshFindings` (from `setModel`/`commitRework`) clears
+   * it, since that's the only thing that makes `findings` actually match
+   * `model` again.
    */
   findingsStale: boolean;
   lastSavedAt: number | null;
@@ -178,8 +183,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedFindingId: null,
       selectedFixId: null,
       canResimulate: true,
+      // Not refreshed here — same as setWorkloadTier, this only marks
+      // findings stale and waits for an explicit Re-simulate click, rather
+      // than spending an identifyFailures call on every single fix/chat
+      // change. See this file's own top comment.
+      findingsStale: true,
     });
-    void refreshFindings(set, get);
   },
 
   commitRework: (newModel) => {
@@ -291,8 +300,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         chatStatus: "idle",
       }));
       // A change request — commit it exactly like applying a fix: push
-      // undo history, clear stale selections, enable Re-simulate, refresh
-      // findings. The chat's own reply already told the user what changed.
+      // undo history, clear stale selections, mark findings stale, and
+      // enable Re-simulate (which is what will actually refresh findings,
+      // if and when the user clicks it — no identifyFailures call here).
       if (body.model) get().applyFix(body.model as SystemModel);
     } catch (err) {
       set({ chatStatus: "idle", chatError: err instanceof Error ? err.message : "Chat failed." });
