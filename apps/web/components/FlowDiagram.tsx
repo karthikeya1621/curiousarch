@@ -12,9 +12,8 @@ import {
   type Edge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { Scenario, SystemModel } from "@archsim/engine";
-import { useScenarios } from "../lib/hooks";
-import { scenarioComponentId } from "../lib/scenarioComponentId";
+import type { AiFinding, SystemModel } from "@archsim/engine";
+import { useAppStore } from "../lib/store";
 import { layoutModel, TRAFFIC_NODE_ID } from "../lib/layout";
 import { animateNodes } from "../lib/animateNodes";
 import { ComponentNode } from "./ComponentNode";
@@ -32,16 +31,15 @@ export function FlowDiagram({ model }: { model: SystemModel }) {
 
 function FlowDiagramInner({ model }: { model: SystemModel }) {
   const { fitView } = useReactFlow();
-  const scenarios = useScenarios(model);
+  const findings = useAppStore((s) => s.findings);
 
-  const scenariosByNode = useMemo(() => {
-    const map = new Map<string, Scenario[]>();
-    for (const s of scenarios) {
-      const id = scenarioComponentId(s) ?? TRAFFIC_NODE_ID;
-      map.set(id, [...(map.get(id) ?? []), s]);
+  const findingsByComponent = useMemo(() => {
+    const map = new Map<string, AiFinding[]>();
+    for (const f of findings) {
+      map.set(f.componentId, [...(map.get(f.componentId) ?? []), f]);
     }
     return map;
-  }, [scenarios]);
+  }, [findings]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   // Not wired to <ReactFlow onEdgesChange>: React Flow processes edges
@@ -65,7 +63,10 @@ function FlowDiagramInner({ model }: { model: SystemModel }) {
 
       const withData = laidOut.map((n) => ({
         ...n,
-        data: { ...n.data, scenarios: scenariosByNode.get(n.id) ?? [] },
+        data:
+          n.id === TRAFFIC_NODE_ID
+            ? n.data
+            : { ...n.data, findings: findingsByComponent.get(n.id) ?? [] },
       }));
 
       if (isFirstLayout.current) {
@@ -83,7 +84,7 @@ function FlowDiagramInner({ model }: { model: SystemModel }) {
     return () => {
       cancelled = true;
     };
-  }, [model, scenariosByNode, setNodes, setEdges, fitView]);
+  }, [model, findingsByComponent, setNodes, setEdges, fitView]);
 
   return (
     <div

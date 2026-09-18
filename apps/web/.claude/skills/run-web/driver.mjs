@@ -68,6 +68,24 @@ const COMMANDS = {
     console.log("click-node-badge", JSON.stringify(nodeText), "->", r);
   },
 
+  // `<sel> <text...>` - Playwright's real `fill()`, not a raw eval value
+  // assignment: React tracks a controlled input's last value internally and
+  // ignores a plain `el.value = x` + dispatched "input" event, so ProseInput's
+  // textarea silently never updates state that way. `fill()` goes through
+  // Playwright's actual input pipeline, which React does pick up.
+  async type(rest) {
+    if (!page) return console.log("ERROR: launch first");
+    const idx = rest.indexOf(" ");
+    const sel = idx === -1 ? rest : rest.slice(0, idx);
+    const text = idx === -1 ? "" : rest.slice(idx + 1);
+    try {
+      await page.fill(sel, text, { timeout: 5000 });
+      console.log("type", sel, "-> OK");
+    } catch (e) {
+      console.log("type", sel, "-> ERROR:", e.message.split("\n")[0]);
+    }
+  },
+
   async "click-text"(text) {
     if (!page) return console.log("ERROR: launch first");
     const r = await page.evaluate((t) => {
@@ -92,11 +110,32 @@ const COMMANDS = {
 
   async "wait-text"(text) {
     if (!page) return console.log("ERROR: launch first");
+    // 45s, not 10s: this app's own actions (Build model, Re-simulate, Apply
+    // this fix) are live LLM calls, several of them chained per action
+    // (e.g. fromProse's topology + workload calls, then a follow-up
+    // identify-failures call) - routinely slower than a typical UI wait.
     try {
-      await page.waitForFunction((t) => document.body.innerText.includes(t), text, { timeout: 10000 });
+      await page.waitForFunction((t) => document.body.innerText.includes(t), text, { timeout: 45000 });
       console.log("found text:", text);
     } catch {
       console.log("TIMEOUT waiting for text:", text);
+    }
+  },
+
+  // Waits for text to DISAPPEAR - the counterpart wait-text lacks. Needed
+  // for archsim specifically: the header's static copy ("...a possible
+  // failure carries an indicator...") permanently contains words like
+  // "possible failure", so wait-text for that phrase resolves instantly
+  // regardless of whether identifyFailures has actually finished - only
+  // waiting for the transient "Reviewing..."/"Reviewing this architecture"
+  // status text to go away reliably signals findings have loaded.
+  async "wait-gone"(text) {
+    if (!page) return console.log("ERROR: launch first");
+    try {
+      await page.waitForFunction((t) => !document.body.innerText.includes(t), text, { timeout: 45000 });
+      console.log("gone:", text);
+    } catch {
+      console.log("TIMEOUT waiting for text to disappear:", text);
     }
   },
 

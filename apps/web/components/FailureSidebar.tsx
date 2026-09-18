@@ -2,35 +2,55 @@
 
 import type { SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
-import { useScenarios } from "../lib/hooks";
-import { scenarioComponentId } from "../lib/scenarioComponentId";
-import { TRAFFIC_NODE_ID } from "../lib/layout";
-import { FailurePanel } from "./FailurePanel";
+import { findingKey } from "../lib/findingKey";
+import { FindingPanel } from "./FindingPanel";
 import { Card } from "./Card";
-import { XIcon, AlertTriangleIcon } from "./icons";
+import { Badge } from "./Badge";
+import { XIcon, AlertTriangleIcon, SparklesIcon } from "./icons";
 
 /**
  * Lives in the sidebar next to ControlPanel, not inside FlowDiagram — a
- * diagram node is too small to host the failure list or FailurePanel
- * (findings + utilization + fixes), and anything popped over the canvas
- * gets clipped by React Flow's own pannable-viewport overflow. Indicator
- * badges on nodes only set `openComponentId`; this renders what that
- * selection means.
+ * diagram node is too small to host the finding list or FindingPanel, and
+ * anything popped over the canvas gets clipped by React Flow's own
+ * pannable-viewport overflow. Indicator badges on nodes only set
+ * `openComponentId`; this renders what that selection means, reading
+ * `findings` straight from the store (fetched once per model change, not
+ * recomputed per render like the old deterministic `useScenarios`).
  */
 export function FailureSidebar({ model }: { model: SystemModel }) {
-  const scenarios = useScenarios(model);
+  const findings = useAppStore((s) => s.findings);
+  const findingsStatus = useAppStore((s) => s.findingsStatus);
+  const findingsError = useAppStore((s) => s.findingsError);
   const openComponentId = useAppStore((s) => s.openComponentId);
-  const selectedScenarioId = useAppStore((s) => s.selectedScenarioId);
-  const selectScenario = useAppStore((s) => s.selectScenario);
+  const selectedFindingId = useAppStore((s) => s.selectedFindingId);
+  const selectFinding = useAppStore((s) => s.selectFinding);
   const setOpenComponentId = useAppStore((s) => s.setOpenComponentId);
 
-  const activeScenario = scenarios.find((s) => s.id === selectedScenarioId);
+  const activeFinding = findings.find((f) => findingKey(f) === selectedFindingId);
 
-  if (activeScenario) {
+  if (activeFinding) {
     return (
       <Card padding="sm">
-        <FailurePanel model={model} scenarioId={activeScenario.id} />
+        <FindingPanel model={model} finding={activeFinding} />
       </Card>
+    );
+  }
+
+  if (findingsStatus === "loading") {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-xs text-slate-500">
+        <SparklesIcon className="h-4 w-4 shrink-0 text-slate-400" />
+        <span>Reviewing this architecture…</span>
+      </div>
+    );
+  }
+
+  if (findingsError) {
+    return (
+      <div className="flex items-start gap-2 rounded-xl border border-dashed border-rose-300 bg-rose-50/60 p-4 text-xs text-rose-600">
+        <AlertTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>{findingsError}</span>
+      </div>
     );
   }
 
@@ -43,9 +63,7 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
     );
   }
 
-  const relevant = scenarios.filter(
-    (s) => (scenarioComponentId(s) ?? TRAFFIC_NODE_ID) === openComponentId,
-  );
+  const relevant = findings.filter((f) => f.componentId === openComponentId);
 
   return (
     <Card padding="sm">
@@ -59,14 +77,20 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
         </button>
       </div>
       <div className="flex flex-col gap-1.5">
-        {relevant.map((s) => (
+        {relevant.length === 0 && (
+          <p className="text-xs text-slate-500">No issues found here — looks solid.</p>
+        )}
+        {relevant.map((f) => (
           <button
-            key={s.id}
-            onClick={() => selectScenario(s.id)}
+            key={findingKey(f)}
+            onClick={() => selectFinding(findingKey(f))}
             className="rounded-lg border border-slate-200 px-3 py-2 text-left text-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
           >
-            <span className="font-medium text-slate-900">{s.label}</span>
-            <p className="text-xs text-slate-500">{s.description}</p>
+            <div className="flex items-center gap-1.5">
+              <Badge tone={f.severity === "critical" ? "critical" : "warning"}>{f.severity}</Badge>
+              <span className="font-medium text-slate-900">{f.title}</span>
+            </div>
+            <p className="text-xs text-slate-500">{f.explanation}</p>
           </button>
         ))}
       </div>

@@ -1,7 +1,7 @@
-import { isTrait } from "@archsim/engine";
-import type { Component, Trait, ScaleTier, SystemModel } from "@archsim/engine";
+import { isTrait, USER_TIERS, REQUEST_TIERS } from "@archsim/engine";
+import type { Component, Trait, SystemModel, WorkloadDimensionValue } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
-import { useBreakingTier } from "../lib/hooks";
+import { formatTier } from "../lib/formatTier";
 import { Card } from "./Card";
 import { Badge, type BadgeTone } from "./Badge";
 import { UndoIcon } from "./icons";
@@ -11,8 +11,6 @@ const PROVENANCE_TONE: Record<Trait<unknown>["provenance"], BadgeTone> = {
   inferred: "violet",
   default: "neutral",
 };
-
-const SCALE_TIERS: ScaleTier[] = ["small", "medium", "large", "massive"];
 
 function SegmentedToggle({
   options,
@@ -41,28 +39,54 @@ function SegmentedToggle({
   );
 }
 
-function BooleanSwitch({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
+/**
+ * The only interactive control in this app — everything else evolves via
+ * a fix or a fresh description. Raising the tier here is a passive
+ * setting change (it enables Re-simulate but doesn't call the AI itself)
+ * — see store.ts's own comment on why `setWorkloadTier` never triggers a
+ * findings refresh on its own.
+ */
+function TierControl({
+  dimension,
+  value,
+}: {
+  dimension: "users" | "requests";
+  value: WorkloadDimensionValue;
+}) {
+  const setWorkloadTier = useAppStore((s) => s.setWorkloadTier);
+  const ladder = dimension === "users" ? USER_TIERS : REQUEST_TIERS;
+  const label = dimension === "users" ? "Users" : "Requests";
+  const options = ladder.map(formatTier);
+
   return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${checked ? "bg-slate-900" : "bg-slate-200"}`}
-    >
-      <span
-        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-4.5" : "translate-x-0.5"}`}
-      />
-    </button>
+    <div className="border-b border-slate-100 pb-3 pt-2 last:border-b-0">
+      <span className="text-xs font-medium text-slate-700">{label}</span>
+      <div className="mt-1.5">
+        <SegmentedToggle
+          options={options}
+          value={formatTier(value.tier)}
+          onChange={(next) => {
+            const tier = ladder.find((t) => formatTier(t) === next);
+            if (tier !== undefined) setWorkloadTier(dimension, tier);
+          }}
+        />
+      </div>
+      {value.target !== value.tier && (
+        <p className="mt-1.5 text-[11px] text-slate-400">
+          Target: {formatTier(value.target)} — from your description
+        </p>
+      )}
+    </div>
   );
 }
 
 /**
  * Read-only: traits are no longer a control surface. This app's whole
  * premise is that the architecture only evolves by applying a fix to a
- * real, computed failure point (or by re-describing the system) — a free
- * toggle here would let you route around that loop entirely. Provenance
- * and rationale stay visible for exactly the reason they always
- * were — understanding what was assumed and why — just without a way to
+ * real failure point (or by re-describing the system) — a free toggle
+ * here would let you route around that loop entirely. Provenance and
+ * rationale stay visible for exactly the reason they always were —
+ * understanding what was assumed and why — just without a way to
  * hand-edit it.
  */
 function TraitRow({ field, trait }: { field: string; trait: Trait<unknown> }) {
@@ -89,10 +113,11 @@ function componentTraits(component: Component): [string, Trait<unknown>][] {
 }
 
 export function ControlPanel({ model }: { model: SystemModel }) {
-  const setWorkloadScale = useAppStore((s) => s.setWorkloadScale);
   const history = useAppStore((s) => s.history);
   const undo = useAppStore((s) => s.undo);
-  const breakingTier = useBreakingTier(model);
+
+  // Blank canvas — nothing to control until a system exists.
+  if (model.components.length === 0) return null;
 
   return (
     <Card padding="sm" className="flex flex-col gap-1">
@@ -108,21 +133,10 @@ export function ControlPanel({ model }: { model: SystemModel }) {
         </button>
       </div>
 
-      <div className="pb-3 pt-2">
-        <span className="text-xs font-medium text-slate-700">Traffic scale</span>
-        <div className="mt-1.5">
-          <SegmentedToggle
-            options={SCALE_TIERS}
-            value={model.workload.scale.value}
-            onChange={(next) => setWorkloadScale(next as ScaleTier)}
-          />
-        </div>
-        <p className="mt-1.5 text-[11px] text-slate-400">
-          {breakingTier
-            ? `Breaks at ${breakingTier.scale} scale`
-            : "No risk found at any scale"}
-        </p>
-      </div>
+      {model.workload.users?.included && <TierControl dimension="users" value={model.workload.users} />}
+      {model.workload.requests?.included && (
+        <TierControl dimension="requests" value={model.workload.requests} />
+      )}
 
       <div className="border-t border-slate-100 pt-2">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">

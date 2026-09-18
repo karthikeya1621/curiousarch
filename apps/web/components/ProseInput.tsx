@@ -39,17 +39,18 @@ export function ProseInput() {
         className="flex items-center gap-1.5 text-sm font-semibold text-slate-900"
       >
         <SparklesIcon className="h-4 w-4 text-slate-400" />
-        Describe your own system
+        Describe the system you want to build
       </label>
       <p className="mt-1 text-xs text-slate-500">
-        Prose in, a model out — components, edges, and workload, each
-        parameter tagged with its provenance so you know what to correct.
+        Plain English in, an architecture out. Mention a user count or a
+        request rate and that becomes a parameter you can raise later —
+        starting low either way, so you can see what breaks as you grow it.
       </p>
       <textarea
         id="prose-description"
         value={description}
         onChange={(e) => setDescription(e.target.value)}
-        placeholder="e.g. A checkout API backed by a Postgres database with a connection pool of 20 and a 25ms average query time..."
+        placeholder="e.g. A movie booking system for 1M users..."
         className="mt-3 w-full flex-1 min-h-40 resize-none rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none"
       />
       <div className="mt-3 flex items-center gap-3">

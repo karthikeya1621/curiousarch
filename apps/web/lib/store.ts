@@ -1,88 +1,126 @@
 import { create } from "zustand";
-import { checkout } from "@archsim/engine";
-import type { ScaleTier, SystemModel } from "@archsim/engine";
+import type { AiFinding, SystemModel } from "@archsim/engine";
 
 /**
- * Only ids are stored, never the Scenario/Fix/ScenarioDelta/FixResult
- * objects themselves — their `apply` fields are functions, which would
- * silently break serialization if devtools/persist middleware is ever
- * added. Everything else is derived on read (see lib/hooks.ts).
+ * Blank canvas is the actual starting state — no preset system, no
+ * controls, nothing to describe yet. The engine's own pattern functions
+ * already handle zero components gracefully (confirmed by reading
+ * solver.ts), so this needs no engine-side support; `workload: {}` is
+ * valid since every field on `Workload` is optional now (see
+ * @archsim/engine's types.ts).
+ */
+const EMPTY_MODEL: SystemModel = {
+  id: "blank",
+  name: "",
+  components: [],
+  edges: [],
+  workload: {},
+};
+
+/**
+ * Findings are AI-generated now (`identifyFailures`), not computed — see
+ * packages/engine/README.md and CONTEXT.md for the explicit product
+ * decision behind this. They live here, not in a hook, because the
+ * diagram (badge counts) and the sidebar (the actual list) both need the
+ * same fetched result, and fetching is async — unlike the old
+ * `useScenarios`/`useFixes`, which were synchronous `useMemo`s over a
+ * deterministic function call.
  *
- * The invariant this store exists to enforce: a Fix id is only unique
- * within one (model, scenarioId) call — listFixes derives ids from
- * whatever findings the scenario actually produces, so a stale
- * selectedFixId left over after changing selectedScenarioId isn't just
- * stale, it can resolve to a *different, wrong* fix if two scenarios
- * happen to produce a same-id fix on the same component. setModel clears
- * both selections and the undo history (a full model swap, e.g. from
- * prose inference, isn't something a user would expect to "undo" back
- * through). setWorkloadScale deliberately does NOT clear selections:
- * changing the scale never changes a component's id or kind, so every
- * selected id stays valid, and clearing them would hide the effect of the
- * change the user just made. Only setModel/setWorkloadScale/applyFix/undo/
- * selectScenario/selectFix/setOpenComponentId are exported as mutators —
- * no raw setters a component could call and forget the invariant.
+ * `refreshFindings` is NOT called from every model change — only from
+ * `setModel`/`applyFix`/`commitRework`, the three actions where the user
+ * just took an action whose direct result they'd want reviewed.
+ * `setWorkloadTier` deliberately does NOT trigger it: moving the tier
+ * slider is a passive setting change, not a request for the AI's
+ * opinion — that's what the (now-enabled) Re-simulate button is for. This
+ * is also why `findings` can go visibly stale relative to the model after
+ * a tier change: that's the intended signal to click Re-simulate, not a
+ * bug to paper over with an automatic call.
  *
- * openComponentId tracks which flow-diagram node's failure list is showing
- * in the sidebar (FailureSidebar) — it's UI state, not model state, but it
- * has to be shared between the diagram (where the indicator badges live)
- * and the sidebar (where the list actually renders), so it lives here like
- * the other cross-component selection state.
- *
- * applyFix commits a fix's transform to the REAL model — not the
- * hypothetical failure+fix combination FixResultPanel previews. A scenario
- * models "what if this broke"; a fix is a real change ("add a circuit
- * breaker") a user could actually make. Applying one means "make that real change,"
- * not "also pretend the hypothetical failure happened forever" — so the
- * caller passes `fix.apply(model)` (the fix against the current real
- * model), never `fix.apply(scenario.apply(model))`. Like a full model
- * swap, it clears the transient selections (the old scenario/fix/open
- * node no longer describe anything meaningful once the model has moved),
- * but like a scale change, it pushes undo history rather than clearing
- * it — this is one step in an ongoing evolution, not a fresh start.
- *
- * There is deliberately no `updateTrait` here anymore: component traits
- * are read-only in the UI (ControlPanel.tsx) — the architecture only
- * evolves via a scenario/fix or a fresh prose description, never by
- * hand-toggling a switch. `setWorkloadScale` survives because traffic
- * scale is the one real non-functional requirement, not a component trait.
+ * `canResimulate` starts `false` and flips `true` on `setWorkloadTier`/
+ * `applyFix` (something changed since the last review) and back to
+ * `false` on `setModel`/`commitRework` (nothing has changed yet either
+ * way — a fresh build or a just-finished rework has nothing new to
+ * reconsider).
  */
 interface AppState {
   model: SystemModel;
   history: SystemModel[];
-  selectedScenarioId: string | null;
-  selectedFixId: string | null;
+  findings: AiFinding[];
+  findingsStatus: "idle" | "loading" | "done";
+  findingsError: string | null;
   openComponentId: string | null;
+  selectedFindingId: string | null;
+  selectedFixId: string | null;
+  canResimulate: boolean;
   setModel: (model: SystemModel) => void;
-  setWorkloadScale: (scale: ScaleTier) => void;
+  setWorkloadTier: (dimension: "users" | "requests", tier: number) => void;
   applyFix: (newModel: SystemModel) => void;
+  commitRework: (newModel: SystemModel) => void;
   undo: () => void;
-  selectScenario: (id: string | null) => void;
-  selectFix: (id: string | null) => void;
   setOpenComponentId: (id: string | null) => void;
+  selectFinding: (id: string | null) => void;
+  selectFix: (id: string | null) => void;
+}
+
+async function refreshFindings(
+  set: (partial: Partial<AppState>) => void,
+  get: () => AppState,
+): Promise<void> {
+  const { model } = get();
+  if (model.components.length === 0) {
+    set({ findings: [], findingsStatus: "idle", findingsError: null });
+    return;
+  }
+  set({ findingsStatus: "loading", findingsError: null });
+  try {
+    const res = await fetch("/api/identify-failures", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: get().model }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? "Failed to identify failures.");
+    set({ findings: body.findings as AiFinding[], findingsStatus: "done" });
+  } catch (err) {
+    set({
+      findingsStatus: "done",
+      findingsError: err instanceof Error ? err.message : "Failed to identify failures.",
+    });
+  }
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  model: checkout, // a real default, not a placeholder — no "unset" state to guard against
+  model: EMPTY_MODEL,
   history: [],
-  selectedScenarioId: null,
-  selectedFixId: null,
+  findings: [],
+  findingsStatus: "idle",
+  findingsError: null,
   openComponentId: null,
+  selectedFindingId: null,
+  selectedFixId: null,
+  canResimulate: false,
 
-  setModel: (model) =>
+  setModel: (model) => {
     set({
       model,
       history: [],
-      selectedScenarioId: null,
-      selectedFixId: null,
+      findings: [],
       openComponentId: null,
-    }),
+      selectedFindingId: null,
+      selectedFixId: null,
+      canResimulate: false,
+    });
+    void refreshFindings(set, get);
+  },
 
-  setWorkloadScale: (scale) => {
+  setWorkloadTier: (dimension, tier) => {
     const { model, history } = get();
+    const current = model.workload[dimension];
+    if (!current) return;
     set({
-      model: { ...model, workload: { scale: { ...model.workload.scale, value: scale, provenance: "stated" } } },
+      model: { ...model, workload: { ...model.workload, [dimension]: { ...current, tier } } },
       history: [...history, model],
+      canResimulate: true,
     });
   },
 
@@ -91,22 +129,38 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       model: newModel,
       history: [...history, model],
-      selectedScenarioId: null,
-      selectedFixId: null,
       openComponentId: null,
+      selectedFindingId: null,
+      selectedFixId: null,
+      canResimulate: true,
     });
+    void refreshFindings(set, get);
+  },
+
+  commitRework: (newModel) => {
+    const { model, history } = get();
+    set({
+      model: newModel,
+      history: [...history, model],
+      openComponentId: null,
+      selectedFindingId: null,
+      selectedFixId: null,
+      canResimulate: false,
+    });
+    void refreshFindings(set, get);
   },
 
   undo: () => {
     const { history } = get();
     if (history.length === 0) return;
-    set({ model: history[history.length - 1], history: history.slice(0, -1) });
+    const previous = history[history.length - 1]!;
+    set({ model: previous, history: history.slice(0, -1) });
+    void refreshFindings(set, get);
   },
 
-  selectScenario: (id) =>
-    set({ selectedScenarioId: id, selectedFixId: null }),
+  setOpenComponentId: (id) => set({ openComponentId: id, selectedFindingId: null, selectedFixId: null }),
+
+  selectFinding: (id) => set({ selectedFindingId: id, selectedFixId: null }),
 
   selectFix: (id) => set({ selectedFixId: id }),
-
-  setOpenComponentId: (id) => set({ openComponentId: id }),
 }));

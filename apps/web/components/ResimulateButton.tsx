@@ -5,25 +5,24 @@ import type { SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 
 /**
- * Manual only — never fires from applying a fix. Rebuilds the current
- * model from scratch via the AI (reworkModel), seeded from where the
- * system actually is right now rather than typed prose. Same loading/
- * error local-state shape as ProseInput.tsx, the other place this app
- * makes a network call from a plain button.
- *
- * Commits through the store's `applyFix` action, not `setModel` —
- * deliberately: `applyFix` already means "commit a real change to the
- * model, push undo history, clear stale selections," which is exactly
- * what accepting a rework is. `setModel`'s full history reset is for
- * switching to a *different* system, not reworking the one you're on.
+ * Gated by `canResimulate`, not always-on: it only lights up once
+ * something has actually changed since the last review (a raised tier or
+ * an applied fix — see store.ts's own comment on why `setWorkloadTier`
+ * doesn't refresh findings itself, leaving this button as the deliberate
+ * next step). Commits through `commitRework`, not `applyFix` — a rework
+ * has nothing new to reconsider immediately after (findings just got
+ * refreshed for the model this produced), whereas `applyFix` sets
+ * `canResimulate: true` because it's the kind of change that invites a
+ * follow-up rework of the whole system, not a self-contained one.
  */
 export function ResimulateButton({ model }: { model: SystemModel }) {
-  const applyFix = useAppStore((s) => s.applyFix);
+  const canResimulate = useAppStore((s) => s.canResimulate);
+  const commitRework = useAppStore((s) => s.commitRework);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function resimulate() {
-    if (loading) return;
+    if (loading || !canResimulate) return;
     setLoading(true);
     setError(null);
     try {
@@ -34,7 +33,7 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Rework failed.");
-      applyFix(body.model as SystemModel);
+      commitRework(body.model as SystemModel);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Rework failed.");
     } finally {
@@ -46,8 +45,9 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
     <div className="flex flex-col items-end gap-1">
       <button
         onClick={resimulate}
-        disabled={loading}
-        className="flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-700 transition-colors enabled:hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={loading || !canResimulate}
+        title={canResimulate ? undefined : "Change a parameter or apply a fix first"}
+        className="flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-700 transition-colors enabled:hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {loading ? "Re-simulating…" : "Re-simulate"}
       </button>

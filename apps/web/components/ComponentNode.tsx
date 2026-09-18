@@ -1,10 +1,10 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import type { Component, Scenario } from "@archsim/engine";
+import type { AiFinding, Component } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { FailureIndicator } from "./FailureIndicator";
 import { GatewayIcon, ServiceIcon, CacheIcon, DatabaseIcon, QueueIcon } from "./icons";
 
-type ComponentNodeData = { component: Component; scenarios: Scenario[] };
+type ComponentNodeData = { component: Component; findings: AiFinding[] };
 
 const KIND_ICON: Record<Component["kind"], (props: { className?: string }) => React.JSX.Element> = {
   gateway: GatewayIcon,
@@ -22,29 +22,15 @@ const KIND_TONE: Record<Component["kind"], string> = {
   queue: "bg-teal-50 text-teal-600",
 };
 
-/**
- * A single instance of a service or database is exactly the condition
- * patterns.ts's SINGLE_POINT_OF_FAILURE fires on — surfaced here as a
- * subtle amber ring around the node itself, at-a-glance, without needing
- * to open the sidebar. Rough-mode replacement for the old numeric "×N"
- * instance-count badge: there's no count to show anymore, just a
- * single/multiple category, so a risk cue reads better than a number.
- */
-function isSinglePointOfFailureRisk(component: Component): boolean {
-  if (component.kind === "service") return component.instanceCount.value === "single";
-  if (component.kind === "database") return component.instanceCount.value === "single";
-  return false;
-}
-
 export function ComponentNode({ data }: NodeProps) {
-  const { component, scenarios } = data as unknown as ComponentNodeData;
+  const { component, findings } = data as unknown as ComponentNodeData;
   const isOpen = useAppStore((s) => s.openComponentId === component.id);
   const KindIcon = KIND_ICON[component.kind];
-  const isRisk = isSinglePointOfFailureRisk(component);
+  const hasCriticalFinding = findings.some((f) => f.severity === "critical");
 
   const border = isOpen
     ? "border-slate-400 ring-2 ring-slate-900/10"
-    : isRisk
+    : hasCriticalFinding
       ? "border-amber-300 ring-1 ring-amber-200"
       : "border-slate-200";
 
@@ -70,7 +56,7 @@ export function ComponentNode({ data }: NodeProps) {
         </div>
         <FailureIndicator
           nodeId={component.id}
-          scenarios={scenarios}
+          findings={findings}
           wrapperClassName="shrink-0"
         />
       </div>
