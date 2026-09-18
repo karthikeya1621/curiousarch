@@ -22,3 +22,5 @@ export { applyAiFix } from "./inference/applyAiFix.ts";
 export type { ApplyAiFixResult } from "./inference/applyAiFix.ts";
 export { extractWorkloadParameters } from "./inference/workloadParameters.ts";
 export type { WorkloadParameters } from "./inference/workloadParameters.ts";
+export { chatWithProject } from "./inference/chatWithProject.ts";
+export type { ChatWithProjectResult } from "./inference/chatWithProject.ts";
