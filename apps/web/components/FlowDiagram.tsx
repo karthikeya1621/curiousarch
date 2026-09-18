@@ -72,10 +72,10 @@ function FlowDiagramInner({ model }: { model: SystemModel }) {
       if (isFirstLayout.current) {
         setNodes(withData);
         isFirstLayout.current = false;
-        requestAnimationFrame(() => fitView({ duration: 0 }));
+        requestAnimationFrame(() => fitView({ duration: 0, padding: 0.15, minZoom: 0.1 }));
       } else {
         animateNodes(withData, previousPositions.current, setNodes, () =>
-          fitView({ duration: 200 }),
+          fitView({ duration: 200, padding: 0.15, minZoom: 0.1 }),
         );
       }
       for (const n of laidOut) previousPositions.current.set(n.id, n.position);
@@ -97,6 +97,12 @@ function FlowDiagramInner({ model }: { model: SystemModel }) {
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
         proOptions={{ hideAttribution: true }}
+        // Default minZoom (0.5) can't fit a realistic 4+ node system in
+        // this card's width — fitView silently clips the rightmost node(s)
+        // instead of zooming out further. Found live via a UI review pass
+        // over screenshots: nearly every "built" screenshot had a node
+        // truncated at the card edge.
+        minZoom={0.1}
       >
         <Background color="#cbd5e1" gap={20} size={1} />
       </ReactFlow>

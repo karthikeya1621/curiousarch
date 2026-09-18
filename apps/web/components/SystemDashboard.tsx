@@ -10,9 +10,13 @@ import { Badge } from "./Badge";
 export function SystemDashboard({ model }: { model: SystemModel }) {
   const findings = useAppStore((s) => s.findings);
   const findingsStatus = useAppStore((s) => s.findingsStatus);
+  const findingsStale = useAppStore((s) => s.findingsStale);
 
   const criticalCount = findings.filter((f) => f.severity === "critical").length;
   const healthy = findingsStatus === "done" && findings.length === 0;
+  // Muted only once a fetch isn't already in flight — while loading, the
+  // "Reviewing…" badge already carries that signal on its own.
+  const isStale = findingsStale && findingsStatus !== "loading";
 
   const healthBadge =
     findingsStatus === "loading" ? (
@@ -33,20 +37,32 @@ export function SystemDashboard({ model }: { model: SystemModel }) {
           {healthBadge}
         </div>
         {findings.length > 0 && (
-          <div className="mt-3 flex max-h-28 flex-col gap-1.5 overflow-y-auto pr-1">
-            {findings.map((f) => (
-              <div key={findingKey(f)} className="flex items-start gap-2 text-sm">
-                <Badge tone={f.severity === "critical" ? "critical" : "warning"}>
-                  {f.severity}
-                </Badge>
-                <div className="min-w-0">
-                  <span className="font-medium text-slate-900">{f.title}</span>
-                  <span className="text-slate-400"> · {f.componentId}</span>
-                  <p className="text-xs text-slate-500">{f.explanation}</p>
+          <>
+            <div
+              className={
+                "mt-3 flex max-h-28 flex-col gap-1.5 overflow-y-auto pr-1 transition-opacity " +
+                (isStale ? "opacity-50" : "")
+              }
+            >
+              {findings.map((f) => (
+                <div key={findingKey(f)} className="flex items-start gap-2 text-sm">
+                  <Badge tone={f.severity === "critical" ? "critical" : "warning"}>
+                    {f.severity}
+                  </Badge>
+                  <div className="min-w-0">
+                    <span className="font-medium text-slate-900">{f.title}</span>
+                    <span className="text-slate-400"> · {f.componentId}</span>
+                    <p className="text-xs text-slate-500">{f.explanation}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+            {isStale && (
+              <p className="mt-1.5 text-[11px] text-slate-400">
+                Based on the previous configuration — click Re-simulate to refresh.
+              </p>
+            )}
+          </>
         )}
       </Card>
 

@@ -71,6 +71,7 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
         <p className="text-sm font-semibold text-slate-900">Possible failures</p>
         <button
           onClick={() => setOpenComponentId(null)}
+          aria-label="Close"
           className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
         >
           <XIcon className="h-3.5 w-3.5" />

@@ -53,6 +53,15 @@ interface AppState {
   selectedFindingId: string | null;
   selectedFixId: string | null;
   canResimulate: boolean;
+  /**
+   * True once the model has changed (a raised tier) without `findings`
+   * having been recomputed for it yet — the dashboard mutes the findings
+   * list and shows a caption while this is true, since otherwise a stale
+   * and a fresh findings list are visually identical. Only `setWorkloadTier`
+   * sets it; every successful `refreshFindings` clears it, since that's the
+   * only thing that makes `findings` actually match `model` again.
+   */
+  findingsStale: boolean;
   lastSavedAt: number | null;
   /**
    * The ongoing conversation for the CURRENT project — separate from
@@ -95,7 +104,7 @@ async function refreshFindings(
 ): Promise<void> {
   const { model } = get();
   if (model.components.length === 0) {
-    set({ findings: [], findingsStatus: "idle", findingsError: null });
+    set({ findings: [], findingsStatus: "idle", findingsError: null, findingsStale: false });
     return;
   }
   set({ findingsStatus: "loading", findingsError: null });
@@ -107,7 +116,7 @@ async function refreshFindings(
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? "Failed to identify failures.");
-    set({ findings: body.findings as AiFinding[], findingsStatus: "done" });
+    set({ findings: body.findings as AiFinding[], findingsStatus: "done", findingsStale: false });
   } catch (err) {
     set({
       findingsStatus: "done",
@@ -126,6 +135,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedFindingId: null,
   selectedFixId: null,
   canResimulate: false,
+  findingsStale: false,
   lastSavedAt: null,
   chatMessages: [],
   chatStatus: "idle",
@@ -155,6 +165,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       model: { ...model, workload: { ...model.workload, [dimension]: { ...current, tier } } },
       history: [...history, model],
       canResimulate: true,
+      findingsStale: true,
     });
   },
 
@@ -210,6 +221,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       findingsStatus: session.findingsStatus === "loading" ? "done" : session.findingsStatus,
       findingsError: session.findingsError,
       canResimulate: session.canResimulate,
+      // `?? false` covers a session saved before this field existed.
+      findingsStale: session.findingsStale ?? false,
       lastSavedAt: session.savedAt,
       // `?? []` covers a session saved before chat existed at all.
       chatMessages: session.chatMessages ?? [],
@@ -222,7 +235,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   saveToStorage: () => {
-    const { model, history, findings, findingsStatus, findingsError, canResimulate, chatMessages } = get();
+    const { model, history, findings, findingsStatus, findingsError, canResimulate, findingsStale, chatMessages } =
+      get();
     const saved = saveSession({
       model,
       history,
@@ -230,6 +244,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       findingsStatus: findingsStatus === "loading" ? "done" : findingsStatus,
       findingsError,
       canResimulate,
+      findingsStale,
       chatMessages,
     });
     if (saved) set({ lastSavedAt: saved.savedAt });
@@ -242,6 +257,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       findings: [],
       findingsStatus: "idle",
       findingsError: null,
+      findingsStale: false,
       openComponentId: null,
       selectedFindingId: null,
       selectedFixId: null,
@@ -268,7 +284,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Chat failed.");
       set((state) => ({
-        chatMessages: [...state.chatMessages, { role: "assistant", text: body.reply as string }],
+        chatMessages: [
+          ...state.chatMessages,
+          { role: "assistant", text: body.reply as string, changed: Boolean(body.model) },
+        ],
         chatStatus: "idle",
       }));
       // A change request — commit it exactly like applying a fix: push

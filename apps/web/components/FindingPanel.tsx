@@ -80,6 +80,7 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
         </div>
         <button
           onClick={() => selectFinding(null)}
+          aria-label="Close finding"
           className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
         >
           <XIcon className="h-3.5 w-3.5" />

@@ -5,6 +5,8 @@ const STORAGE_KEY = "archsim:session";
 export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
+  /** True on an assistant message that actually changed the model — lets the UI distinguish it from a plain answer. */
+  changed?: boolean;
 }
 
 export interface SavedSession {
@@ -14,6 +16,8 @@ export interface SavedSession {
   findingsStatus: "idle" | "loading" | "done";
   findingsError: string | null;
   canResimulate: boolean;
+  /** True when the model changed (a raised tier) since `findings` was last actually computed for it. */
+  findingsStale: boolean;
   chatMessages: ChatMessage[];
   savedAt: number;
 }

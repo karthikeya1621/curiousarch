@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useAppStore } from "../lib/store";
 import { Card } from "./Card";
-import { SparklesIcon } from "./icons";
+import { SparklesIcon, WrenchIcon } from "./icons";
 
 /**
  * The sidebar box for an EXISTING project — distinct from ProseInput,
@@ -53,6 +53,12 @@ export function ProjectChat() {
                   : "self-start bg-slate-100 text-slate-700")
               }
             >
+              {m.role === "assistant" && m.changed && (
+                <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600">
+                  <WrenchIcon className="h-3 w-3" />
+                  Applied
+                </div>
+              )}
               {m.text}
             </div>
           ))}

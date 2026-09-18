@@ -16,16 +16,20 @@ function SegmentedToggle({
   options,
   value,
   onChange,
+  label,
 }: {
   options: readonly string[];
   value: string;
   onChange: (next: string) => void;
+  label: string;
 }) {
   return (
-    <div className="flex rounded-md border border-slate-200 p-0.5">
+    <div role="radiogroup" aria-label={label} className="flex rounded-md border border-slate-200 p-0.5">
       {options.map((opt) => (
         <button
           key={opt}
+          role="radio"
+          aria-checked={opt === value}
           onClick={() => onChange(opt)}
           className={
             "rounded px-2 py-0.5 text-xs font-medium transition-colors " +
@@ -65,6 +69,7 @@ function TierControl({
         <SegmentedToggle
           options={options}
           value={formatTier(value.tier)}
+          label={label}
           onChange={(next) => {
             const tier = ladder.find((t) => formatTier(t) === next);
             if (tier !== undefined) setWorkloadTier(dimension, tier);

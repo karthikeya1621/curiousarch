@@ -46,11 +46,17 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       <button
         onClick={resimulate}
         disabled={loading || !canResimulate}
-        title={canResimulate ? undefined : "Change a parameter or apply a fix first"}
         className="flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-700 transition-colors enabled:hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {loading ? "Re-simulating…" : "Re-simulate"}
       </button>
+      {/* Persistent, not just a hover title — a greyed-out button alone
+          reads as "nothing to do here," not "do something else first." */}
+      {!canResimulate && !loading && (
+        <p className="max-w-xs text-right text-[11px] text-slate-400">
+          Change a parameter or apply a fix first
+        </p>
+      )}
       {error && <p className="max-w-xs text-right text-[11px] text-rose-600">{error}</p>}
     </div>
   );

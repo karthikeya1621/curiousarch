@@ -67,6 +67,14 @@ export function PlusIcon({ className }: IconProps) {
   );
 }
 
+export function WrenchIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.65 2.65-2.35-2.35Z" />
+    </svg>
+  );
+}
+
 export function SaveIcon({ className }: IconProps) {
   return (
     <svg {...base} className={className}>

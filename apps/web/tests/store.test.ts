@@ -126,6 +126,24 @@ describe("applyFix", () => {
   });
 });
 
+describe("findingsStale", () => {
+  it("clears once refreshFindings actually completes for the changed model", async () => {
+    const model: SystemModel = {
+      ...checkout,
+      workload: { ...checkout.workload, users: { included: true, tier: 100, target: 1_000_000 } },
+    };
+    useAppStore.setState({ model, history: [] });
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    expect(useAppStore.getState().findingsStale).toBe(true);
+
+    useAppStore.getState().applyFix(fixedModel());
+    expect(useAppStore.getState().findingsStale).toBe(true); // still true until the fetch resolves
+
+    await vi.waitFor(() => expect(useAppStore.getState().findingsStatus).toBe("done"));
+    expect(useAppStore.getState().findingsStale).toBe(false);
+  });
+});
+
 describe("setWorkloadTier", () => {
   it("updates the tier and enables Re-simulate without refreshing findings", () => {
     const model: SystemModel = {
@@ -138,6 +156,7 @@ describe("setWorkloadTier", () => {
 
     expect(useAppStore.getState().model.workload.users?.tier).toBe(10_000);
     expect(useAppStore.getState().canResimulate).toBe(true);
+    expect(useAppStore.getState().findingsStale).toBe(true);
     expect(fetch).not.toHaveBeenCalled();
   });
 });
@@ -240,7 +259,7 @@ describe("sendChatMessage", () => {
     const state = useAppStore.getState();
     expect(state.chatMessages).toEqual([
       { role: "user", text: "why is the cache TTL short?" },
-      { role: "assistant", text: "Because it's a hot key." },
+      { role: "assistant", text: "Because it's a hot key.", changed: false },
     ]);
     expect(state.model).toBe(model);
     expect(state.canResimulate).toBe(false);
@@ -268,7 +287,11 @@ describe("sendChatMessage", () => {
     expect(state.model).toEqual(changed);
     expect(state.canResimulate).toBe(true);
     expect(state.history).toHaveLength(1);
-    expect(state.chatMessages.at(-1)).toEqual({ role: "assistant", text: "Added a second instance." });
+    expect(state.chatMessages.at(-1)).toEqual({
+      role: "assistant",
+      text: "Added a second instance.",
+      changed: true,
+    });
   });
 
   it("surfaces an error without losing the user's own message", async () => {
