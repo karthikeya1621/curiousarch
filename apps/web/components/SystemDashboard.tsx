@@ -33,7 +33,7 @@ export function SystemDashboard({ model }: { model: SystemModel }) {
           {healthBadge}
         </div>
         {findings.length > 0 && (
-          <div className="mt-3 flex max-h-72 flex-col gap-1.5 overflow-y-auto pr-1">
+          <div className="mt-3 flex max-h-28 flex-col gap-1.5 overflow-y-auto pr-1">
             {findings.map((f) => (
               <div key={findingKey(f)} className="flex items-start gap-2 text-sm">
                 <Badge tone={f.severity === "critical" ? "critical" : "warning"}>

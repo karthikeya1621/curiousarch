@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { AiFinding, SystemModel } from "@archsim/engine";
-import { loadSession, saveSession } from "./sessionStorage";
+import { loadSession, saveSession, type ChatMessage } from "./sessionStorage";
 
 /**
  * Blank canvas is the actual starting state — no preset system, no
@@ -54,6 +54,16 @@ interface AppState {
   selectedFixId: string | null;
   canResimulate: boolean;
   lastSavedAt: number | null;
+  /**
+   * The ongoing conversation for the CURRENT project — separate from
+   * `findings`, never wiped by a rework/fix/undo (those change the
+   * architecture; the conversation about it continues alongside that).
+   * Only `setModel`/`startNewProject` reset it, since those mean "this is
+   * a different project now."
+   */
+  chatMessages: ChatMessage[];
+  chatStatus: "idle" | "loading";
+  chatError: string | null;
   setModel: (model: SystemModel) => void;
   setWorkloadTier: (dimension: "users" | "requests", tier: number) => void;
   applyFix: (newModel: SystemModel) => void;
@@ -66,6 +76,17 @@ interface AppState {
   hydrateFromStorage: () => void;
   /** Snapshots the current session into the one saved slot, overwriting it. */
   saveToStorage: () => void;
+  /**
+   * Discards the current session in memory and starts a blank one — the
+   * only intentional way to abandon a project. Deliberately never touches
+   * the saved localStorage slot itself: `saveToStorage` is the only thing
+   * that ever writes there, so a project you never explicitly saved is
+   * never silently lost by starting a new one, and one you already saved
+   * stays exactly as you last saved it until you choose to overwrite it.
+   */
+  startNewProject: () => void;
+  /** A free-text message about the current project — answered, or turned into an actual model change, by the AI itself (see chatWithProject.ts). */
+  sendChatMessage: (message: string) => Promise<void>;
 }
 
 async function refreshFindings(
@@ -106,6 +127,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedFixId: null,
   canResimulate: false,
   lastSavedAt: null,
+  chatMessages: [],
+  chatStatus: "idle",
+  chatError: null,
 
   setModel: (model) => {
     set({
@@ -116,6 +140,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedFindingId: null,
       selectedFixId: null,
       canResimulate: false,
+      chatMessages: [],
+      chatStatus: "idle",
+      chatError: null,
     });
     void refreshFindings(set, get);
   },
@@ -184,6 +211,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       findingsError: session.findingsError,
       canResimulate: session.canResimulate,
       lastSavedAt: session.savedAt,
+      // `?? []` covers a session saved before chat existed at all.
+      chatMessages: session.chatMessages ?? [],
+      chatStatus: "idle",
+      chatError: null,
       openComponentId: null,
       selectedFindingId: null,
       selectedFixId: null,
@@ -191,7 +222,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   saveToStorage: () => {
-    const { model, history, findings, findingsStatus, findingsError, canResimulate } = get();
+    const { model, history, findings, findingsStatus, findingsError, canResimulate, chatMessages } = get();
     const saved = saveSession({
       model,
       history,
@@ -199,7 +230,53 @@ export const useAppStore = create<AppState>((set, get) => ({
       findingsStatus: findingsStatus === "loading" ? "done" : findingsStatus,
       findingsError,
       canResimulate,
+      chatMessages,
     });
     if (saved) set({ lastSavedAt: saved.savedAt });
+  },
+
+  startNewProject: () => {
+    set({
+      model: EMPTY_MODEL,
+      history: [],
+      findings: [],
+      findingsStatus: "idle",
+      findingsError: null,
+      openComponentId: null,
+      selectedFindingId: null,
+      selectedFixId: null,
+      canResimulate: false,
+      chatMessages: [],
+      chatStatus: "idle",
+      chatError: null,
+    });
+  },
+
+  sendChatMessage: async (message) => {
+    const { model, chatMessages } = get();
+    set({
+      chatMessages: [...chatMessages, { role: "user", text: message }],
+      chatStatus: "loading",
+      chatError: null,
+    });
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model, message }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Chat failed.");
+      set((state) => ({
+        chatMessages: [...state.chatMessages, { role: "assistant", text: body.reply as string }],
+        chatStatus: "idle",
+      }));
+      // A change request — commit it exactly like applying a fix: push
+      // undo history, clear stale selections, enable Re-simulate, refresh
+      // findings. The chat's own reply already told the user what changed.
+      if (body.model) get().applyFix(body.model as SystemModel);
+    } catch (err) {
+      set({ chatStatus: "idle", chatError: err instanceof Error ? err.message : "Chat failed." });
+    }
   },
 }));

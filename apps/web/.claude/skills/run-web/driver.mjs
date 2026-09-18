@@ -21,6 +21,12 @@ const COMMANDS = {
       if (msg.type() === "error") console.log("[console error]", msg.text());
     });
     page.on("pageerror", (err) => console.log("[page error]", err.message));
+    // Playwright auto-dismisses window.confirm/alert by default (returns
+    // false) unless a page has its own handler - archsim's "New Project"
+    // button gates a real reset behind window.confirm, so leaving this
+    // unhandled would make every click silently no-op instead of clicking
+    // through, same as a real user hitting OK.
+    page.on("dialog", (dialog) => dialog.accept());
     await page.goto(url || "http://localhost:3000", { waitUntil: "networkidle" });
     // wait-text (checking document.body.innerText) passes as soon as SSR'd
     // HTML lands, which can be before React finishes hydrating and

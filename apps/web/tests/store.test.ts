@@ -54,6 +54,24 @@ function fixedModel(): SystemModel {
   };
 }
 
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+function fakeLocalStorage(): Storage {
+  const data = new Map<string, string>();
+  return {
+    getItem: (k: string) => data.get(k) ?? null,
+    setItem: (k: string, v: string) => void data.set(k, v),
+    removeItem: (k: string) => void data.delete(k),
+    clear: () => data.clear(),
+    key: () => null,
+    get length() {
+      return data.size;
+    },
+  };
+}
+
 describe("applyFix", () => {
   it("commits the given model directly, pushes undo history, and enables Re-simulate", () => {
     useAppStore.setState({ model: degradedModel(), history: [] });
@@ -132,24 +150,11 @@ describe("setWorkloadTier", () => {
  * Storage-alike to actually exercise the save/restore round trip.
  */
 describe("save/restore session", () => {
-  function fakeLocalStorage(): Storage {
-    const data = new Map<string, string>();
-    return {
-      getItem: (k: string) => data.get(k) ?? null,
-      setItem: (k: string, v: string) => void data.set(k, v),
-      removeItem: (k: string) => void data.delete(k),
-      clear: () => data.clear(),
-      key: () => null,
-      get length() {
-        return data.size;
-      },
-    };
-  }
-
-  it("saveToStorage then hydrateFromStorage round-trips the session", () => {
+  it("saveToStorage then hydrateFromStorage round-trips the session, chat included", () => {
     vi.stubGlobal("localStorage", fakeLocalStorage());
     const model = degradedModel();
-    useAppStore.setState({ model, history: [], findings: [], canResimulate: true });
+    const chatMessages = [{ role: "user" as const, text: "why is this a single instance?" }];
+    useAppStore.setState({ model, history: [], findings: [], canResimulate: true, chatMessages });
 
     useAppStore.getState().saveToStorage();
     expect(useAppStore.getState().lastSavedAt).not.toBeNull();
@@ -160,6 +165,7 @@ describe("save/restore session", () => {
     useAppStore.getState().hydrateFromStorage();
     expect(useAppStore.getState().model.id).toBe(model.id);
     expect(useAppStore.getState().canResimulate).toBe(true);
+    expect(useAppStore.getState().chatMessages).toEqual(chatMessages);
   });
 
   it("hydrateFromStorage is a no-op when nothing was saved", () => {
@@ -183,5 +189,97 @@ describe("save/restore session", () => {
     expect(() => useAppStore.getState().saveToStorage()).not.toThrow();
     expect(() => useAppStore.getState().hydrateFromStorage()).not.toThrow();
     expect(useAppStore.getState().lastSavedAt).toBeNull();
+  });
+});
+
+describe("startNewProject", () => {
+  it("resets the session to a blank canvas, chat included", () => {
+    useAppStore.setState({
+      model: degradedModel(),
+      history: [degradedModel()],
+      canResimulate: true,
+      chatMessages: [{ role: "user", text: "hi" }],
+    });
+
+    useAppStore.getState().startNewProject();
+
+    const state = useAppStore.getState();
+    expect(state.model.components).toHaveLength(0);
+    expect(state.history).toHaveLength(0);
+    expect(state.canResimulate).toBe(false);
+    expect(state.chatMessages).toHaveLength(0);
+  });
+
+  it("never touches the saved localStorage slot", () => {
+    vi.stubGlobal("localStorage", fakeLocalStorage());
+    useAppStore.setState({ model: degradedModel(), history: [] });
+    useAppStore.getState().saveToStorage();
+    const savedAt = useAppStore.getState().lastSavedAt;
+
+    useAppStore.getState().startNewProject();
+    useAppStore.getState().hydrateFromStorage();
+
+    // The saved project comes right back — startNewProject never wrote to
+    // (or cleared) the one saved slot itself.
+    expect(useAppStore.getState().model.components.length).toBeGreaterThan(0);
+    expect(useAppStore.getState().lastSavedAt).toBe(savedAt);
+  });
+});
+
+describe("sendChatMessage", () => {
+  it("answers a question without touching the model", async () => {
+    const model = degradedModel();
+    useAppStore.setState({ model, chatMessages: [] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse({ isQuestion: true, reply: "Because it's a hot key." }))),
+    );
+
+    await useAppStore.getState().sendChatMessage("why is the cache TTL short?");
+
+    const state = useAppStore.getState();
+    expect(state.chatMessages).toEqual([
+      { role: "user", text: "why is the cache TTL short?" },
+      { role: "assistant", text: "Because it's a hot key." },
+    ]);
+    expect(state.model).toBe(model);
+    expect(state.canResimulate).toBe(false);
+  });
+
+  it("applies a change request exactly like a fix: commits the model and enables Re-simulate", async () => {
+    const model = degradedModel();
+    const changed = fixedModel();
+    useAppStore.setState({ model, chatMessages: [], history: [] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url === "/api/chat") {
+          return Promise.resolve(
+            jsonResponse({ isQuestion: false, reply: "Added a second instance.", model: changed }),
+          );
+        }
+        return Promise.resolve(jsonResponse({ findings: [] }));
+      }),
+    );
+
+    await useAppStore.getState().sendChatMessage("add another instance");
+
+    const state = useAppStore.getState();
+    expect(state.model).toEqual(changed);
+    expect(state.canResimulate).toBe(true);
+    expect(state.history).toHaveLength(1);
+    expect(state.chatMessages.at(-1)).toEqual({ role: "assistant", text: "Added a second instance." });
+  });
+
+  it("surfaces an error without losing the user's own message", async () => {
+    useAppStore.setState({ model: degradedModel(), chatMessages: [] });
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonResponse({ error: "boom" }, 502))));
+
+    await useAppStore.getState().sendChatMessage("what happens under load?");
+
+    const state = useAppStore.getState();
+    expect(state.chatMessages).toEqual([{ role: "user", text: "what happens under load?" }]);
+    expect(state.chatError).toMatch(/boom/);
+    expect(state.chatStatus).toBe("idle");
   });
 });

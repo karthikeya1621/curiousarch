@@ -2,6 +2,11 @@ import type { AiFinding, SystemModel } from "@archsim/engine";
 
 const STORAGE_KEY = "archsim:session";
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
 export interface SavedSession {
   model: SystemModel;
   history: SystemModel[];
@@ -9,6 +14,7 @@ export interface SavedSession {
   findingsStatus: "idle" | "loading" | "done";
   findingsError: string | null;
   canResimulate: boolean;
+  chatMessages: ChatMessage[];
   savedAt: number;
 }
 

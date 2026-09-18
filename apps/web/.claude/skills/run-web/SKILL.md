@@ -80,7 +80,7 @@ which also works fine (see Gotchas) and needs no extra tooling either way.
 
 | command | what it does |
 |---|---|
-| `launch [url]` | launch headless Chromium, navigate, wait ~500ms for hydration to settle (default url `http://localhost:3000`) |
+| `launch [url]` | launch headless Chromium, navigate, wait ~500ms for hydration to settle (default url `http://localhost:3000`) — also auto-accepts any `window.confirm`/`alert` dialog (e.g. "New Project"'s reset confirmation), since Playwright otherwise auto-dismisses them |
 | `reload` | reload the current page in the same browser context (unlike `launch`, a no-op once a browser exists) - use this to verify anything backed by localStorage, e.g. archsim's saved-session restore |
 | `ss [name]` | full-page screenshot → `$SCREENSHOT_DIR/<name>.png` |
 | `click <css-sel>` | click via Playwright's normal click pipeline |

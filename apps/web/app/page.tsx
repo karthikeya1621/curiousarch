@@ -6,8 +6,10 @@ import { SystemDashboard } from "../components/SystemDashboard";
 import { ControlPanel } from "../components/ControlPanel";
 import { FailureSidebar } from "../components/FailureSidebar";
 import { ProseInput } from "../components/ProseInput";
+import { ProjectChat } from "../components/ProjectChat";
 import { ResimulateButton } from "../components/ResimulateButton";
 import { SaveSessionButton } from "../components/SaveSessionButton";
+import { NewProjectButton } from "../components/NewProjectButton";
 import { ActivityIcon } from "../components/icons";
 
 export default function Home() {
@@ -41,7 +43,12 @@ export default function Home() {
             </p>
           </div>
         </div>
-        {!isBlank && <SaveSessionButton />}
+        {!isBlank && (
+          <div className="flex shrink-0 items-center gap-2">
+            <NewProjectButton />
+            <SaveSessionButton />
+          </div>
+        )}
       </header>
 
       {isBlank ? (
@@ -65,7 +72,7 @@ export default function Home() {
             </div>
 
             <div className="order-3">
-              <ProseInput />
+              <ProjectChat />
             </div>
           </div>
         </>
