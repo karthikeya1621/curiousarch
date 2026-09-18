@@ -3,6 +3,7 @@
 import type { SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { findingKey } from "../lib/findingKey";
+import { isFindingFixed } from "../lib/isFindingFixed";
 import { FindingPanel } from "./FindingPanel";
 import { Card } from "./Card";
 import { Badge } from "./Badge";
@@ -25,6 +26,7 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
   const selectedFindingId = useAppStore((s) => s.selectedFindingId);
   const selectFinding = useAppStore((s) => s.selectFinding);
   const setOpenComponentId = useAppStore((s) => s.setOpenComponentId);
+  const appliedFixes = useAppStore((s) => s.appliedFixes);
 
   const activeFinding = findings.find((f) => findingKey(f) === selectedFindingId);
 
@@ -81,19 +83,28 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
         {relevant.length === 0 && (
           <p className="text-xs text-slate-500">No issues found here — looks solid.</p>
         )}
-        {relevant.map((f) => (
-          <button
-            key={findingKey(f)}
-            onClick={() => selectFinding(findingKey(f))}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-left text-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
-          >
-            <div className="flex items-center gap-1.5">
-              <Badge tone={f.severity === "critical" ? "critical" : "warning"}>{f.severity}</Badge>
-              <span className="font-medium text-slate-900">{f.title}</span>
-            </div>
-            <p className="text-xs text-slate-500">{f.explanation}</p>
-          </button>
-        ))}
+        {relevant.map((f) => {
+          const fixed = isFindingFixed(f, appliedFixes);
+          return (
+            <button
+              key={findingKey(f)}
+              onClick={() => selectFinding(findingKey(f))}
+              className={
+                "rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:border-slate-300 hover:bg-slate-50 " +
+                (fixed ? "border-slate-100 opacity-60" : "border-slate-200")
+              }
+            >
+              <div className="flex items-center gap-1.5">
+                <Badge tone={f.severity === "critical" ? "critical" : "warning"}>{f.severity}</Badge>
+                {fixed && <Badge tone="success">Fixed</Badge>}
+                <span className="font-medium text-slate-900">{f.title}</span>
+              </div>
+              <p className="text-xs text-slate-500">
+                {fixed ? "Fix applied — Re-simulate to confirm and refresh this list." : f.explanation}
+              </p>
+            </button>
+          );
+        })}
       </div>
     </Card>
   );

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { AiFinding, AiFix, SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
+import { isFindingFixed } from "../lib/isFindingFixed";
 import { Badge } from "./Badge";
 import { SparklesIcon, XIcon } from "./icons";
 
@@ -17,6 +18,8 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
   const selectFix = useAppStore((s) => s.selectFix);
   const selectFinding = useAppStore((s) => s.selectFinding);
   const applyFix = useAppStore((s) => s.applyFix);
+  const appliedFixes = useAppStore((s) => s.appliedFixes);
+  const alreadyFixed = isFindingFixed(finding, appliedFixes);
 
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -92,6 +95,12 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
         </button>
       </div>
       <p className="text-xs text-slate-500">{finding.explanation}</p>
+      {alreadyFixed && (
+        <p className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-600">
+          <Badge tone="success">Fixed</Badge>
+          Re-simulate to confirm and refresh this finding.
+        </p>
+      )}
 
       <div className="mt-3 flex flex-col gap-1.5">
         {finding.fixes.map((fix) => {

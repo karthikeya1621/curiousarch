@@ -3,6 +3,7 @@
 import type { AiFinding, SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { findingKey } from "../lib/findingKey";
+import { isFindingFixed } from "../lib/isFindingFixed";
 import { FlowDiagram } from "./FlowDiagram";
 import { Card } from "./Card";
 import { Badge } from "./Badge";
@@ -24,6 +25,7 @@ export function SystemDashboard({
   const liveFindings = useAppStore((s) => s.findings);
   const findingsStatus = useAppStore((s) => s.findingsStatus);
   const findingsStale = useAppStore((s) => s.findingsStale);
+  const appliedFixes = useAppStore((s) => s.appliedFixes);
   const isPreview = findingsOverride !== undefined;
   const findings = isPreview ? findingsOverride : liveFindings;
 
@@ -61,18 +63,32 @@ export function SystemDashboard({
                 (isStale ? "opacity-50" : "")
               }
             >
-              {findings.map((f) => (
-                <div key={findingKey(f)} className="flex items-start gap-2 text-sm">
-                  <Badge tone={f.severity === "critical" ? "critical" : "warning"}>
-                    {f.severity}
-                  </Badge>
-                  <div className="min-w-0">
-                    <span className="font-medium text-slate-900">{f.title}</span>
-                    <span className="text-slate-400"> · {f.componentId}</span>
-                    <p className="text-xs text-slate-500">{f.explanation}</p>
+              {findings.map((f) => {
+                // Never marked "Fixed" in a preview — appliedFixes is a
+                // global log, not scoped to the version being viewed, so
+                // cross-referencing it against a past snapshot would be
+                // misleading (it might reflect a fix applied after this
+                // version existed).
+                const fixed = !isPreview && isFindingFixed(f, appliedFixes);
+                return (
+                  <div
+                    key={findingKey(f)}
+                    className={"flex items-start gap-2 text-sm " + (fixed ? "opacity-60" : "")}
+                  >
+                    <Badge tone={f.severity === "critical" ? "critical" : "warning"}>
+                      {f.severity}
+                    </Badge>
+                    {fixed && <Badge tone="success">Fixed</Badge>}
+                    <div className="min-w-0">
+                      <span className="font-medium text-slate-900">{f.title}</span>
+                      <span className="text-slate-400"> · {f.componentId}</span>
+                      <p className="text-xs text-slate-500">
+                        {fixed ? "Fix applied — Re-simulate to confirm and refresh." : f.explanation}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             {isStale && (
               <p className="mt-1.5 text-[11px] text-slate-400">
