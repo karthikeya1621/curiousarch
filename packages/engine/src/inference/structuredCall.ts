@@ -35,18 +35,35 @@ export interface StructuredCallResult<T> {
   repaired: boolean;
 }
 
-const DEFAULT_MODEL = "claude-sonnet-5";
 /**
- * For calls that don't need full reasoning quality — a mechanical
- * classification or a single narrative sentence, not judging an
- * architecture. Still a current-generation model, not a stale cheap one:
- * Haiku 4.5, not an older Haiku. Callers opt into this explicitly (see
- * workloadParameters.ts, chatWithProject.ts's route call, explainFix.ts) —
- * every call that actually reasons about the architecture's quality
- * (fromProse/reworkModel's topology, identifyFailures, applyAiFix,
- * chatWithProject's change-implementation call) keeps the default above.
+ * Named by PURPOSE, not cost or speed — two tiers of what a call actually
+ * needs, each overridable via env var for testing a different model
+ * without touching code (set in .env.local, restart the dev server). An
+ * explicit `options.model` on any individual call (see runStructuredCall
+ * below) still wins over both.
+ *
+ * Deliberately vendor-neutral names, not ANTHROPIC_*: today this only
+ * ever reaches Anthropic's API (the client below is always
+ * `new Anthropic(...)`), so pointing this at a non-Claude model id will
+ * fail — swapping the actual provider needs a real abstraction layer
+ * (a different client, different tool-use/response shapes), not built
+ * here. The naming just avoids a rename later if that layer gets built.
  */
-export const CHEAP_MODEL = "claude-haiku-4-5-20251001";
+// AI_REASONING_MODEL — judges the architecture: decides findings, topology,
+// how to implement a fix or a chat-requested change. Everything this
+// product's actual value depends on getting right.
+const REASONING_MODEL = process.env.AI_REASONING_MODEL || "claude-sonnet-5";
+/**
+ * AI_UTILITY_MODEL — everything else: a mechanical classification (is
+ * this chat message a question or a change request?), snapping a stated
+ * number to the nearest ladder rung, or narrating one sentence of "why
+ * this fix fits." Never a call that decides what's wrong with a system or
+ * how to change it (see workloadParameters.ts, chatWithProject.ts's route
+ * call, explainFix.ts for where this is actually used). Still a
+ * current-generation model, not a stale cheap one: Haiku 4.5, not an
+ * older Haiku.
+ */
+export const UTILITY_MODEL = process.env.AI_UTILITY_MODEL || "claude-haiku-4-5-20251001";
 const DEFAULT_TIMEOUT_MS = 90_000;
 
 /**
@@ -70,7 +87,7 @@ export async function runStructuredCall<T>(
   }
 
   const client = options.client ?? new Anthropic({ apiKey, timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
-  const model = options.model ?? DEFAULT_MODEL;
+  const model = options.model ?? REASONING_MODEL;
   const maxRetries = options.maxRetries ?? 1;
 
   // Prompt caching: the system prompt and tool schema are identical across

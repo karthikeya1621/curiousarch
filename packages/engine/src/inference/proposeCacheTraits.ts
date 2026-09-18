@@ -46,7 +46,9 @@ const CacheProposalSchema = z.object({
 export type CacheProposal = z.infer<typeof CacheProposalSchema>;
 
 const TOOL_NAME = "propose_cache_traits";
-const DEFAULT_MODEL = "claude-sonnet-5";
+// Overridable via AI_REASONING_MODEL — see structuredCall.ts's own
+// comment (this call judges a real architectural choice, same tier).
+const DEFAULT_MODEL = process.env.AI_REASONING_MODEL || "claude-sonnet-5";
 /** A three-field categorical proposal is a much smaller generation than a
  * whole SystemModel — no reason to allow as long as fromProse's 90s. */
 const DEFAULT_TIMEOUT_MS = 30_000;

@@ -22,7 +22,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { runStructuredCall, CHEAP_MODEL, type StructuredCallOptions } from "./structuredCall.ts";
+import { runStructuredCall, UTILITY_MODEL, type StructuredCallOptions } from "./structuredCall.ts";
 import { USER_TIERS, REQUEST_TIERS } from "../types.ts";
 
 export { USER_TIERS, REQUEST_TIERS };
@@ -113,9 +113,9 @@ export async function extractWorkloadParameters(
     WorkloadParametersSchema,
     buildTool(),
     // Snapping a stated number to the nearest ladder rung doesn't need
-    // Sonnet — see structuredCall.ts's own comment on CHEAP_MODEL. An
+    // Sonnet — see structuredCall.ts's own comment on UTILITY_MODEL. An
     // explicit caller-supplied model (if any) still wins.
-    { model: CHEAP_MODEL, ...options },
+    { model: UTILITY_MODEL, ...options },
     "extractWorkloadParameters",
   );
   return result.data;

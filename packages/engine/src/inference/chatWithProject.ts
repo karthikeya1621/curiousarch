@@ -24,7 +24,7 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { SystemModelSchema } from "./schema.ts";
 import { buildTool } from "./fromProse.ts";
-import { runStructuredCall, CHEAP_MODEL, type StructuredCallOptions } from "./structuredCall.ts";
+import { runStructuredCall, UTILITY_MODEL, type StructuredCallOptions } from "./structuredCall.ts";
 import type { SystemModel } from "../types.ts";
 
 // A fresh z.object() rather than a shared singleton — no reused object
@@ -105,9 +105,9 @@ export async function chatWithProject(
     RouteSchema,
     buildRouteTool(),
     // Classifying question-vs-change doesn't need Sonnet — see
-    // structuredCall.ts's own comment on CHEAP_MODEL. The actual change
+    // structuredCall.ts's own comment on UTILITY_MODEL. The actual change
     // implementation below keeps the default (full reasoning) model.
-    { model: CHEAP_MODEL, ...options },
+    { model: UTILITY_MODEL, ...options },
     "chatWithProject:route",
   );
 

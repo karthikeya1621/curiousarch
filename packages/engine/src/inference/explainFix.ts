@@ -16,7 +16,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { CHEAP_MODEL } from "./structuredCall.ts";
+import { UTILITY_MODEL } from "./structuredCall.ts";
 import type { SystemModel } from "../types.ts";
 
 // A fresh, single-use z.object() (not a shared singleton) - same reason
@@ -32,8 +32,8 @@ export type FixRationale = z.infer<typeof FixRationaleSchema>;
 
 const TOOL_NAME = "explain_fix";
 // A one-sentence narrative rationale doesn't need Sonnet's full reasoning
-// budget — see structuredCall.ts's own comment on CHEAP_MODEL.
-const DEFAULT_MODEL = CHEAP_MODEL;
+// budget — see structuredCall.ts's own comment on UTILITY_MODEL.
+const DEFAULT_MODEL = UTILITY_MODEL;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 const EXPLAIN_FIX_PROMPT = `You are an experienced architect. A real, computed risk was found in this system on one component, and a specific, already-decided fix is about to be applied to it - the fix itself is fixed and hand-chosen; you are not choosing it or evaluating whether it's right.
