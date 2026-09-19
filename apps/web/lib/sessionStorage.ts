@@ -1,6 +1,13 @@
 import type { AiFinding, SystemModel } from "@archsim/engine";
+import { createClient } from "./supabase/client";
 
-const STORAGE_KEY = "archsim:session";
+const TABLE = "projects";
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  updatedAt: number;
+}
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -59,29 +66,105 @@ export interface SavedSession {
 }
 
 /**
- * A single slot, not a list — there's no project picker yet (a "New
- * project" button is planned separately), so saving just overwrites
- * whatever was here before. Every access is wrapped in try/catch:
- * localStorage can throw in a private window or when site data is
- * blocked, and that's never worth failing a save/restore over — the app
- * degrades to "nothing to restore," not a crash.
+ * One row per project, not per user — `id` addresses a specific project;
+ * `null` means "not saved yet," which inserts a new row instead of
+ * updating one. Every access is wrapped in try/catch: a logged-out user,
+ * a network hiccup, or an RLS rejection all degrade to "nothing
+ * saved/restored," not a crash — same contract this had when it was
+ * backed by localStorage instead of Postgres.
+ *
+ * `name` is denormalized from `session.model.name` on every save so
+ * `listProjects` can list titles without pulling and parsing the full
+ * `data` JSONB for every row.
  */
-export function saveSession(session: Omit<SavedSession, "savedAt">): SavedSession | null {
+export async function saveProject(
+  id: string | null,
+  session: Omit<SavedSession, "savedAt">,
+): Promise<{ id: string; savedAt: number } | null> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
   const withTimestamp: SavedSession = { ...session, savedAt: Date.now() };
+  const row = {
+    user_id: user.id,
+    name: session.model.name,
+    data: withTimestamp,
+    updated_at: new Date().toISOString(),
+  };
+
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(withTimestamp));
-    return withTimestamp;
+    if (id === null) {
+      const { data, error } = await supabase.from(TABLE).insert(row).select("id").single();
+      if (error || !data) return null;
+      return { id: data.id as string, savedAt: withTimestamp.savedAt };
+    }
+    const { error } = await supabase.from(TABLE).update(row).eq("id", id).eq("user_id", user.id);
+    if (error) return null;
+    return { id, savedAt: withTimestamp.savedAt };
   } catch {
     return null;
   }
 }
 
-export function loadSession(): SavedSession | null {
+export async function loadProject(id: string): Promise<SavedSession | null> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as SavedSession;
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select("data")
+      .eq("id", id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data.data as SavedSession;
   } catch {
     return null;
+  }
+}
+
+export async function listProjects(): Promise<ProjectSummary[] | null> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select("id, name, updated_at")
+      .eq("user_id", user.id)
+      .order("updated_at", { ascending: false });
+    if (error || !data) return null;
+    return data.map((row) => ({
+      id: row.id as string,
+      name: row.name as string,
+      updatedAt: new Date(row.updated_at as string).getTime(),
+    }));
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteProject(id: string): Promise<boolean> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return false;
+
+  try {
+    const { error } = await supabase.from(TABLE).delete().eq("id", id).eq("user_id", user.id);
+    return !error;
+  } catch {
+    return false;
   }
 }

@@ -1,8 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import { MAX_TOTAL_COMPONENTS } from "@archsim/engine";
 import type { SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
+
+// Warn a couple of components before the actual cap, not exactly at it —
+// by the time the count reads the hard limit itself, the next Re-simulate
+// has already lost its ability to add anything the holistic review might
+// call for; a heads-up with a little room left to plan around is more
+// useful than one that arrives too late to act on.
+const NEAR_CAP_THRESHOLD = MAX_TOTAL_COMPONENTS - 2;
 
 /**
  * Gated by `canResimulate`, not always-on: it only lights up once
@@ -51,24 +59,39 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       <button
         onClick={resimulate}
         disabled={loading || !canResimulate}
-        className="flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-700 transition-colors enabled:hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+        // A native title, not a persistent caption — this now floats over
+        // the canvas itself, where permanent explanatory text would just
+        // compete with the diagram for attention. A disabled button
+        // explaining itself on hover is the standard pattern for a
+        // compact toolbar/canvas control (Figma, Miro, etc.); the
+        // queued-fixes nudge below stays visible since it's prompting an
+        // action, not just explaining an inert state.
+        title={!canResimulate && !loading ? "Change a parameter or apply a fix first" : undefined}
+        // Solid fill, not the old pale violet-50/border treatment — this
+        // sits on top of the canvas now, competing with diagram content
+        // for attention, so it needs real visual weight when it's actually
+        // actionable. `disabled:opacity-50` still fades it back when
+        // there's nothing to do. Cyan, not the database node's existing
+        // teal (ComponentNode.tsx) — same "fresh/modern" family the user
+        // picked, but a distinct enough hue that a queue/database node
+        // tint is never confused with the app's primary action color.
+        className="flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors enabled:hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {loading ? "Re-simulating…" : "Re-simulate"}
       </button>
-      {/* Persistent, not just a hover title — a greyed-out button alone
-          reads as "nothing to do here," not "do something else first." */}
-      {!canResimulate && !loading && (
-        <p className="max-w-xs text-right text-[11px] text-slate-400">
-          Change a parameter or apply a fix first
-        </p>
-      )}
       {canResimulate && !loading && pendingFixes.length > 0 && (
-        <p className="max-w-xs text-right text-[11px] text-amber-700">
+        <p className="max-w-xs text-right text-[11px] text-amber-700 dark:text-amber-400">
           {pendingFixes.length} fix{pendingFixes.length === 1 ? "" : "es"} queued — Re-simulate to see{" "}
           {pendingFixes.length === 1 ? "it" : "them"} in action.
         </p>
       )}
-      {error && <p className="max-w-xs text-right text-[11px] text-rose-600">{error}</p>}
+      {!loading && model.components.length >= NEAR_CAP_THRESHOLD && (
+        <p className="max-w-xs text-right text-[11px] text-amber-700 dark:text-amber-400">
+          {model.components.length} of {MAX_TOTAL_COMPONENTS} components — close to the limit; the
+          next Re-simulate may have little or no room to add more.
+        </p>
+      )}
+      {error && <p className="max-w-xs text-right text-[11px] text-rose-600 dark:text-rose-400">{error}</p>}
     </div>
   );
 }

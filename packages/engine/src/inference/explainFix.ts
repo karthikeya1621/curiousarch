@@ -8,9 +8,9 @@
  * since this was never load-bearing.
  *
  * Signature is plain strings (`componentId`/`fixLabel`/`findingCode`),
- * not tied to any particular finding/fix type — works unchanged whether
- * called with the old catalogue's `Fix`/`FindingCode` (dormant, see
- * `fixes.ts`) or the new `AiFinding`/`AiFix` from `identifyFailures.ts`.
+ * not tied to the `AiFinding`/`AiFix` shape it's actually always called
+ * with today — kept loose enough that it never needs to know about a
+ * finding/fix type at all.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -20,8 +20,8 @@ import { UTILITY_MODEL } from "./structuredCall.ts";
 import type { SystemModel } from "../types.ts";
 
 // A fresh, single-use z.object() (not a shared singleton) - same reason
-// proposeCacheTraits.ts's proposedValueSchema is a function: no reused
-// object identity in this schema, so no definitions-hoisting is needed.
+// schema.ts's traitSchema() is a function: no reused object identity in
+// this schema, so no definitions-hoisting is needed.
 const FixRationaleSchema = z.object({
   rationale: z
     .string()

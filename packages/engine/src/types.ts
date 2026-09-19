@@ -10,9 +10,9 @@
  * for a number.
  *
  * This is a categorical, not numeric, model — see PLAN's architect-pivot:
- * findings come from pattern-matching over rough shape and category
- * (single instance? short TTL? no rate limiting?), never from simulating
- * a magnitude an LLM had no way to actually measure.
+ * findings reason over rough shape and category (single instance? short
+ * TTL? no rate limiting?), never over a magnitude an LLM had no way to
+ * actually measure.
  */
 
 export type Provenance = "stated" | "inferred" | "default";
@@ -42,7 +42,19 @@ export function isTrait(value: unknown): value is Trait<unknown> {
   );
 }
 
-export type ComponentKind = "gateway" | "service" | "cache" | "database" | "queue";
+export type ComponentKind =
+  | "gateway"
+  | "service"
+  | "cache"
+  | "database"
+  | "queue"
+  | "external-dependency"
+  | "load-balancer"
+  | "message-broker"
+  | "cdn"
+  | "object-storage"
+  | "scheduled-job"
+  | "config-store";
 
 interface BaseComponent {
   id: string;
@@ -91,47 +103,101 @@ export interface QueueComponent extends BaseComponent {
   consumerScaling: Trait<"fixed" | "auto">;
 }
 
+/**
+ * The 7 "extended" kinds below — everything past `QueueComponent` — are
+ * proposed by a genuinely separate structured call
+ * (`inference/extendedComponents.ts`), never the main topology call
+ * `fromProse`/`reworkModel` use. `SystemModelSchema` (the topology
+ * schema) was already documented as sitting right at Anthropic's
+ * strict-mode compiled-grammar size limit before these existed — see
+ * `inference/workloadParameters.ts`'s own comment — so they could not be
+ * added to that same discriminated union. They still live on this one
+ * `Component` union, since the model itself doesn't care which call
+ * produced a component.
+ */
+
+/** Something outside your own system's control — a payment/auth provider, any third-party API. */
+export interface ExternalDependencyComponent extends BaseComponent {
+  kind: "external-dependency";
+  hasTimeout: Trait<boolean>;
+  /** Degrades gracefully, or does its outage become yours? */
+  hasFallback: Trait<boolean>;
+}
+
+/** Pure traffic distribution across instances — distinct from `gateway`, which admits/rejects but doesn't distribute. */
+export interface LoadBalancerComponent extends BaseComponent {
+  kind: "load-balancer";
+  instanceCount: Trait<"single" | "multiple">;
+  /** Without this, traffic keeps routing to instances that are already dead. */
+  hasHealthChecks: Trait<boolean>;
+}
+
+/** Fan-out pub/sub — many independent consumer groups, not the point-to-point delivery a `queue` models. */
+export interface MessageBrokerComponent extends BaseComponent {
+  kind: "message-broker";
+  /** Without this, one malformed message can silently break every subscriber, not just one worker. */
+  hasSchemaValidation: Trait<boolean>;
+  consumerScaling: Trait<"fixed" | "auto">;
+}
+
+/** Edge cache in front of an origin. */
+export interface CdnComponent extends BaseComponent {
+  kind: "cdn";
+  /** A shared layer that absorbs a spike before it ever reaches the origin. */
+  hasOriginShield: Trait<boolean>;
+}
+
+/** Blob/object storage — distinct from `database`, which is connection-pooled and query-oriented. */
+export interface ObjectStorageComponent extends BaseComponent {
+  kind: "object-storage";
+  /** Without this, an accidental delete or overwrite is permanent. */
+  hasVersioning: Trait<boolean>;
+}
+
+/** Cron-style background processor, outside any request path. */
+export interface ScheduledJobComponent extends BaseComponent {
+  kind: "scheduled-job";
+  /** Without this, an overrunning job overlaps its own next run. */
+  hasLocking: Trait<boolean>;
+  /** Without this, a retried or overlapping run double-processes (duplicate charges, duplicate emails). */
+  isIdempotent: Trait<boolean>;
+}
+
+/** Feature flags / secrets manager / remote config — a control-plane dependency every request may need. */
+export interface ConfigStoreComponent extends BaseComponent {
+  kind: "config-store";
+  /** Without this, the config service's own outage takes down everything that reads from it. */
+  hasLocalFallback: Trait<boolean>;
+}
+
 export type Component =
   | GatewayComponent
   | ServiceComponent
   | CacheComponent
   | DatabaseComponent
-  | QueueComponent;
+  | QueueComponent
+  | ExternalDependencyComponent
+  | LoadBalancerComponent
+  | MessageBrokerComponent
+  | CdnComponent
+  | ObjectStorageComponent
+  | ScheduledJobComponent
+  | ConfigStoreComponent;
 
 export interface Edge {
   from: string;
   to: string;
 }
 
-export type ScaleTier = "small" | "medium" | "large" | "massive";
-
 /**
- * `scale` is the ORIGINAL workload shape, read by the dormant deterministic
- * pattern engine (patterns.ts/fixes.ts/whatif.ts) and its own test suite —
- * that engine is deliberately left running and tested even though the web
- * app's primary flow no longer calls it (see CONTEXT.md / packages/engine/
- * README.md for why). Optional here — not required — for a very concrete
- * reason discovered live: `SystemModelSchema`'s compiled strict-mode
- * grammar was already close enough to Anthropic's size limit ("The
- * compiled grammar is too large... simplify your tool schemas") that
- * asking the AI to ALSO always produce `scale` alongside the new `users`/
- * `requests` fields tipped it over — a straight 400 on the request, not a
- * validation failure any repair retry could fix. `fromProse`/`reworkModel`
- * simply don't ask for `scale` anymore (removed from `WorkloadSchema`
- * entirely); every hand-written fixture in the dormant engine
- * (models/reference.ts, its tests, bin/sim.ts) still provides it exactly
- * as before and keeps compiling unchanged, since a required value is
- * always valid wherever an optional field is expected.
- *
- * `users`/`requests` are the NEW shape the AI-driven flow actually uses —
- * always both structurally present in the AI's own output (see
- * `WorkloadSchema`); the UI only renders a control for whichever has
- * `included: true` (one or both, driven by what the description actually
- * establishes). Optional on this base type for the same
- * dormant-engine-compatibility reason as `scale`.
+ * `users`/`requests` are always both structurally present in the AI's own
+ * output (see `WorkloadSchema`); the UI only renders a control for
+ * whichever has `included: true` (one or both, driven by what the
+ * description actually establishes). Optional here only because a handful
+ * of hand-written fixtures (models/reference.ts) predate workload modelling
+ * entirely and don't set either.
  */
 export interface Workload {
-  scale?: Trait<ScaleTier>;
   users?: WorkloadDimensionValue;
   requests?: WorkloadDimensionValue;
 }
@@ -174,6 +240,22 @@ export interface WorkloadDimensionValue {
 export const USER_TIERS = [100, 10_000, 1_000_000, 100_000_000] as const;
 export const REQUEST_TIERS = [1_000, 100_000, 10_000_000, 1_000_000_000] as const;
 
+/**
+ * Guardrails, not just a UX nicety — a system with no upper bound on size
+ * costs more per Build/Re-simulate the bigger it gets (more trait objects,
+ * more rationale text, more tokens generated), and a large enough one
+ * risks hitting the same output-length truncation `structuredCall.ts`'s
+ * own comment documents. Enforced in two places, same pattern as every
+ * other rule here: the AI is told the limit in its prompt (`prompt.ts`,
+ * `reworkModel.ts`, `inference/extendedComponents.ts`), and
+ * `SystemModelSchema`/`extendedComponents.ts` reject going over it rather
+ * than trusting the prompt alone. Client-safe (like `USER_TIERS` above)
+ * so the web app can warn before a Re-simulate that's already close.
+ */
+export const MAX_BASE_COMPONENTS = 15;
+export const MAX_EXTENDED_COMPONENTS = 6;
+export const MAX_TOTAL_COMPONENTS = MAX_BASE_COMPONENTS + MAX_EXTENDED_COMPONENTS;
+
 export interface SystemModel {
   id: string;
   name: string;
@@ -187,12 +269,11 @@ export interface SystemModel {
 /* ------------------------------------------------------------------ */
 
 /**
- * The new, primary source of findings for the web app: an AI call given
- * the current model, not a pattern match against it. `code`/`title` are
- * AI-chosen, not a closed enum like the old `FindingCode` — deliberately,
- * per the explicit product decision to let this "think like a senior
- * architect" rather than being limited to a fixed catalogue. See
- * inference/identifyFailures.ts.
+ * The web app's only source of findings: an AI call given the current
+ * model (see inference/identifyFailures.ts). `code`/`title` are AI-chosen,
+ * not a closed enum — deliberately, per the explicit product decision to
+ * let this "think like a senior architect" rather than being limited to a
+ * fixed catalogue.
  */
 export interface AiFinding {
   code: string;
@@ -211,35 +292,4 @@ export interface AiFix {
   tradeoff: string;
 }
 
-/* ------------------------------------------------------------------ */
-/* Results                                                             */
-/* ------------------------------------------------------------------ */
-
-export type FindingCode =
-  | "SINGLE_POINT_OF_FAILURE"
-  | "THUNDERING_HERD_RISK"
-  | "CASCADING_FAILURE_RISK"
-  | "UNBOUNDED_ADMISSION"
-  | "QUEUE_NO_DEAD_LETTER"
-  | "FIXED_SCALING_AT_SCALE"
-  | "UNCACHED_DATABASE_AT_SCALE";
-
 export type Severity = "critical" | "warning";
-
-export interface Finding {
-  code: FindingCode;
-  severity: Severity;
-  componentId: string;
-  /**
-   * The reasoning behind the verdict, in plain terms — which traits
-   * combined to produce it. The UI renders these directly; an LLM may only
-   * phrase them. Nothing here is ever model-generated.
-   */
-  evidence: Record<string, string>;
-}
-
-export interface SimulationResult {
-  modelId: string;
-  findings: Finding[];
-  healthy: boolean;
-}

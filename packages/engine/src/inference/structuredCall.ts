@@ -168,7 +168,17 @@ export async function runStructuredCall<T>(
 
     const response = await client.messages.create({
       model,
-      max_tokens: 4096,
+      // Found live, once the 7 extended component kinds made genuinely
+      // large systems (15-20+ components, each with several trait
+      // objects and rationale strings) reachable: 4096 truncated the
+      // response mid-generation on a large `reworkModel` call, which
+      // then failed validation with "edges: Required; workload:
+      // Required" — not a bad answer, an incomplete one. Raised with
+      // headroom rather than tuned to the exact case that broke, since
+      // the whole point of adding more kinds is more components per
+      // system, and every structured call in this file shares this one
+      // constant.
+      max_tokens: 8192,
       system: cachedSystem,
       tools: [cachedTool],
       tool_choice: { type: "tool", name: tool.name },

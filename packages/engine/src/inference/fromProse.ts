@@ -1,22 +1,27 @@
 /**
  * Prose in, `SystemModel` out.
  *
- * Two independent LLM calls run in parallel, not one: the topology
+ * Three LLM calls, not one, two of them in parallel: the topology
  * (components/edges) via tool-use for structured output, Zod validation,
  * one repair retry if validation fails — per PLAN-0.2, via
  * `structuredCall.ts`'s shared retry core (also used by `reworkModel`/
- * `identifyFailures`/`applyAiFix`) — and `workloadParameters.ts`'s own
- * small call for workload.users/workload.requests, genuinely separate
- * because the topology schema had no compiled-grammar room left for
- * workload parameters too (discovered live — see that file's own
- * comment). The tool's input schema is derived from `SystemModelSchema`
- * rather than hand-duplicated, so the two cannot drift out of sync.
+ * `identifyFailures`/`applyAiFix`) — and, in parallel with it,
+ * `workloadParameters.ts`'s own small call for workload.users/
+ * workload.requests, genuinely separate because the topology schema had
+ * no compiled-grammar room left for workload parameters too (discovered
+ * live — see that file's own comment). The tool's input schema is
+ * derived from `SystemModelSchema` rather than hand-duplicated, so the
+ * two cannot drift out of sync.
+ *
+ * The third, `extendedComponents.ts`'s `proposeExtendedComponents`, runs
+ * sequentially AFTER the topology call — same "no grammar room" reason
+ * as workload parameters, but this one needs real base-component ids to
+ * wire edges to, so it can't run in parallel with the call that produces
+ * them.
  *
  * This function does not compute a single finding. It only produces the
- * model; the AI-driven findings flow (`identifyFailures.ts`) is what decides
- * what's wrong, now that the web app's primary flow no longer calls the
- * deterministic `patterns.ts`/`solver.ts` engine (kept, dormant, still
- * tested — see packages/engine/README.md).
+ * model; `identifyFailures.ts`'s free-form AI call is what decides what's
+ * wrong with it.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -24,6 +29,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { BooleanTraitSchema, ProvenanceSchema, SystemModelSchema } from "./schema.ts";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import { extractWorkloadParameters } from "./workloadParameters.ts";
+import { proposeExtendedComponents } from "./extendedComponents.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import type { SystemModel } from "../types.ts";
 
@@ -150,9 +156,18 @@ export async function fromProse(
     runStructuredCall(SYSTEM_PROMPT, description, SystemModelSchema, buildTool(), options, "fromProse"),
     extractWorkloadParameters(description, options),
   ]);
+
+  // Sequential, not parallel with the above — this needs real base
+  // component ids to wire edges to, so it can only run once the topology
+  // call has actually resolved (see extendedComponents.ts's own top
+  // comment on why this is a separate call at all).
+  const extended = await proposeExtendedComponents(description, topology.data, options);
+
   return {
     model: {
       ...topology.data,
+      components: [...topology.data.components, ...extended.components],
+      edges: [...topology.data.edges, ...extended.edges],
       workload: { ...topology.data.workload, ...workloadParameters },
     },
     raw: topology.raw,

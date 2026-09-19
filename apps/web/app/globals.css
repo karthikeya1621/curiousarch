@@ -1,8 +1,31 @@
 @import "tailwindcss";
 
+/* Tailwind v4 defaults `dark:` to a `prefers-color-scheme` media query,
+   which can't be manually overridden — this makes it respond to a
+   `.dark` class on <html> instead (set by app/layout.tsx's boot script
+   and lib/theme.ts), so ThemeToggle.tsx's Light/Dark/System control
+   actually has something to toggle. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #f8fafc;
   --foreground: #0f172a;
+  --rf-bg-line: #f1f5f9;
+  --rf-edge: #cbd5e1;
+  --rf-edge-active: #94a3b8;
+  --rf-edge-text: #64748b;
+}
+
+.dark {
+  --background: #0f172a;
+  --foreground: #f1f5f9;
+  /* Canvas card itself is dark:bg-slate-800 (#1e293b) — the line color
+     has to be a step lighter than that to actually show up, the same
+     relationship light mode has (slate-100 lines on a white card). */
+  --rf-bg-line: #334155;
+  --rf-edge: #475569;
+  --rf-edge-active: #64748b;
+  --rf-edge-text: #94a3b8;
 }
 
 @theme inline {
@@ -23,6 +46,9 @@ body {
 * {
   border-color: var(--color-slate-200);
 }
+.dark * {
+  border-color: var(--color-slate-700);
+}
 
 :focus-visible {
   outline: 2px solid var(--color-blue-500);
@@ -31,20 +57,23 @@ body {
 
 /* React Flow's own stylesheet ships opinions (background color, edge
    stroke, control-panel chrome) that fight this app's design system —
-   scope overrides here rather than fighting specificity per component. */
+   scope overrides here rather than fighting specificity per component.
+   Colors read from the --rf-* variables above (plain CSS custom
+   properties, not Tailwind classes, so a `dark:` variant can't reach
+   them) so light/dark just falls out of the same `.dark` class switch. */
 .react-flow {
   background: transparent;
 }
 .react-flow__edge-path {
-  stroke: var(--color-slate-300);
+  stroke: var(--rf-edge);
   stroke-width: 1.5;
 }
 .react-flow__edge.selected .react-flow__edge-path,
 .react-flow__edge:hover .react-flow__edge-path {
-  stroke: var(--color-slate-400);
+  stroke: var(--rf-edge-active);
 }
 .react-flow__edge-text {
-  fill: var(--color-slate-500);
+  fill: var(--rf-edge-text);
   font-size: 10px;
 }
 .react-flow__attribution {

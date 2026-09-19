@@ -28,22 +28,22 @@ export function ConfirmDialog({
   return (
     <Modal open={open} onClose={onCancel}>
       <div role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-message">
-        <h2 id="confirm-dialog-title" className="text-sm font-semibold text-slate-900">
+        <h2 id="confirm-dialog-title" className="text-sm font-semibold text-slate-900 dark:text-slate-100">
           {title}
         </h2>
-        <p id="confirm-dialog-message" className="mt-2 text-sm text-slate-500">
+        <p id="confirm-dialog-message" className="mt-2 text-sm text-slate-500 dark:text-slate-400">
           {message}
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700"
           >
             {cancelLabel}
           </button>
           <button
             onClick={onConfirm}
-            className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-700"
+            className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300"
           >
             {confirmLabel}
           </button>

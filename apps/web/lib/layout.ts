@@ -3,6 +3,9 @@ import { isAsyncBoundary } from "@archsim/engine";
 import type { Component, SystemModel } from "@archsim/engine";
 import type { Edge, Node } from "@xyflow/react";
 
+/** Only `components`/`edges` ever matter for a layout — narrower than `SystemModel` on purpose, so FlowDiagram.tsx's effect can depend on exactly these two fields (and correctly skip re-laying-out on a workload-only change, e.g. the tier slider) without needing to pass the whole model object through. */
+type Topology = Pick<SystemModel, "components" | "edges">;
+
 /**
  * Synthetic node representing the workload itself — not a real Component,
  * so it doesn't collide with any component id. Every component with no
@@ -23,9 +26,40 @@ const NODE_HEIGHT = 84;
 const TRAFFIC_WIDTH = 120;
 const TRAFFIC_HEIGHT = 56;
 
+/**
+ * Defensive, not just belt-and-suspenders — this runs on whatever's
+ * actually in the database, including a project saved before the engine
+ * itself started rejecting duplicate ids/edges (see
+ * inference/extendedComponents.ts's own comment on that bug). React Flow
+ * derives every node/edge key straight from a component's id or an
+ * edge's endpoints, so a duplicate here isn't a cosmetic glitch — it's
+ * the exact "two children with the same key" crash. Keeping the FIRST
+ * occurrence of a given id/edge is an arbitrary but harmless choice, in
+ * service of never crashing the diagram over already-saved bad data.
+ */
+function dedupeModel(model: Topology): Topology {
+  const seenComponentIds = new Set<string>();
+  const components = model.components.filter((c) => {
+    if (seenComponentIds.has(c.id)) return false;
+    seenComponentIds.add(c.id);
+    return true;
+  });
+
+  const seenEdgeKeys = new Set<string>();
+  const edges = model.edges.filter((e) => {
+    const key = `${e.from}->${e.to}`;
+    if (seenEdgeKeys.has(key) || !seenComponentIds.has(e.from) || !seenComponentIds.has(e.to)) return false;
+    seenEdgeKeys.add(key);
+    return true;
+  });
+
+  return { components, edges };
+}
+
 export async function layoutModel(
-  model: SystemModel,
+  rawTopology: Topology,
 ): Promise<{ nodes: Node[]; edges: Edge[] }> {
+  const model = dedupeModel(rawTopology);
   const targets = new Set(model.edges.map((e) => e.to));
   const roots = model.components.filter((c) => !targets.has(c.id));
   const componentById = new Map(model.components.map((c) => [c.id, c]));

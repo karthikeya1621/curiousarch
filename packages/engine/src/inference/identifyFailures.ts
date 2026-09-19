@@ -1,18 +1,17 @@
 /**
- * The new, primary source of findings for the web app: an AI call given
- * the current model, not a pattern match against it (`patterns.ts`'s
- * deterministic engine is kept, dormant, still tested — see
- * packages/engine/README.md for why it's no longer wired into the
- * primary flow). This is the explicit, informed product decision behind
- * this file: "fully AI-generated, no need verification... it should
- * think how a human senior architect thinks" — made after seeing the
- * concrete downside (the Gemini-fabrication incident this whole
- * engine was originally built to avoid) and choosing it anyway.
+ * The web app's only source of findings: an AI call given the current
+ * model, not a pattern match against one. This is the explicit, informed
+ * product decision behind this file: "fully AI-generated, no need
+ * verification... it should think how a human senior architect thinks" —
+ * made after seeing the concrete downside (the Gemini-fabrication incident
+ * CONTEXT.md documents under "Why the pivot") and choosing it anyway. The
+ * deterministic pattern-matching engine this superseded (`patterns.ts`/
+ * `solver.ts`/`whatif.ts`/`fixes.ts`) has since been deleted outright —
+ * see git history for its final form.
  *
  * Called again after every model change (a fresh build, a rework, a fix
- * applied) — there's no separate "recompute" step the way
- * `evaluatePatterns` was; asking the AI is the only recompute there is
- * now.
+ * applied) — there's no separate "recompute" step; asking the AI is the
+ * only recompute there is.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -47,7 +46,7 @@ const IDENTIFY_FAILURES_PROMPT = `You are a senior software architect reviewing 
 You are given the system as JSON: its components, their categorical traits (booleans and small categories, never precise numbers), the edges between them, and its workload (users and/or requests, each a rough scale rather than an exact number).
 
 For each REAL risk you find, report:
-- code: a short SCREAMING_SNAKE_CASE identifier. Reuse a well-known name if it genuinely fits (SINGLE_POINT_OF_FAILURE, THUNDERING_HERD_RISK, CASCADING_FAILURE_RISK, UNBOUNDED_ADMISSION, QUEUE_NO_DEAD_LETTER, FIXED_SCALING_AT_SCALE, UNCACHED_DATABASE_AT_SCALE) or invent a new one if the risk is real but doesn't match any of those - these seven are a starting vocabulary, not an exhaustive list. Think like an architect, not a lookup table.
+- code: a short SCREAMING_SNAKE_CASE identifier. Reuse a well-known name if it genuinely fits (SINGLE_POINT_OF_FAILURE, THUNDERING_HERD_RISK, CASCADING_FAILURE_RISK, UNBOUNDED_ADMISSION, QUEUE_NO_DEAD_LETTER, FIXED_SCALING_AT_SCALE, UNCACHED_DATABASE_AT_SCALE, EXTERNAL_DEPENDENCY_NO_FALLBACK, LB_NO_HEALTH_CHECKS) or invent a new one if the risk is real but doesn't match any of those - these are a starting vocabulary, not an exhaustive list. Think like an architect, not a lookup table.
 - severity: "critical" (this will actually break something) or "warning" (a real risk, not yet a proven failure). Don't mark everything critical - that trains people to ignore critical.
 - componentId: which component (by its id in the JSON) this risk is on.
 - title: a short, plain label for the risk.

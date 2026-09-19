@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fromProse } from "@archsim/engine/server";
+import { MAX_DESCRIPTION_LENGTH } from "../../../lib/limits";
 
 /**
  * Server-only: pulls in @anthropic-ai/sdk and reads ANTHROPIC_API_KEY via
@@ -19,6 +20,14 @@ export async function POST(request: Request) {
   if (typeof description !== "string" || description.trim().length === 0) {
     return NextResponse.json(
       { error: "Expected a non-empty string field \"description\"." },
+      { status: 400 },
+    );
+  }
+  // Same limit ProseInput.tsx enforces client-side — checked again here so
+  // it holds for any request, not just ones that went through that form.
+  if (description.length > MAX_DESCRIPTION_LENGTH) {
+    return NextResponse.json(
+      { error: `Description is too long (${description.length} characters, max ${MAX_DESCRIPTION_LENGTH}).` },
       { status: 400 },
     );
   }

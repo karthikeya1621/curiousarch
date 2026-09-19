@@ -11,8 +11,6 @@
 
 export { fromProse } from "./inference/fromProse.ts";
 export type { FromProseOptions, FromProseResult } from "./inference/fromProse.ts";
-export { proposeCacheTraits } from "./inference/proposeCacheTraits.ts";
-export type { CacheProposal, ProposeCacheTraitsOptions } from "./inference/proposeCacheTraits.ts";
 export { explainFix } from "./inference/explainFix.ts";
 export type { FixRationale, ExplainFixOptions } from "./inference/explainFix.ts";
 export { reworkModel } from "./inference/reworkModel.ts";
@@ -22,5 +20,12 @@ export { applyAiFix } from "./inference/applyAiFix.ts";
 export type { ApplyAiFixResult } from "./inference/applyAiFix.ts";
 export { extractWorkloadParameters } from "./inference/workloadParameters.ts";
 export type { WorkloadParameters } from "./inference/workloadParameters.ts";
+export {
+  proposeExtendedComponents,
+  reviseExtendedComponents,
+  isExtendedComponent,
+  EXTENDED_KINDS,
+} from "./inference/extendedComponents.ts";
+export type { ExtendedComponentsResponse } from "./inference/extendedComponents.ts";
 export { chatWithProject } from "./inference/chatWithProject.ts";
 export type { ChatWithProjectResult } from "./inference/chatWithProject.ts";

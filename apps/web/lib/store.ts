@@ -1,23 +1,51 @@
 import { create } from "zustand";
 import type { AiFinding, Component, SystemModel } from "@archsim/engine";
 import {
-  loadSession,
-  saveSession,
+  loadProject,
+  saveProject,
+  listProjects,
+  deleteProject,
   type AppliedFixRecord,
   type ChatMessage,
   type PendingFix,
+  type ProjectSummary,
+  type SavedSession,
   type Version,
 } from "./sessionStorage";
 
-export type { AppliedFixRecord, PendingFix, Version };
+export type { AppliedFixRecord, PendingFix, ProjectSummary, Version };
+
+/**
+ * Which project to reopen on next visit — deliberately NOT in the
+ * database: it's disposable UI state ("which tab was I on"), not project
+ * data. Losing it just means the app shows the blank canvas + project
+ * list instead of auto-resuming, same graceful degradation as any other
+ * missing-session path here. All real project content is 100% Postgres.
+ */
+const LAST_PROJECT_KEY = "archsim:last-project-id";
+
+function getLastProjectId(): string | null {
+  try {
+    return localStorage.getItem(LAST_PROJECT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setLastProjectId(id: string | null) {
+  try {
+    if (id === null) localStorage.removeItem(LAST_PROJECT_KEY);
+    else localStorage.setItem(LAST_PROJECT_KEY, id);
+  } catch {
+    // Best-effort convenience pointer — a private window or blocked site
+    // data just means the next visit starts from the project list again.
+  }
+}
 
 /**
  * Blank canvas is the actual starting state — no preset system, no
- * controls, nothing to describe yet. The engine's own pattern functions
- * already handle zero components gracefully (confirmed by reading
- * solver.ts), so this needs no engine-side support; `workload: {}` is
- * valid since every field on `Workload` is optional now (see
- * @archsim/engine's types.ts).
+ * controls, nothing to describe yet. `workload: {}` is valid since every
+ * field on `Workload` is optional (see @archsim/engine's types.ts).
  */
 const EMPTY_MODEL: SystemModel = {
   id: "blank",
@@ -87,6 +115,25 @@ interface AppState {
    */
   findingsStale: boolean;
   lastSavedAt: number | null;
+  /** False until the initial DB fetch (hydrateFromStorage) completes — lets page.tsx show a brief loading state instead of flashing the blank canvas while that network call is in flight. */
+  hydrated: boolean;
+  /**
+   * Bumped by every action AutoSaveIndicator.tsx should actually persist —
+   * a fresh build, a chat-driven change, queueing/unqueueing a fix, an
+   * Undo, restoring a version, a completed Re-simulate. Deliberately NOT
+   * bumped by `setWorkloadTier`: moving the tier slider is a parameter
+   * change to review, not something to save (or redraw the canvas for —
+   * see FlowDiagram.tsx's own comment) on its own; only an explicit
+   * Re-simulate commits it. Watching this instead of `model` directly is
+   * what lets AutoSaveIndicator tell those two kinds of model change apart
+   * without needing to inspect what actually changed.
+   */
+  autosaveRevision: number;
+  /** Which saved project (if any) Save/Re-simulate write to. `null` = unsaved — the next Save inserts a new row instead of updating one. */
+  currentProjectId: string | null;
+  /** The logged-in user's saved projects, for ProjectsDropdown — not kept in sync automatically; refreshProjectList() re-fetches it. */
+  projects: ProjectSummary[];
+  projectsStatus: "idle" | "loading" | "done";
   /**
    * The ongoing conversation for the CURRENT project — separate from
    * `findings`, never wiped by a rework/fix/undo (those change the
@@ -156,21 +203,61 @@ interface AppState {
   previewVersion: (id: string | null) => void;
   /** Makes a past version live again — pushes the current model onto `history` first, so it's one Undo away. Never touches `versions` itself. */
   restoreVersion: (id: string) => void;
-  /** Restores the one saved session slot, if one exists — a no-op otherwise. */
-  hydrateFromStorage: () => void;
-  /** Snapshots the current session into the one saved slot, overwriting it. */
-  saveToStorage: () => void;
+  /** Reopens the last-viewed project (see the local `archsim:last-project-id` pointer), if any — a no-op otherwise. */
+  hydrateFromStorage: () => Promise<void>;
+  /** Saves the current session to `currentProjectId`, or inserts a new project if it's `null`. Resolves false (not logged in, RLS rejection, network error) so the caller can show that instead of a false "Saved". */
+  saveToStorage: () => Promise<boolean>;
   /**
    * Discards the current session in memory and starts a blank one — the
-   * only intentional way to abandon a project. Deliberately never touches
-   * the saved localStorage slot itself: `saveToStorage` is the only thing
-   * that ever writes there, so a project you never explicitly saved is
-   * never silently lost by starting a new one, and one you already saved
-   * stays exactly as you last saved it until you choose to overwrite it.
+   * only intentional way to abandon a project without saving it.
+   * Clears `currentProjectId`, so the next Save inserts a new project
+   * rather than overwriting whatever was open; never touches the
+   * database itself, so a project you never explicitly saved is never
+   * silently lost, and one you already saved stays exactly as it was.
    */
   startNewProject: () => void;
+  /** Re-fetches the logged-in user's project list (for ProjectsDropdown). */
+  refreshProjectList: () => Promise<void>;
+  /** Loads a saved project and makes it the live one, updating `currentProjectId` and the last-viewed pointer. */
+  openProject: (id: string) => Promise<void>;
+  /** Deletes a saved project. If it was the open one, resets to a blank canvas (like `startNewProject`). */
+  deleteProjectById: (id: string) => Promise<void>;
   /** A free-text message about the current project — answered, or turned into an actual model change, by the AI itself (see chatWithProject.ts). */
   sendChatMessage: (message: string) => Promise<void>;
+}
+
+/**
+ * Shared by `hydrateFromStorage` and `openProject` — both turn a
+ * `SavedSession` fetched from the database into the same set of live
+ * fields; `currentProjectId` is set by each caller separately since one
+ * knows it from a pointer and the other from its own argument.
+ */
+function sessionToState(session: SavedSession): Partial<AppState> {
+  return {
+    model: session.model,
+    history: session.history,
+    findings: session.findings,
+    // A save can never be mid-flight ("loading") by the time it's read
+    // back — there's no request left to resume, so treat it as settled.
+    findingsStatus: session.findingsStatus === "loading" ? "done" : session.findingsStatus,
+    findingsError: session.findingsError,
+    canResimulate: session.canResimulate,
+    // `?? false` covers a session saved before this field existed.
+    findingsStale: session.findingsStale ?? false,
+    lastSavedAt: session.savedAt,
+    // `?? []` covers a session saved before chat/fixes/versions existed.
+    chatMessages: session.chatMessages ?? [],
+    appliedFixes: session.appliedFixes ?? [],
+    pendingFixes: session.pendingFixes ?? [],
+    versions: session.versions ?? [],
+    chatStatus: "idle",
+    chatError: null,
+    openComponentId: null,
+    selectedFindingId: null,
+    selectedFixId: null,
+    viewingComponent: null,
+    previewVersionId: null,
+  };
 }
 
 async function refreshFindings(
@@ -224,6 +311,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   canResimulate: false,
   findingsStale: false,
   lastSavedAt: null,
+  hydrated: false,
+  autosaveRevision: 0,
+  currentProjectId: null,
+  projects: [],
+  projectsStatus: "idle",
   chatMessages: [],
   chatStatus: "idle",
   chatError: null,
@@ -250,6 +342,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       viewingComponent: null,
       versions: [],
       previewVersionId: null,
+      autosaveRevision: get().autosaveRevision + 1,
     });
     void refreshFindings(set, get, { recordVersion: true });
   },
@@ -258,6 +351,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { model, history } = get();
     const current = model.workload[dimension];
     if (!current) return;
+    // Deliberately does NOT bump autosaveRevision — a parameter change is
+    // something to review, not to persist (or redraw the canvas for — see
+    // FlowDiagram.tsx's own comment on why it depends on
+    // model.components/model.edges rather than model itself) on its own;
+    // only an explicit Re-simulate commits it. See this field's own doc
+    // comment on AppState.
     set({
       model: { ...model, workload: { ...model.workload, [dimension]: { ...current, tier } } },
       history: [...history, model],
@@ -281,6 +380,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // change. See this file's own top comment.
       findingsStale: true,
       appliedFixes: appliedFix ? [...appliedFixes, appliedFix] : appliedFixes,
+      autosaveRevision: get().autosaveRevision + 1,
     });
   },
 
@@ -292,6 +392,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       pendingFixes: [...withoutExisting, pendingFix],
       canResimulate: true,
+      autosaveRevision: get().autosaveRevision + 1,
     });
   },
 
@@ -301,6 +402,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingFixes: pendingFixes.filter(
         (p) => !(p.componentId === componentId && p.findingTitle === findingTitle),
       ),
+      autosaveRevision: get().autosaveRevision + 1,
       // Deliberately doesn't touch canResimulate — something else (a
       // tier change, another still-queued fix) may still warrant it, and
       // this app has no cheap way to tell "was it ONLY this" apart from
@@ -331,6 +433,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // reappear as a fresh, current, re-queueable finding.
       pendingFixes: [],
       appliedFixes: [...appliedFixes, ...nowApplied],
+      autosaveRevision: get().autosaveRevision + 1,
     });
     void refreshFindings(set, get, { recordVersion: true });
   },
@@ -339,7 +442,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { history } = get();
     if (history.length === 0) return;
     const previous = history[history.length - 1]!;
-    set({ model: previous, history: history.slice(0, -1) });
+    set({ model: previous, history: history.slice(0, -1), autosaveRevision: get().autosaveRevision + 1 });
     void refreshFindings(set, get);
   },
 
@@ -374,41 +477,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       openComponentId: null,
       selectedFindingId: null,
       selectedFixId: null,
+      autosaveRevision: get().autosaveRevision + 1,
     });
   },
 
-  hydrateFromStorage: () => {
-    const session = loadSession();
-    if (!session) return;
-    set({
-      model: session.model,
-      history: session.history,
-      findings: session.findings,
-      // A save can never be mid-flight ("loading") by the time it's read
-      // back — there's no request left to resume, so treat it as settled.
-      findingsStatus: session.findingsStatus === "loading" ? "done" : session.findingsStatus,
-      findingsError: session.findingsError,
-      canResimulate: session.canResimulate,
-      // `?? false` covers a session saved before this field existed.
-      findingsStale: session.findingsStale ?? false,
-      lastSavedAt: session.savedAt,
-      // `?? []` covers a session saved before chat/fixes/versions existed.
-      chatMessages: session.chatMessages ?? [],
-      appliedFixes: session.appliedFixes ?? [],
-      pendingFixes: session.pendingFixes ?? [],
-      versions: session.versions ?? [],
-      chatStatus: "idle",
-      chatError: null,
-      openComponentId: null,
-      selectedFindingId: null,
-      selectedFixId: null,
-      viewingComponent: null,
-      previewVersionId: null,
-    });
+  hydrateFromStorage: async () => {
+    const lastId = getLastProjectId();
+    if (!lastId) {
+      set({ hydrated: true });
+      return;
+    }
+    const session = await loadProject(lastId);
+    if (!session) {
+      // The pointer is stale (deleted elsewhere, RLS denied, etc.) — drop
+      // it rather than retrying it forever.
+      setLastProjectId(null);
+      set({ hydrated: true });
+      return;
+    }
+    set({ ...sessionToState(session), currentProjectId: lastId, hydrated: true });
   },
 
-  saveToStorage: () => {
+  saveToStorage: async () => {
     const {
+      currentProjectId,
       model,
       history,
       findings,
@@ -421,7 +513,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingFixes,
       versions,
     } = get();
-    const saved = saveSession({
+    const saved = await saveProject(currentProjectId, {
       model,
       history,
       findings,
@@ -434,10 +526,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingFixes,
       versions,
     });
-    if (saved) set({ lastSavedAt: saved.savedAt });
+    if (saved) {
+      set({ lastSavedAt: saved.savedAt, currentProjectId: saved.id });
+      setLastProjectId(saved.id);
+    }
+    return saved !== null;
   },
 
   startNewProject: () => {
+    setLastProjectId(null);
     set({
       model: EMPTY_MODEL,
       history: [],
@@ -457,7 +554,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       viewingComponent: null,
       versions: [],
       previewVersionId: null,
+      currentProjectId: null,
     });
+  },
+
+  refreshProjectList: async () => {
+    set({ projectsStatus: "loading" });
+    const projects = await listProjects();
+    set({ projects: projects ?? [], projectsStatus: "done" });
+  },
+
+  openProject: async (id) => {
+    const session = await loadProject(id);
+    if (!session) return;
+    setLastProjectId(id);
+    set({ ...sessionToState(session), currentProjectId: id });
+  },
+
+  deleteProjectById: async (id) => {
+    const ok = await deleteProject(id);
+    if (!ok) return;
+    set((state) => ({ projects: state.projects.filter((p) => p.id !== id) }));
+    if (get().currentProjectId === id) {
+      get().startNewProject();
+    }
   },
 
   sendChatMessage: async (message) => {
@@ -487,6 +607,12 @@ export const useAppStore = create<AppState>((set, get) => ({
           { role: "assistant", text: body.reply as string, changed: Boolean(body.model) },
         ],
         chatStatus: "idle",
+        // A plain Q&A answer never touches `model`, so nothing else here
+        // would bump this — worth persisting anyway so the conversation
+        // survives a reload. A model-changing reply bumps it again via
+        // `applyFix` just below, which is harmless (the indicator only
+        // cares that this changed, not by how much).
+        autosaveRevision: state.autosaveRevision + 1,
       }));
       // A change request — commit it exactly like applying a fix: push
       // undo history, clear stale selections, mark findings stale, and

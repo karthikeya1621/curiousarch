@@ -1,12 +1,15 @@
 /**
- * Three hand-modelled systems — the oracle for what a correct pattern match
- * looks like, same role these played before the architect-pivot, just in
- * trait terms now instead of numeric parameters.
+ * Three hand-modelled systems, reused across the test suite as realistic
+ * `SystemModel` fixtures — checkout in particular is the default stand-in
+ * wherever a test needs "a real model" without describing one in prose.
  *
- * Deliberately spans the finding-severity spectrum: checkout starts with one
- * real critical finding, url-shortener with a different one, media-upload
- * with only warnings (healthy, but not risk-free) — the same "warnings
- * before failure" point PLAN-1.5 made originally still matters here.
+ * Originally the oracle for a now-deleted deterministic pattern-matching
+ * engine (patterns.ts/whatif.ts/fixes.ts/solver.ts) that pattern-matched
+ * over these same traits before the product settled on `identifyFailures.ts`
+ * (a free-form AI call, given the model as context) as the web app's actual
+ * findings source. Kept as fixtures for that reason alone, not for any
+ * remaining pattern-catalogue behavior — the trait values below no longer
+ * drive a specific expected finding anywhere.
  */
 
 import { trait } from "../src/types.ts";
@@ -18,13 +21,12 @@ import type { SystemModel } from "../src/types.ts";
  * Well-provisioned against instance/replica loss (multiple order-service
  * instances, a replicated database) but — like most real systems — was
  * never built with a circuit breaker between the service and its database.
- * That's a real, common gap, not a contrived one: CASCADING_FAILURE_RISK
- * fires from the start rather than needing a scenario to surface it.
+ * That's a real, common gap, not a contrived one.
  */
 export const checkout: SystemModel = {
   id: "checkout",
   name: "Checkout / order placement",
-  workload: { scale: trait("small", "stated", "A single-region order-placement API, not yet at wide scale.") },
+  workload: {},
   components: [
     {
       id: "gw",
@@ -58,14 +60,12 @@ export const checkout: SystemModel = {
  *
  * The classic cache-aside read path (gateway -> service -> cache ->
  * database) with a small, short-lived hot keyspace and no request
- * coalescing on refill — the textbook thundering-herd setup. A circuit
- * breaker on the redirect service keeps CASCADING_FAILURE_RISK from also
- * firing here, so the herd risk is the one thing on stage.
+ * coalescing on refill — the textbook thundering-herd setup.
  */
 export const urlShortener: SystemModel = {
   id: "url-shortener",
   name: "URL shortener",
-  workload: { scale: trait("medium", "stated", "A popular consumer link shortener, moderate steady traffic.") },
+  workload: {},
   components: [
     {
       id: "gw",
@@ -106,17 +106,14 @@ export const urlShortener: SystemModel = {
 /**
  * 3. Media upload with async processing.
  *
- * Healthy — every finding here is a warning, not a critical — but not
- * risk-free: no admission control, no dead-letter queue, and a fixed
- * worker pool that's already operating at large scale. The same point
- * this session's HIGH_UTILIZATION work made under the old numeric engine
- * (warnings must be visible on an otherwise-healthy system, or an all-red
- * UI trains people to ignore red) still has to hold here.
+ * Not risk-free, but nothing outright broken either: no admission control,
+ * no dead-letter queue, and a fixed worker pool serving a large registered
+ * user base.
  */
 export const mediaUpload: SystemModel = {
   id: "media-upload",
   name: "Media upload with async processing",
-  workload: { scale: trait("large", "stated", "Upload service for roughly a million registered users.") },
+  workload: {},
   components: [
     {
       id: "gw",

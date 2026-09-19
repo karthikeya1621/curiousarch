@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { useAppStore } from "../lib/store";
 import { Card } from "./Card";
-import { SparklesIcon, WrenchIcon } from "./icons";
+import { SparklesIcon, WrenchIcon, XIcon } from "./icons";
 
 /**
- * The sidebar box for an EXISTING project — distinct from ProseInput,
+ * The chat panel for an EXISTING project — distinct from ProseInput,
  * which only ever builds a brand-new system (blank canvas / "New
  * Project"). This never resets or replaces the model on its own; the AI
  * decides per-message whether it's answering a question or making an
@@ -15,8 +15,12 @@ import { SparklesIcon, WrenchIcon } from "./icons";
  * findings refreshed). Reads the current model from the store itself
  * (via `sendChatMessage`), not a prop — there's nothing else here that
  * needs it.
+ *
+ * Only ever rendered inside ChatWidget.tsx's floating popup now (it used
+ * to be a persistent third grid column) — `onClose` is what that popup's
+ * own toggle button collapses back into a FAB.
  */
-export function ProjectChat() {
+export function ProjectChat({ onClose }: { onClose: () => void }) {
   const chatMessages = useAppStore((s) => s.chatMessages);
   const chatStatus = useAppStore((s) => s.chatStatus);
   const chatError = useAppStore((s) => s.chatError);
@@ -32,11 +36,20 @@ export function ProjectChat() {
 
   return (
     <Card padding="sm" className="flex flex-col gap-1">
-      <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
-        <SparklesIcon className="h-4 w-4 text-slate-400" />
-        Ask or change this system
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
+          <SparklesIcon className="h-4 w-4 text-slate-400" />
+          Ask or change this system
+        </div>
+        <button
+          onClick={onClose}
+          aria-label="Close chat"
+          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+        >
+          <XIcon className="h-3.5 w-3.5" />
+        </button>
       </div>
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-slate-500 dark:text-slate-400">
         Ask a question about this architecture, or ask for a change — e.g. &quot;why is
         the cache short-TTL?&quot; or &quot;add a CDN in front of the gateway&quot;.
       </p>
@@ -49,12 +62,12 @@ export function ProjectChat() {
               className={
                 "max-w-[85%] rounded-lg px-3 py-2 text-sm " +
                 (m.role === "user"
-                  ? "self-end bg-slate-900 text-white"
-                  : "self-start bg-slate-100 text-slate-700")
+                  ? "self-end bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+                  : "self-start bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300")
               }
             >
               {m.role === "assistant" && m.changed && (
-                <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600">
+                <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
                   <WrenchIcon className="h-3 w-3" />
                   Applied
                 </div>
@@ -63,7 +76,7 @@ export function ProjectChat() {
             </div>
           ))}
           {chatStatus === "loading" && (
-            <div className="self-start rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-400">
+            <div className="self-start rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-400 dark:bg-slate-700">
               Thinking…
             </div>
           )}
@@ -79,17 +92,17 @@ export function ProjectChat() {
           }}
           placeholder="Ask about this system…"
           aria-label="Ask a question or request a change"
-          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none"
+          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-slate-500 dark:focus:bg-slate-800"
         />
         <button
           onClick={submit}
           disabled={!draft.trim() || chatStatus === "loading"}
-          className="shrink-0 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white transition-colors enabled:hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="shrink-0 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white transition-colors enabled:hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:bg-slate-100 dark:text-slate-900 dark:enabled:hover:bg-slate-300 dark:disabled:bg-slate-600"
         >
           Send
         </button>
       </div>
-      {chatError && <p className="mt-2 text-xs text-rose-600">{chatError}</p>}
+      {chatError && <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{chatError}</p>}
     </Card>
   );
 }

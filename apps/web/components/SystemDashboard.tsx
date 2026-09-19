@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { AiFinding, SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { findingKey } from "../lib/findingKey";
@@ -7,6 +8,7 @@ import { getFixStatus } from "../lib/getFixStatus";
 import { FlowDiagram } from "./FlowDiagram";
 import { Card } from "./Card";
 import { Badge } from "./Badge";
+import { ChevronDownIcon } from "./icons";
 
 /**
  * `findingsOverride`, when provided, replaces the store's live findings
@@ -18,10 +20,16 @@ import { Badge } from "./Badge";
 export function SystemDashboard({
   model,
   findingsOverride,
+  showResimulate,
 }: {
   model: SystemModel;
   findingsOverride?: AiFinding[];
+  showResimulate?: boolean;
 }) {
+  // Collapsed by default on every mount — the health badge alone is
+  // already color-coded (critical/warning/success), so the canvas below
+  // is visible immediately instead of after scrolling past finding text.
+  const [expanded, setExpanded] = useState(false);
   const liveFindings = useAppStore((s) => s.findings);
   const findingsStatus = useAppStore((s) => s.findingsStatus);
   const findingsStale = useAppStore((s) => s.findingsStale);
@@ -52,11 +60,22 @@ export function SystemDashboard({
   return (
     <div className="flex flex-col gap-5">
       <Card padding="sm">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-slate-900">{model.name}</h2>
-          {healthBadge}
-        </div>
-        {findings.length > 0 && (
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          disabled={findings.length === 0}
+          className="flex w-full flex-wrap items-center justify-between gap-2 text-left enabled:cursor-pointer"
+        >
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{model.name}</h2>
+          <div className="flex items-center gap-1.5">
+            {healthBadge}
+            {findings.length > 0 && (
+              <ChevronDownIcon
+                className={"h-3.5 w-3.5 text-slate-400 transition-transform " + (expanded ? "rotate-180" : "")}
+              />
+            )}
+          </div>
+        </button>
+        {expanded && findings.length > 0 && (
           <>
             <div
               className={
@@ -82,9 +101,9 @@ export function SystemDashboard({
                     {status === "queued" && <Badge tone="warning">Queued</Badge>}
                     {status === "fixed" && <Badge tone="success">Fixed</Badge>}
                     <div className="min-w-0">
-                      <span className="font-medium text-slate-900">{f.title}</span>
+                      <span className="font-medium text-slate-900 dark:text-slate-100">{f.title}</span>
                       <span className="text-slate-400"> · {f.componentId}</span>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
                         {status === "queued"
                           ? "Queued — Re-simulate to see this fix in action."
                           : status === "fixed"
@@ -105,7 +124,7 @@ export function SystemDashboard({
         )}
       </Card>
 
-      <FlowDiagram model={model} findingsOverride={findingsOverride} />
+      <FlowDiagram model={model} findingsOverride={findingsOverride} showResimulate={showResimulate} />
     </div>
   );
 }

@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
 import { chatWithProject } from "../src/inference/chatWithProject.js";
 import { checkout } from "../models/reference.js";
-import { simulate } from "../src/solver.js";
 import type { SystemModel } from "../src/types.js";
 
 function toolUseResponse(name: string, input: unknown): Anthropic.Message {
@@ -104,7 +103,6 @@ describe("chatWithProject", () => {
     expect(result.isQuestion).toBe(false);
     expect(result.reply).toMatch(/CDN/i);
     expect(result.model).toBeDefined();
-    expect(() => simulate(result.model!)).not.toThrow();
     expect(result.model!.components.some((c) => c.id === "cdn")).toBe(true);
   });
 

@@ -7,15 +7,18 @@ packages/engine/   Headless architecture-pattern engine — see packages/engine/
 apps/web/          Next.js App Router UI (the full loop: diagram, controls, fixes)
 ```
 
-The engine takes a rough system model — categorical traits, never numbers —
-and computes real architectural risk against it: single points of failure,
-thundering herds, cascading failures, unbounded admission, and more, via a
-deterministic pattern catalogue (`packages/engine/src/patterns.ts`), plus a
-what-if/fix exploration flow (flip a trait toward its riskier value, see what
-breaks, pick a fix, see whether it actually resolved it). See `CONTEXT.md`'s
-"Why the pivot" section for why this replaced an earlier numeric queueing
-engine. It has no UI dependencies and can be used standalone; `apps/web`
-consumes it as a workspace package (`@archsim/engine`).
+A system model is a rough architectural sketch — categorical traits, never
+numbers (`instanceCount: "single"`, `hasCircuitBreaker: false`), built from a
+prose description via an AI call. Architectural risk against that model —
+single points of failure, thundering herds, cascading failures, unbounded
+admission, and more — is identified by a separate, free-form AI call given
+the model as context (`packages/engine/src/inference/identifyFailures.ts`),
+not by a hand-written pattern catalogue; see `CONTEXT.md`'s "Why the pivot"
+section for the numeric-queueing-engine history this superseded, and
+`packages/engine/src/inference/identifyFailures.ts`'s own top comment for
+why findings moved from computed to AI-generated. The engine has no UI
+dependencies and can be used standalone; `apps/web` consumes it as a
+workspace package (`@archsim/engine`).
 
 ```bash
 npm install

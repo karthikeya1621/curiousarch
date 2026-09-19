@@ -16,6 +16,132 @@ import { checkout } from "@archsim/engine";
 import type { SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 
+/**
+ * `vi.hoisted` because `vi.mock` calls (and their factories) are hoisted
+ * above regular imports — a plain `let` declared after the imports would
+ * still be in the temporal dead zone the first time the mocked module is
+ * actually resolved. `authState.userId: null` simulates the "not logged
+ * in" path that `sessionStorage.ts` degrades on (unreachable in the real
+ * app once middleware.ts gates every page, but still real defensive code —
+ * e.g. a session expiring mid-session).
+ *
+ * `fakeProjects` is a minimal in-memory stand-in for the `projects` table
+ * — a chainable builder covering exactly the query shapes
+ * `sessionStorage.ts` actually sends (insert().select().single(),
+ * update().eq().eq(), select().eq().eq().maybeSingle(),
+ * select().eq().order(), delete().eq().eq()), not a general Postgrest
+ * emulation.
+ */
+const { fakeProjects, authState, nextId } = vi.hoisted(() => ({
+  fakeProjects: new Map<string, Record<string, unknown>>(),
+  authState: { userId: "test-user" as string | null, dbError: false },
+  nextId: { current: 1 },
+}));
+
+function makeQuery() {
+  let op: "insert" | "update" | "select" | "delete" | null = null;
+  let payload: Record<string, unknown> | null = null;
+  let orderCol: string | null = null;
+  let orderAscending = true;
+  const filters: [string, unknown][] = [];
+
+  async function exec(): Promise<{ data: unknown; error: Error | null }> {
+    if (authState.dbError) return { data: null, error: new Error("blocked") };
+    const matches = (row: Record<string, unknown>) => filters.every(([k, v]) => row[k] === v);
+
+    if (op === "insert") {
+      const id = `project-${nextId.current++}`;
+      const row = { id, ...payload };
+      fakeProjects.set(id, row);
+      return { data: row, error: null };
+    }
+    if (op === "update") {
+      for (const row of fakeProjects.values()) if (matches(row)) Object.assign(row, payload);
+      return { data: null, error: null };
+    }
+    if (op === "delete") {
+      for (const [id, row] of fakeProjects) if (matches(row)) fakeProjects.delete(id);
+      return { data: null, error: null };
+    }
+    let rows = [...fakeProjects.values()].filter(matches);
+    if (orderCol) {
+      const col = orderCol;
+      rows = [...rows].sort((a, b) => {
+        const diff = (a[col] as string) < (b[col] as string) ? -1 : 1;
+        return orderAscending ? diff : -diff;
+      });
+    }
+    return { data: rows, error: null };
+  }
+
+  const builder = {
+    insert(row: Record<string, unknown>) {
+      op = "insert";
+      payload = row;
+      return builder;
+    },
+    update(row: Record<string, unknown>) {
+      op = "update";
+      payload = row;
+      return builder;
+    },
+    delete() {
+      op = "delete";
+      return builder;
+    },
+    select(_cols?: string) {
+      if (!op) op = "select";
+      return builder;
+    },
+    eq(col: string, val: unknown) {
+      filters.push([col, val]);
+      return builder;
+    },
+    order(col: string, opts?: { ascending?: boolean }) {
+      orderCol = col;
+      orderAscending = opts?.ascending !== false;
+      return builder;
+    },
+    async single() {
+      const { data, error } = await exec();
+      const row = Array.isArray(data) ? data[0] : data;
+      return { data: row ?? null, error: error ?? (row ? null : new Error("not found")) };
+    },
+    async maybeSingle() {
+      const { data, error } = await exec();
+      const row = Array.isArray(data) ? data[0] : data;
+      return { data: row ?? null, error };
+    },
+    then(resolve: (v: unknown) => void, reject: (e: unknown) => void) {
+      exec().then(resolve, reject);
+    },
+  };
+  return builder;
+}
+
+vi.mock("../lib/supabase/client", () => ({
+  createClient: () => ({
+    auth: {
+      getUser: async () => ({ data: { user: authState.userId ? { id: authState.userId } : null } }),
+    },
+    from: () => makeQuery(),
+  }),
+}));
+
+function fakeLocalStorage(): Storage {
+  const data = new Map<string, string>();
+  return {
+    getItem: (k: string) => data.get(k) ?? null,
+    setItem: (k: string, v: string) => void data.set(k, v),
+    removeItem: (k: string) => void data.delete(k),
+    clear: () => data.clear(),
+    key: () => null,
+    get length() {
+      return data.size;
+    },
+  };
+}
+
 const initialState = useAppStore.getState();
 
 function emptyFindingsResponse(): Response {
@@ -28,6 +154,14 @@ function emptyFindingsResponse(): Response {
 beforeEach(() => {
   useAppStore.setState(initialState, true);
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(emptyFindingsResponse()));
+  // Node's test environment has no real `localStorage` — stubbed so the
+  // `archsim:last-project-id` pointer (lib/store.ts) is actually testable,
+  // not just silently no-op'd by its own try/catch.
+  vi.stubGlobal("localStorage", fakeLocalStorage());
+  fakeProjects.clear();
+  nextId.current = 1;
+  authState.userId = "test-user";
+  authState.dbError = false;
 });
 
 afterEach(() => {
@@ -59,20 +193,6 @@ function fixedModel(): SystemModel {
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
-
-function fakeLocalStorage(): Storage {
-  const data = new Map<string, string>();
-  return {
-    getItem: (k: string) => data.get(k) ?? null,
-    setItem: (k: string, v: string) => void data.set(k, v),
-    removeItem: (k: string) => void data.delete(k),
-    clear: () => data.clear(),
-    key: () => null,
-    get length() {
-      return data.size;
-    },
-  };
 }
 
 describe("applyFix", () => {
@@ -363,15 +483,59 @@ describe("setWorkloadTier", () => {
 });
 
 /**
- * Node's test environment has no real `localStorage` (only a browser does),
- * so `sessionStorage.ts`'s own try/catch is exercised for free by every
- * other test in this file (a bare ReferenceError, caught, so nothing here
- * crashes without a stub) — these tests stub in a minimal in-memory
- * Storage-alike to actually exercise the save/restore round trip.
+ * `autosaveRevision` is what AutoSaveIndicator.tsx actually watches to
+ * decide whether to (re)start its debounce timer — not `model` itself.
+ * Moving the tier slider must NOT bump it (so it never triggers a save
+ * or, via FlowDiagram.tsx's own separate `components`/`edges` dependency,
+ * a canvas redraw), while every other model-changing action must.
+ */
+describe("autosaveRevision", () => {
+  it("is not bumped by setWorkloadTier", () => {
+    useAppStore.setState({ model: degradedModel(), autosaveRevision: 0 });
+
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+
+    expect(useAppStore.getState().autosaveRevision).toBe(0);
+  });
+
+  it("is bumped by setModel, applyFix, queueFix, unqueueFix, commitRework, undo, and restoreVersion", async () => {
+    useAppStore.setState({ model: degradedModel(), history: [], versions: [], pendingFixes: [], autosaveRevision: 0 });
+
+    useAppStore.getState().setModel(fixedModel());
+    expect(useAppStore.getState().autosaveRevision).toBe(1);
+
+    useAppStore.getState().applyFix(fixedModel());
+    expect(useAppStore.getState().autosaveRevision).toBe(2);
+
+    useAppStore.getState().queueFix(pendingFix());
+    expect(useAppStore.getState().autosaveRevision).toBe(3);
+
+    useAppStore.getState().unqueueFix(pendingFix().componentId, pendingFix().findingTitle);
+    expect(useAppStore.getState().autosaveRevision).toBe(4);
+
+    useAppStore.getState().commitRework(fixedModel());
+    expect(useAppStore.getState().autosaveRevision).toBe(5);
+    await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
+
+    useAppStore.getState().undo();
+    expect(useAppStore.getState().autosaveRevision).toBe(6);
+
+    const version = useAppStore.getState().versions[0];
+    if (!version) throw new Error("expected a recorded version");
+    useAppStore.getState().restoreVersion(version.id);
+    expect(useAppStore.getState().autosaveRevision).toBe(7);
+  });
+});
+
+/**
+ * Session state now lives in a fake in-memory `projects` table (see the
+ * `vi.mock("../lib/supabase/client", ...)` above) keyed by project id, not
+ * a single row per user — `sessionStorage.ts`'s own try/catch around a
+ * missing user or a DB error is exercised directly via `authState`, and
+ * the local "last opened project" pointer via a stubbed `localStorage`.
  */
 describe("save/restore session", () => {
-  it("saveToStorage then hydrateFromStorage round-trips the session, chat/fixes/versions included", () => {
-    vi.stubGlobal("localStorage", fakeLocalStorage());
+  it("saveToStorage then hydrateFromStorage round-trips the session, chat/fixes/versions included", async () => {
     const model = degradedModel();
     const chatMessages = [{ role: "user" as const, text: "why is this a single instance?" }];
     const appliedFixes = [
@@ -388,13 +552,16 @@ describe("save/restore session", () => {
       versions,
     });
 
-    useAppStore.getState().saveToStorage();
+    await useAppStore.getState().saveToStorage();
     expect(useAppStore.getState().lastSavedAt).not.toBeNull();
+    const projectId = useAppStore.getState().currentProjectId;
+    expect(projectId).not.toBeNull();
 
     useAppStore.setState(initialState, true);
     expect(useAppStore.getState().model.components).toHaveLength(0);
 
-    useAppStore.getState().hydrateFromStorage();
+    await useAppStore.getState().hydrateFromStorage();
+    expect(useAppStore.getState().currentProjectId).toBe(projectId);
     expect(useAppStore.getState().model.id).toBe(model.id);
     expect(useAppStore.getState().canResimulate).toBe(true);
     expect(useAppStore.getState().chatMessages).toEqual(chatMessages);
@@ -402,27 +569,72 @@ describe("save/restore session", () => {
     expect(useAppStore.getState().versions).toEqual(versions);
   });
 
-  it("hydrateFromStorage is a no-op when nothing was saved", () => {
-    vi.stubGlobal("localStorage", fakeLocalStorage());
-
-    useAppStore.getState().hydrateFromStorage();
+  it("hydrateFromStorage is a no-op when nothing was saved", async () => {
+    await useAppStore.getState().hydrateFromStorage();
 
     expect(useAppStore.getState().model).toEqual(initialState.model);
   });
 
-  it("degrades gracefully when localStorage is unavailable (private browsing, blocked site data)", () => {
-    vi.stubGlobal("localStorage", {
-      getItem: () => {
-        throw new DOMException("blocked");
-      },
-      setItem: () => {
-        throw new DOMException("blocked");
-      },
-    });
-
-    expect(() => useAppStore.getState().saveToStorage()).not.toThrow();
-    expect(() => useAppStore.getState().hydrateFromStorage()).not.toThrow();
+  it("degrades gracefully when logged out, and drops a stale pointer when the database errors", async () => {
+    authState.userId = null;
+    await expect(useAppStore.getState().saveToStorage()).resolves.toBe(false);
     expect(useAppStore.getState().lastSavedAt).toBeNull();
+
+    authState.userId = "test-user";
+    useAppStore.setState({ model: degradedModel() });
+    await useAppStore.getState().saveToStorage();
+    expect(useAppStore.getState().currentProjectId).not.toBeNull();
+
+    // A pointer now exists (in localStorage) to a real saved project, but
+    // the database is unreachable when hydrating it back.
+    useAppStore.setState(initialState, true);
+    authState.dbError = true;
+    await expect(useAppStore.getState().hydrateFromStorage()).resolves.toBeUndefined();
+    expect(useAppStore.getState().model.components).toHaveLength(0);
+    expect(useAppStore.getState().hydrated).toBe(true);
+  });
+});
+
+describe("multiple projects", () => {
+  it("keeps separate projects separate across save, list, and open", async () => {
+    useAppStore.setState({ model: degradedModel() });
+    await useAppStore.getState().saveToStorage();
+    const firstId = useAppStore.getState().currentProjectId!;
+
+    useAppStore.getState().startNewProject();
+    useAppStore.setState({ model: fixedModel() });
+    await useAppStore.getState().saveToStorage();
+    const secondId = useAppStore.getState().currentProjectId!;
+    expect(secondId).not.toBe(firstId);
+
+    await useAppStore.getState().refreshProjectList();
+    const ids = useAppStore.getState().projects.map((p) => p.id);
+    expect(ids).toEqual(expect.arrayContaining([firstId, secondId]));
+
+    await useAppStore.getState().openProject(firstId);
+    const svcAfterFirst = useAppStore.getState().model.components.find((c) => c.id === "svc");
+    if (svcAfterFirst?.kind !== "service") throw new Error("expected service");
+    expect(svcAfterFirst.instanceCount.value).toBe("single");
+    expect(useAppStore.getState().currentProjectId).toBe(firstId);
+
+    await useAppStore.getState().openProject(secondId);
+    const svcAfterSecond = useAppStore.getState().model.components.find((c) => c.id === "svc");
+    if (svcAfterSecond?.kind !== "service") throw new Error("expected service");
+    expect(svcAfterSecond.instanceCount.value).toBe("multiple");
+  });
+
+  it("deleteProjectById removes it from the list, and resets to blank if it was open", async () => {
+    useAppStore.setState({ model: degradedModel() });
+    await useAppStore.getState().saveToStorage();
+    const id = useAppStore.getState().currentProjectId!;
+    await useAppStore.getState().refreshProjectList();
+    expect(useAppStore.getState().projects.map((p) => p.id)).toContain(id);
+
+    await useAppStore.getState().deleteProjectById(id);
+
+    expect(useAppStore.getState().projects.map((p) => p.id)).not.toContain(id);
+    expect(useAppStore.getState().currentProjectId).toBeNull();
+    expect(useAppStore.getState().model.components).toHaveLength(0);
   });
 });
 
@@ -451,21 +663,28 @@ describe("startNewProject", () => {
     expect(state.versions).toHaveLength(0);
     expect(state.previewVersionId).toBeNull();
     expect(state.viewingComponent).toBeNull();
+    expect(state.currentProjectId).toBeNull();
   });
 
-  it("never touches the saved localStorage slot", () => {
-    vi.stubGlobal("localStorage", fakeLocalStorage());
+  it("doesn't delete the previously saved project from the database — it just stops auto-resuming it", async () => {
     useAppStore.setState({ model: degradedModel(), history: [] });
-    useAppStore.getState().saveToStorage();
-    const savedAt = useAppStore.getState().lastSavedAt;
+    await useAppStore.getState().saveToStorage();
+    const projectId = useAppStore.getState().currentProjectId!;
 
     useAppStore.getState().startNewProject();
-    useAppStore.getState().hydrateFromStorage();
 
-    // The saved project comes right back — startNewProject never wrote to
-    // (or cleared) the one saved slot itself.
+    // Still there in storage...
+    await useAppStore.getState().refreshProjectList();
+    expect(useAppStore.getState().projects.map((p) => p.id)).toContain(projectId);
+
+    // ...but a bare hydrate no longer auto-resumes it, since startNewProject
+    // cleared the local "last opened" pointer on purpose.
+    await useAppStore.getState().hydrateFromStorage();
+    expect(useAppStore.getState().model.components).toHaveLength(0);
+
+    // Explicitly reopening it still works.
+    await useAppStore.getState().openProject(projectId);
     expect(useAppStore.getState().model.components.length).toBeGreaterThan(0);
-    expect(useAppStore.getState().lastSavedAt).toBe(savedAt);
   });
 });
 

@@ -17,7 +17,7 @@ function SegmentedToggle({
   label: string;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="flex rounded-md border border-slate-200 p-0.5">
+    <div role="radiogroup" aria-label={label} className="flex rounded-md border border-slate-200 p-0.5 dark:border-slate-700">
       {options.map((opt) => (
         <button
           key={opt}
@@ -26,7 +26,9 @@ function SegmentedToggle({
           onClick={() => onChange(opt)}
           className={
             "rounded px-2 py-0.5 text-xs font-medium transition-colors " +
-            (opt === value ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100")
+            (opt === value
+              ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+              : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700")
           }
         >
           {opt}
@@ -56,8 +58,8 @@ function TierControl({
   const options = ladder.map(formatTier);
 
   return (
-    <div className="border-b border-slate-100 pb-3 pt-2 last:border-b-0">
-      <span className="text-xs font-medium text-slate-700">{label}</span>
+    <div className="border-b border-slate-100 pb-3 pt-2 last:border-b-0 dark:border-slate-700">
+      <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{label}</span>
       <div className="mt-1.5">
         <SegmentedToggle
           options={options}
@@ -88,11 +90,11 @@ export function ControlPanel({ model }: { model: SystemModel }) {
   return (
     <Card padding="sm" className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-900">Controls</h3>
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Controls</h3>
         <button
           onClick={undo}
           disabled={history.length === 0}
-          className="flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition-colors enabled:hover:border-slate-300 enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition-colors enabled:hover:border-slate-300 enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:enabled:hover:border-slate-500 dark:enabled:hover:bg-slate-700"
         >
           <UndoIcon className="h-3.5 w-3.5" />
           Undo
@@ -104,8 +106,8 @@ export function ControlPanel({ model }: { model: SystemModel }) {
         <TierControl dimension="requests" value={model.workload.requests} />
       )}
 
-      <div className="border-t border-slate-100 pt-2">
-        <p className="text-xs text-slate-500">
+      <div className="border-t border-slate-100 pt-2 dark:border-slate-700">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
           Click any node in the diagram to see its properties and fix history.
         </p>
       </div>

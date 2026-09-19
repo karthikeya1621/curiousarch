@@ -7,6 +7,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { checkout } from "@archsim/engine";
+import { MAX_DESCRIPTION_LENGTH } from "../lib/limits";
 
 const fromProseMock = vi.fn();
 vi.mock("@archsim/engine/server", () => ({
@@ -52,6 +53,12 @@ describe("POST /api/infer", () => {
   it("rejects an empty description with 400", async () => {
     const res = await POST(jsonRequest({ description: "   " }));
     expect(res.status).toBe(400);
+  });
+
+  it("rejects a description longer than MAX_DESCRIPTION_LENGTH with 400, without calling fromProse", async () => {
+    const res = await POST(jsonRequest({ description: "a".repeat(MAX_DESCRIPTION_LENGTH + 1) }));
+    expect(res.status).toBe(400);
+    expect(fromProseMock).not.toHaveBeenCalled();
   });
 
   it("rejects a non-JSON body with 400", async () => {

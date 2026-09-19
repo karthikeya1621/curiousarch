@@ -17,10 +17,10 @@ export function TrafficNode(_props: NodeProps) {
   if (workload.requests?.included) lines.push(`${formatTier(workload.requests.tier)} req/s`);
 
   return (
-    <div className="relative w-30 rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-center">
-      <Handle type="source" position={Position.Right} className="bg-slate-300!" />
+    <div className="relative w-30 rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-center dark:border-slate-700 dark:bg-slate-900">
+      <Handle type="source" position={Position.Right} className="bg-slate-300! dark:bg-slate-600!" />
       <ActivityIcon className="mx-auto h-3.5 w-3.5 text-slate-400" />
-      <p className="mt-0.5 text-xs font-semibold text-slate-700">Traffic</p>
+      <p className="mt-0.5 text-xs font-semibold text-slate-700 dark:text-slate-300">Traffic</p>
       {lines.map((line) => (
         <p key={line} className="font-mono text-[10px] text-slate-400">
           {line}

@@ -7,10 +7,9 @@
  * close enough to strict mode's compiled-grammar size limit that there
  * was no room left to also ask for workload parameters in the same tool
  * call — confirmed by binary search, even a single flat 3-field object
- * pushed it over. This call is sized like `proposeCacheTraits.ts`/
- * `explainFix.ts`, both confirmed live to have real headroom, and its
- * result is merged into the final `SystemModel` in code (`fromProse.ts`),
- * not asked of the topology call.
+ * pushed it over. This call is sized like `explainFix.ts`, confirmed
+ * live to have real headroom, and its result is merged into the final
+ * `SystemModel` in code (`fromProse.ts`), not asked of the topology call.
  *
  * Only `fromProse` needs this. `reworkModel` never does: the user sets a
  * new tier by moving a control, not by describing one — Re-simulate's

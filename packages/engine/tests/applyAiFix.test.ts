@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
 import { applyAiFix } from "../src/inference/applyAiFix.js";
 import { checkout } from "../models/reference.js";
-import { simulate } from "../src/solver.js";
 import type { AiFinding, AiFix, SystemModel } from "../src/types.js";
 
 const finding: AiFinding = {
@@ -92,7 +91,6 @@ describe("applyAiFix", () => {
     const result = await applyAiFix(checkout, finding, fix, { client });
 
     expect(result.repaired).toBe(false);
-    expect(() => simulate(result.model)).not.toThrow();
     const svc = result.model.components.find((c) => c.id === "svc");
     if (svc?.kind !== "service") throw new Error("expected service");
     expect(svc.hasCircuitBreaker.value).toBe(true);

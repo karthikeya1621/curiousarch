@@ -11,7 +11,6 @@ import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
 import { reworkModel } from "../src/inference/reworkModel.js";
 import { checkout } from "../models/reference.js";
-import { simulate } from "../src/solver.js";
 import type { SystemModel } from "../src/types.js";
 
 // reworkModel's own schema no longer asks for workload at all (see
@@ -64,6 +63,19 @@ function toolUseResponse(input: unknown): Anthropic.Message {
   } as unknown as Anthropic.Message;
 }
 
+// reworkModel now always makes a second, sequential call to
+// reviseExtendedComponents (see reworkModel.ts's own top comment) — every
+// fakeClient response list below needs one more canned response for it.
+// Empty components/edges is a valid response and keeps every existing
+// assertion about the BASE rework call unaffected.
+function emptyExtendedResponse(): Anthropic.Message {
+  return {
+    content: [
+      { type: "tool_use", id: "call_extended", name: "emit_extended_components", input: { components: [], edges: [] } },
+    ],
+  } as unknown as Anthropic.Message;
+}
+
 function fakeClient(
   responses: Anthropic.Message[],
   onCreate?: (params: Anthropic.MessageCreateParams) => void,
@@ -84,11 +96,10 @@ function fakeClient(
 
 describe("reworkModel", () => {
   it("returns a model unrepaired when the first attempt validates", async () => {
-    const client = fakeClient([toolUseResponse(validReworkInput)]);
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()]);
     const result = await reworkModel(checkout, [], { client });
 
     expect(result.repaired).toBe(false);
-    expect(() => simulate(result.model)).not.toThrow();
     // Confirms the rework kept the same id and preserved a component id
     // (svc) rather than the AI having renamed things.
     expect(result.model.id).toBe("checkout");
@@ -99,6 +110,7 @@ describe("reworkModel", () => {
     const client = fakeClient([
       toolUseResponse(invalidReworkInput),
       toolUseResponse(validReworkInput),
+      emptyExtendedResponse(),
     ]);
     const result = await reworkModel(checkout, [], { client });
 
@@ -125,6 +137,7 @@ describe("reworkModel", () => {
       toolUseResponse(invalidReworkInput),
       toolUseResponse(invalidReworkInput),
       toolUseResponse(validReworkInput),
+      emptyExtendedResponse(),
     ]);
 
     const result = await reworkModel(checkout, [], { client });
@@ -150,7 +163,7 @@ describe("reworkModel", () => {
         requests: { included: false, tier: 1000, target: 1000 },
       },
     };
-    const client = fakeClient([toolUseResponse(validReworkInput)]);
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()]);
     const result = await reworkModel(withParameters, [], { client });
 
     expect(result.model.workload.users).toEqual({ included: true, tier: 10_000, target: 1_000_000 });
@@ -160,10 +173,17 @@ describe("reworkModel", () => {
   it("includes queued pending fixes as explicit context in the user content, not the (cacheable) system prompt", async () => {
     let seenSystem: unknown;
     let seenUserContent: unknown;
-    const client = fakeClient([toolUseResponse(validReworkInput)], (params) => {
-      seenSystem = params.system;
-      seenUserContent = (params.messages[0] as { content: unknown }).content;
-    });
+    const client = fakeClient(
+      [toolUseResponse(validReworkInput), emptyExtendedResponse()],
+      (params) => {
+        // Only the base rework call — the second, reviseExtendedComponents
+        // call also fires onCreate, and would otherwise overwrite these
+        // with its own (unrelated) system/user content.
+        if ((params.tools?.[0] as { name?: string } | undefined)?.name !== "emit_system_model") return;
+        seenSystem = params.system;
+        seenUserContent = (params.messages[0] as { content: unknown }).content;
+      },
+    );
 
     await reworkModel(
       checkout,
@@ -188,9 +208,13 @@ describe("reworkModel", () => {
 
   it("omits the pending-fixes section entirely when none are queued", async () => {
     let seenUserContent: unknown;
-    const client = fakeClient([toolUseResponse(validReworkInput)], (params) => {
-      seenUserContent = (params.messages[0] as { content: unknown }).content;
-    });
+    const client = fakeClient(
+      [toolUseResponse(validReworkInput), emptyExtendedResponse()],
+      (params) => {
+        if ((params.tools?.[0] as { name?: string } | undefined)?.name !== "emit_system_model") return;
+        seenUserContent = (params.messages[0] as { content: unknown }).content;
+      },
+    );
 
     await reworkModel(checkout, [], { client });
 

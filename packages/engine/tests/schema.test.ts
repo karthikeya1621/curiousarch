@@ -1,12 +1,12 @@
 /**
  * A hand-written JSON fixture — the shape an LLM's structured output would
- * actually produce — round-trips through `SystemModelSchema` into a
- * `SystemModel` that `simulate()` accepts.
+ * actually produce — round-trips through `SystemModelSchema` into a valid
+ * `SystemModel`.
  */
 
 import { describe, expect, it } from "vitest";
 import { SystemModelSchema } from "../src/inference/schema.js";
-import { simulate } from "../src/solver.js";
+import { MAX_BASE_COMPONENTS } from "../src/types.js";
 
 /** Same topology as models/reference.ts's checkout system, as raw JSON. */
 const fixture = {
@@ -65,14 +65,10 @@ const fixture = {
 };
 
 describe("SystemModelSchema", () => {
-  it("parses a hand-written fixture into a SystemModel simulate() accepts", () => {
+  it("parses a hand-written fixture into a well-formed SystemModel", () => {
     const parsed = SystemModelSchema.parse(fixture);
-    expect(() => simulate(parsed)).not.toThrow();
-
-    // No circuit breaker on a 3-deep synchronous chain — the same
-    // cascading-failure risk the golden test asserts for the real model.
-    const result = simulate(parsed);
-    expect(result.findings.map((f) => f.code)).toContain("CASCADING_FAILURE_RISK");
+    expect(parsed.components).toHaveLength(fixture.components.length);
+    expect(parsed.edges).toEqual(fixture.edges);
   });
 
   it("rejects a component kind the engine doesn't support", () => {
@@ -121,8 +117,8 @@ describe("SystemModelSchema", () => {
   });
 
   it("rejects a model with only a gateway — nothing actually doing work", () => {
-    // Found live: a bare-gateway model passes every other check and reaches
-    // simulate() as a trivially "healthy" system for a prose description
+    // Found live: a bare-gateway model passed every other check and reached
+    // the web app as a trivially "healthy" system for a prose description
     // that was clearly about more than admission control.
     const gatewayOnly = {
       ...fixture,
@@ -136,5 +132,51 @@ describe("SystemModelSchema", () => {
         true,
       );
     }
+  });
+
+  it("rejects a model with more than MAX_BASE_COMPONENTS components", () => {
+    // Guardrail against an unbounded (and increasingly expensive to
+    // generate/re-generate) system — see types.ts's own comment on
+    // MAX_BASE_COMPONENTS.
+    const tooMany = {
+      ...fixture,
+      components: Array.from({ length: MAX_BASE_COMPONENTS + 1 }, (_, i) => ({
+        ...fixture.components[1]!,
+        id: `svc-${i}`,
+      })),
+      edges: [],
+    };
+    const result = SystemModelSchema.safeParse(tooMany);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => /too many components/i.test(i.message))).toBe(true);
+    }
+  });
+
+  it("rejects a trait rationale that's a throwaway placeholder instead of a real reason", () => {
+    // Found live: an extended component occasionally got a real trait
+    // value but a one-word "rationale" like "invalid" or "placeholder" —
+    // meaningless text that still trivially satisfied a bare `.min(1)`.
+    // traitSchema() (schema.ts) now rejects these outright.
+    for (const placeholder of ["invalid", "placeholder", "n/a", "TBD", "Unknown"]) {
+      const bad = {
+        ...fixture,
+        components: fixture.components.map((c) =>
+          c.id === "gw" ? { ...c, hasRateLimiting: { ...c.hasRateLimiting, rationale: placeholder } } : c,
+        ),
+      };
+      const result = SystemModelSchema.safeParse(bad);
+      expect(result.success, `expected "${placeholder}" to be rejected`).toBe(false);
+    }
+  });
+
+  it("still accepts a short but genuine rationale", () => {
+    const ok = {
+      ...fixture,
+      components: fixture.components.map((c) =>
+        c.id === "gw" ? { ...c, hasRateLimiting: { ...c.hasRateLimiting, rationale: "Stated in the prose." } } : c,
+      ),
+    };
+    expect(SystemModelSchema.safeParse(ok).success).toBe(true);
   });
 });

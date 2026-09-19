@@ -11,6 +11,13 @@ import {
   CacheIcon,
   DatabaseIcon,
   QueueIcon,
+  ExternalDependencyIcon,
+  LoadBalancerIcon,
+  MessageBrokerIcon,
+  CdnIcon,
+  ObjectStorageIcon,
+  ScheduledJobIcon,
+  ConfigStoreIcon,
   WrenchIcon,
   XIcon,
 } from "./icons";
@@ -21,14 +28,31 @@ const KIND_ICON: Record<Component["kind"], (props: { className?: string }) => Re
   cache: CacheIcon,
   database: DatabaseIcon,
   queue: QueueIcon,
+  "external-dependency": ExternalDependencyIcon,
+  "load-balancer": LoadBalancerIcon,
+  "message-broker": MessageBrokerIcon,
+  cdn: CdnIcon,
+  "object-storage": ObjectStorageIcon,
+  "scheduled-job": ScheduledJobIcon,
+  "config-store": ConfigStoreIcon,
 };
 
+// Same 7 hues as ComponentNode.tsx's own KIND_TONE — kept in sync by hand
+// since each is a small, distinct Tailwind class map; cyan (the app's own
+// primary accent) is deliberately never used here either.
 const KIND_TONE: Record<Component["kind"], string> = {
-  gateway: "bg-slate-100 text-slate-500",
-  service: "bg-blue-50 text-blue-600",
-  cache: "bg-amber-50 text-amber-600",
-  database: "bg-violet-50 text-violet-600",
-  queue: "bg-teal-50 text-teal-600",
+  gateway: "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300",
+  service: "bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300",
+  cache: "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300",
+  database: "bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300",
+  queue: "bg-teal-50 text-teal-600 dark:bg-teal-950/40 dark:text-teal-300",
+  "external-dependency": "bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-300",
+  "load-balancer": "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300",
+  "message-broker": "bg-fuchsia-50 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-300",
+  cdn: "bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-300",
+  "object-storage": "bg-orange-50 text-orange-600 dark:bg-orange-950/40 dark:text-orange-300",
+  "scheduled-job": "bg-lime-50 text-lime-600 dark:bg-lime-950/40 dark:text-lime-300",
+  "config-store": "bg-pink-50 text-pink-600 dark:bg-pink-950/40 dark:text-pink-300",
 };
 
 const PROVENANCE_TONE: Record<Trait<unknown>["provenance"], BadgeTone> = {
@@ -82,7 +106,7 @@ export function ComponentDetailModal() {
             <KindIcon className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-slate-900">{component.label}</p>
+            <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{component.label}</p>
             <p className="truncate text-[11px] text-slate-400">
               {component.id} · {component.kind}
             </p>
@@ -91,24 +115,24 @@ export function ComponentDetailModal() {
         <button
           onClick={closeComponentDetail}
           aria-label="Close"
-          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
         >
           <XIcon className="h-3.5 w-3.5" />
         </button>
       </div>
 
       {traits.length > 0 && (
-        <div className="mt-4 flex max-h-64 flex-col divide-y divide-slate-100 overflow-y-auto">
+        <div className="mt-4 flex max-h-64 flex-col divide-y divide-slate-100 overflow-y-auto dark:divide-slate-700">
           {traits.map(([field, trait]) => (
             <div key={field} className="flex items-start justify-between gap-3 py-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-medium text-slate-700">{field}</span>
+                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{field}</span>
                   <Badge tone={PROVENANCE_TONE[trait.provenance]}>{trait.provenance}</Badge>
                 </div>
                 <p className="text-[11px] text-slate-400">{trait.rationale}</p>
               </div>
-              <span className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+              <span className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-300">
                 {typeof trait.value === "boolean" ? (trait.value ? "on" : "off") : String(trait.value)}
               </span>
             </div>
@@ -116,7 +140,7 @@ export function ComponentDetailModal() {
         </div>
       )}
 
-      <div className="mt-4 border-t border-slate-100 pt-3">
+      <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-700">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
           Fixes for this component
         </p>
@@ -125,13 +149,13 @@ export function ComponentDetailModal() {
         ) : (
           <div className="mt-1.5 flex flex-col gap-1.5">
             {fixesHere.map((f, i) => (
-              <div key={i} className="flex items-start gap-1.5 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+              <div key={i} className="flex items-start gap-1.5 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs dark:bg-slate-900">
                 <WrenchIcon
-                  className={"mt-0.5 h-3 w-3 shrink-0 " + (f.status === "queued" ? "text-amber-600" : "text-emerald-600")}
+                  className={"mt-0.5 h-3 w-3 shrink-0 " + (f.status === "queued" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400")}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-medium text-slate-700">{f.fixLabel}</span>
+                    <span className="font-medium text-slate-700 dark:text-slate-300">{f.fixLabel}</span>
                     <Badge tone={f.status === "queued" ? "warning" : "success"}>
                       {f.status === "queued" ? "Queued" : "Applied"}
                     </Badge>

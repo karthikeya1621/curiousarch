@@ -41,7 +41,7 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
 
   if (findingsStatus === "loading") {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-xs text-slate-500">
+      <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-400">
         <SparklesIcon className="h-4 w-4 shrink-0 text-slate-400" />
         <span>Reviewing this architecture…</span>
       </div>
@@ -50,7 +50,7 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
 
   if (findingsError) {
     return (
-      <div className="flex items-start gap-2 rounded-xl border border-dashed border-rose-300 bg-rose-50/60 p-4 text-xs text-rose-600">
+      <div className="flex items-start gap-2 rounded-xl border border-dashed border-rose-300 bg-rose-50/60 p-4 text-xs text-rose-600 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-400">
         <AlertTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
         <span>{findingsError}</span>
       </div>
@@ -59,7 +59,7 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
 
   if (!openComponentId) {
     return (
-      <div className="flex items-start gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-xs text-slate-500">
+      <div className="flex items-start gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-400">
         <AlertTriangleIcon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
         <span>Click a node&apos;s failure-count badge to see what could go wrong there.</span>
       </div>
@@ -71,18 +71,18 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
   return (
     <Card padding="sm">
       <div className="mb-3 flex items-center justify-between">
-        <p className="text-sm font-semibold text-slate-900">Possible failures</p>
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Possible failures</p>
         <button
           onClick={() => setOpenComponentId(null)}
           aria-label="Close"
-          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
         >
           <XIcon className="h-3.5 w-3.5" />
         </button>
       </div>
       <div className="flex flex-col gap-1.5">
         {relevant.length === 0 && (
-          <p className="text-xs text-slate-500">No issues found here — looks solid.</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">No issues found here — looks solid.</p>
         )}
         {relevant.map((f) => {
           const status = getFixStatus(f, appliedFixes, pendingFixes);
@@ -91,17 +91,17 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
               key={findingKey(f)}
               onClick={() => selectFinding(findingKey(f))}
               className={
-                "rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:border-slate-300 hover:bg-slate-50 " +
-                (status !== "none" ? "border-slate-100 opacity-60" : "border-slate-200")
+                "rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:border-slate-300 hover:bg-slate-50 dark:hover:border-slate-500 dark:hover:bg-slate-700 " +
+                (status !== "none" ? "border-slate-100 opacity-60 dark:border-slate-700" : "border-slate-200 dark:border-slate-600")
               }
             >
               <div className="flex items-center gap-1.5">
                 <Badge tone={f.severity === "critical" ? "critical" : "warning"}>{f.severity}</Badge>
                 {status === "queued" && <Badge tone="warning">Queued</Badge>}
                 {status === "fixed" && <Badge tone="success">Fixed</Badge>}
-                <span className="font-medium text-slate-900">{f.title}</span>
+                <span className="font-medium text-slate-900 dark:text-slate-100">{f.title}</span>
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 {status === "queued"
                   ? "Queued — Re-simulate to see this fix in action."
                   : status === "fixed"

@@ -39,7 +39,7 @@ export function Modal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className={`w-full ${widthClassName} rounded-xl border border-slate-200 bg-white p-5 shadow-lg`}
+        className={`w-full ${widthClassName} rounded-xl border border-slate-200 bg-white p-5 shadow-lg dark:border-slate-700 dark:bg-slate-800`}
       >
         {children}
       </div>

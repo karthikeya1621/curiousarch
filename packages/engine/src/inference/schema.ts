@@ -23,6 +23,7 @@
  */
 
 import { z } from "zod";
+import { MAX_BASE_COMPONENTS } from "../types.ts";
 import type { Component, Edge, SystemModel } from "../types.ts";
 
 // Exported for the same reason BooleanTraitSchema is below: this single
@@ -34,14 +35,44 @@ import type { Component, Edge, SystemModel } from "../types.ts";
 // top-level definition.
 export const ProvenanceSchema = z.enum(["stated", "inferred", "default"]);
 
-// Exported so other structured-output schemas (e.g. an AI-proposed set of
-// specific trait values for a fix, in inference/proposeCacheTraits.ts) can
-// build a trait shape without duplicating rationale/provenance/value.
+// Caught live: an inferred (not explicitly-stated) extended component
+// occasionally got real values but throwaway one-word "rationale" text —
+// "invalid", "placeholder" — that trivially passed `.min(1)` while being
+// no actual reason at all. Exact-match (not substring) so a genuine
+// sentence that happens to use one of these words mid-sentence — "no
+// mention of it, so we assume none" — is never caught by accident.
+const PLACEHOLDER_RATIONALES = new Set([
+  "invalid",
+  "placeholder",
+  "n/a",
+  "na",
+  "todo",
+  "tbd",
+  "unknown",
+  "test",
+  "example",
+  "none",
+  "unspecified",
+  "lorem ipsum",
+]);
+
+// Exported so other structured-output schemas can build a trait shape
+// without duplicating rationale/provenance/value (see extendedComponents.ts).
 export function traitSchema<T extends z.ZodTypeAny>(valueSchema: T) {
   return z.object({
     rationale: z
       .string()
-      .min(1, "Every trait needs a one-line reason, even for a default."),
+      // A real one-line reason ("No mention of rate limiting; a basic
+      // launch gateway typically lacks it") is never this short — raised
+      // from `.min(1)` specifically to force out the single-word
+      // placeholders below, not to demand a longer style of writing.
+      .min(10, "Every trait needs an actual one-line reason, not a one-word placeholder.")
+      .refine(
+        (r) => !PLACEHOLDER_RATIONALES.has(r.trim().toLowerCase()),
+        (r) => ({
+          message: `"${r}" is a placeholder, not a reason — state why this value was chosen, referencing what the prose said or what's typical for this kind of component.`,
+        }),
+      ),
     provenance: ProvenanceSchema,
     value: valueSchema,
   });
@@ -61,7 +92,10 @@ export const BooleanTraitSchema = traitSchema(z.boolean());
 // instance per component schema — zod-to-json-schema treats reused object
 // identity as something to $ref, and pointed that $ref straight at the
 // first occurrence's in-document path, which the API rejects live.
-const baseFields = () => ({
+// Exported so inference/extendedComponents.ts's own kind schemas (a
+// genuinely separate tool call/schema — see that file's own top comment)
+// build components the exact same shape without a second, driftable copy.
+export const baseFields = () => ({
   id: z.string().min(1),
   label: z.string().min(1),
 });
@@ -114,7 +148,10 @@ const ComponentSchema = z.discriminatedUnion("kind", [
   QueueSchema,
 ]);
 
-const EdgeSchema = z.object({
+// Exported for the same reason `baseFields` is — extendedComponents.ts's
+// own schema needs the identical edge shape for the edges it proposes
+// between extended-kind components and the rest of the topology.
+export const EdgeSchema = z.object({
   from: z.string().min(1),
   to: z.string().min(1),
 });
@@ -129,16 +166,13 @@ const EdgeSchema = z.object({
  * search: even a single flat 3-field object pushed it over, regardless of
  * how that object was shaped. The AI-driven flow's users/requests
  * parameters are a genuinely SEPARATE, small structured call instead
- * (`inference/workloadParameters.ts`, sized like `proposeCacheTraits.ts`/
- * `explainFix.ts`, both confirmed live to have real headroom), run
- * alongside this one and merged into the final `SystemModel` in code.
+ * (`inference/workloadParameters.ts`, sized like `explainFix.ts`, both
+ * confirmed live to have real headroom), run alongside this one and
+ * merged into the final `SystemModel` in code.
  *
- * `workload` here is an EMPTY object — not even `scale` (the dormant
- * deterministic engine's own field, see types.ts's Workload comment) is
- * asked for anymore, once it was clear `scale` is optional on the type
- * and genuinely unread by anything the AI-driven flow does: every extra
- * field costs real, scarce grammar budget, and this one was free to drop
- * entirely rather than just minimize.
+ * `workload` here is an EMPTY object — every extra field costs real,
+ * scarce grammar budget, and this one was free to drop entirely rather
+ * than just minimize.
  */
 const WorkloadSchema = z.object({});
 
@@ -167,6 +201,20 @@ export const SystemModelSchema = z
         code: z.ZodIssueCode.custom,
         message:
           "A capacity model needs at least one component beyond the entry point — describe what actually does the work (a service, cache, database, or queue).",
+        path: ["components"],
+      });
+    }
+
+    // A guardrail, not a real architectural limit — see types.ts's own
+    // comment on MAX_BASE_COMPONENTS: an unbounded model costs more to
+    // generate and re-generate the bigger it gets, and risks the same
+    // output-length truncation structuredCall.ts's own comment documents.
+    // This is the hard backstop; the prompt (prompt.ts) is what actually
+    // keeps most responses well under it in the first place.
+    if (model.components.length > MAX_BASE_COMPONENTS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Too many components (${model.components.length}) — model the core request-path topology with at most ${MAX_BASE_COMPONENTS} base components (gateway/service/cache/database/queue). Anything else (a third-party dependency, a CDN, a scheduled job, ...) is added separately — don't invent extra base components to represent it.`,
         path: ["components"],
       });
     }
@@ -212,7 +260,7 @@ export const SystemModelSchema = z
     }
   });
 
-/** Kahn's algorithm, run for feasibility only — same check `solver.ts` makes. */
+/** Kahn's algorithm, run for feasibility only. */
 function findCycle(
   components: { id: string }[],
   edges: { from: string; to: string }[],

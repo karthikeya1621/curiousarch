@@ -34,7 +34,7 @@ export function FailureIndicator({
     <div className={wrapperClassName}>
       <button
         className={
-          "nodrag flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white ring-2 ring-white transition-colors " +
+          "nodrag flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white ring-2 ring-white transition-colors dark:ring-slate-800 " +
           (isOpen ? "bg-amber-600" : "bg-amber-400 hover:bg-amber-500")
         }
         onMouseDown={(e) => e.stopPropagation()}

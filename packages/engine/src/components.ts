@@ -1,16 +1,17 @@
 /**
  * Structural component helpers — properties derivable from a component's
  * kind alone, independent of graph context (arrival, load, replication
- * pressure), which live in solver.ts/patterns.ts instead.
+ * pressure).
  *
  * This file used to also hold the numeric capacity model (M/M/c profiles,
  * `capacityOf`, `evaluate`) — deleted along with `queueing.ts` when the
  * engine moved from simulating queueing math on guessed magnitudes to
- * pattern-matching over rough, categorical traits. `isAsyncBoundary` is the
- * one piece of that era that's still load-bearing: it's exactly the signal
- * `patterns.ts`'s cascading-failure check needs (a synchronous chain stops
- * at a queue, because the caller doesn't wait for it to drain), and it
- * never depended on any numeric parameter to begin with.
+ * categorical traits. `isAsyncBoundary` is the one piece of that era
+ * that's still load-bearing: it's exactly the signal the web app's own
+ * diagram (`apps/web/lib/layout.ts`) needs to render an edge as async — a
+ * synchronous chain stops at a queue, because the caller doesn't wait for
+ * it to drain — and it never depended on any numeric parameter to begin
+ * with.
  */
 
 import type { Component } from "./types.ts";

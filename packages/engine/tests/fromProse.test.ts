@@ -6,20 +6,20 @@
  * sane rough model" question still needs a live key; this only proves the
  * harness around it is correct.
  *
- * `fromProse` makes TWO independent calls in parallel now (topology +
- * workloadParameters — see fromProse.ts's own comment on why), so the fake
- * client here routes canned responses by which tool is being called rather
- * than a single shared sequential queue. These tests are all about the
- * TOPOLOGY call's retry behavior; the workload-parameters call is always
- * given one simple valid response so it never interferes with what's being
- * tested. `workloadParameters.test.ts` covers that call's own retry
- * behavior independently.
+ * `fromProse` makes THREE calls now — topology and workloadParameters in
+ * parallel, then extendedComponents sequentially after (see fromProse.ts's
+ * own comment on why) — so the fake client here routes canned responses by
+ * which tool is being called rather than a single shared sequential queue.
+ * These tests are all about the TOPOLOGY call's retry behavior; the
+ * workload-parameters and extended-components calls are always given one
+ * simple valid response each so neither interferes with what's being
+ * tested. `workloadParameters.test.ts`/`extendedComponents.test.ts` cover
+ * those calls' own retry behavior independently.
  */
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
 import { fromProse } from "../src/inference/fromProse.js";
-import { simulate } from "../src/solver.js";
 
 const validModelInput = {
   id: "toy",
@@ -69,21 +69,32 @@ function toolNameOf(args: unknown): string {
   return (args as { tool_choice?: { name?: string } }).tool_choice?.name ?? "";
 }
 
+const emptyExtendedComponentsInput = { components: [], edges: [] };
+
 /**
  * Routes by which tool is being called (`emit_system_model` vs
- * `emit_workload_parameters`), since fromProse now runs both concurrently.
- * Each tool gets its own sequential queue of canned responses.
+ * `emit_workload_parameters` vs `emit_extended_components`), since
+ * fromProse now makes all three (the first two concurrently, the third
+ * after). Each tool gets its own sequential queue of canned responses.
  */
 function fakeClient(topologyResponses: Anthropic.Message[]): Anthropic {
   let topologyCall = 0;
   let workloadCall = 0;
+  let extendedCall = 0;
   return {
     messages: {
       create: async (args: unknown) => {
-        if (toolNameOf(args) === "emit_workload_parameters") {
+        const tool = toolNameOf(args);
+        if (tool === "emit_workload_parameters") {
           const response = workloadCall === 0 ? toolUseResponse("emit_workload_parameters", validWorkloadParamsInput) : undefined;
           workloadCall++;
           if (!response) throw new Error("fakeClient: no more canned workload-parameters responses");
+          return response;
+        }
+        if (tool === "emit_extended_components") {
+          const response = extendedCall === 0 ? toolUseResponse("emit_extended_components", emptyExtendedComponentsInput) : undefined;
+          extendedCall++;
+          if (!response) throw new Error("fakeClient: no more canned extended-components responses");
           return response;
         }
         const response = topologyResponses[topologyCall];
@@ -101,7 +112,6 @@ describe("fromProse", () => {
     const result = await fromProse("a toy system", { client });
 
     expect(result.repaired).toBe(false);
-    expect(() => simulate(result.model)).not.toThrow();
     expect(result.model.id).toBe("toy");
     // The workload-parameters call's result is merged in alongside the topology.
     expect(result.model.workload.users?.tier).toBe(100);
@@ -168,8 +178,12 @@ describe("fromProse", () => {
     const client = {
       messages: {
         create: async (args: unknown) => {
-          if (toolNameOf(args) === "emit_workload_parameters") {
+          const tool = toolNameOf(args);
+          if (tool === "emit_workload_parameters") {
             return toolUseResponse("emit_workload_parameters", validWorkloadParamsInput);
+          }
+          if (tool === "emit_extended_components") {
+            return toolUseResponse("emit_extended_components", emptyExtendedComponentsInput);
           }
           topologyCalls.push(args);
           return topologyCalls.length === 1

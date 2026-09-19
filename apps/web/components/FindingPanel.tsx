@@ -84,25 +84,25 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
           <Badge tone={finding.severity === "critical" ? "critical" : "warning"}>
             {finding.severity}
           </Badge>
-          <p className="text-sm font-semibold text-slate-900">{finding.title}</p>
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{finding.title}</p>
         </div>
         <button
           onClick={() => selectFinding(null)}
           aria-label="Close finding"
-          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
         >
           <XIcon className="h-3.5 w-3.5" />
         </button>
       </div>
-      <p className="text-xs text-slate-500">{finding.explanation}</p>
+      <p className="text-xs text-slate-500 dark:text-slate-400">{finding.explanation}</p>
       {status === "queued" && (
-        <p className="mt-2 flex items-center gap-1 text-xs font-medium text-amber-700">
+        <p className="mt-2 flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400">
           <Badge tone="warning">Queued</Badge>
           Re-simulate to see this fix in action.
         </p>
       )}
       {status === "fixed" && (
-        <p className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-600">
+        <p className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
           <Badge tone="success">Fixed</Badge>
           Re-simulate to confirm and refresh this finding.
         </p>
@@ -117,7 +117,7 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
               key={fix.id}
               className={
                 "rounded-lg border text-sm transition-colors " +
-                (isSelected ? "border-slate-300 bg-slate-50" : "border-slate-200")
+                (isSelected ? "border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-700" : "border-slate-200 dark:border-slate-700")
               }
             >
               <button
@@ -128,18 +128,18 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
                 }}
                 className="w-full px-3 py-2 text-left"
               >
-                <span className="font-medium text-slate-900">{fix.label}</span>
-                <p className="text-xs text-slate-500">{fix.tradeoff}</p>
+                <span className="font-medium text-slate-900 dark:text-slate-100">{fix.label}</span>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{fix.tradeoff}</p>
               </button>
               {isSelected && (
-                <div className="flex flex-col gap-2 border-t border-slate-200 px-3 py-2">
-                  {rationale && <p className="text-xs italic text-slate-500">{rationale}</p>}
-                  {askError && <p className="text-[11px] text-rose-600">{askError}</p>}
+                <div className="flex flex-col gap-2 border-t border-slate-200 px-3 py-2 dark:border-slate-600">
+                  {rationale && <p className="text-xs italic text-slate-500 dark:text-slate-400">{rationale}</p>}
+                  {askError && <p className="text-[11px] text-rose-600 dark:text-rose-400">{askError}</p>}
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => askAi(fix)}
                       disabled={askingAi}
-                      className="flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition-colors enabled:hover:border-slate-300 enabled:hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition-colors enabled:hover:border-slate-300 enabled:hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:text-slate-300 dark:enabled:hover:border-slate-500 dark:enabled:hover:bg-slate-600"
                     >
                       <SparklesIcon className="h-3 w-3" />
                       {askingAi ? "Asking…" : "Ask AI"}
@@ -149,8 +149,8 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
                       className={
                         "flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors " +
                         (isQueued
-                          ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
-                          : "bg-slate-900 text-white hover:bg-slate-700")
+                          ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                          : "bg-slate-900 text-white hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300")
                       }
                     >
                       {isQueued && <WrenchIcon className="h-3 w-3" />}
