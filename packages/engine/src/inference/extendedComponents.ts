@@ -195,6 +195,8 @@ You will be given: the system's PREVIOUS extended components (if any), and its f
 
 The default action for every previous extended component is to KEEP it, with its EXACT same id, and RE-WIRE its edge(s) to whatever base component now serves the equivalent role (base component ids may have changed during the rework you're not shown the details of). Only drop one if the system described no longer has any plausible need for it at all - not because the base topology's ids changed, not because you're being cautious, and never as a default. This is the same "preserve by default" rule the base rework itself follows: silently losing something the user's system already had is a mistake, not a simplification. Only mint a new id for something genuinely new that didn't exist before.
 
+You may also be given additional context about a specific request already being applied elsewhere to this system right now - a chat-requested change, or a fix the user explicitly chose. If it calls for adding, modifying, or removing one of your own extended-kind components, implement that now; it takes priority over "preserve by default" above where the two genuinely conflict. If none is given, or it has nothing to do with your kinds, "preserve by default" is all that applies.
+
 ${EDGE_REQUIREMENT}
 
 Output only the structured components and edges. Do not add commentary.`;
@@ -302,11 +304,21 @@ export async function reviseExtendedComponents(
   previousExtended: Component[],
   reworkedBaseModel: { components: BaseComponentRef[] },
   options: StructuredCallOptions = {},
+  /**
+   * Freeform, pre-formatted context about a specific request driving this
+   * revision — a chat message (chatWithProject.ts) or a formatted pending-
+   * fixes list (reworkModel.ts's own `formatPendingFixes`) — appended
+   * verbatim, or omitted for a plain holistic reconsideration with no
+   * specific request behind it. Each caller owns its own wording; this
+   * function only appends whatever it's given. See REVISE_PROMPT's own
+   * paragraph on how it's weighed against "preserve by default".
+   */
+  additionalContext?: string,
 ): Promise<{ components: Component[]; edges: Edge[] }> {
   const { remaining, text: budget } = budgetLine(reworkedBaseModel.components.length);
   const result = await runStructuredCall(
     REVISE_PROMPT,
-    `Previous extended components:\n${JSON.stringify(previousExtended, null, 2)}\n\nFreshly reworked base topology:\n${baseComponentContext(reworkedBaseModel)}\n\n${budget}`,
+    `Previous extended components:\n${JSON.stringify(previousExtended, null, 2)}\n\nFreshly reworked base topology:\n${baseComponentContext(reworkedBaseModel)}\n\n${budget}${additionalContext ?? ""}`,
     ExtendedComponentsResponseSchema,
     buildTool(),
     { maxRetries: 2, ...options },

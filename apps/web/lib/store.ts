@@ -581,7 +581,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   sendChatMessage: async (message) => {
-    const { model, chatMessages } = get();
+    const { model, chatMessages, findings, pendingFixes } = get();
     // Bounded window, not the full transcript — see this file's own
     // comment on CHAT_HISTORY_WINDOW: unbounded history is exactly the
     // kind of cost creep this project has been actively cutting elsewhere.
@@ -594,10 +594,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatError: null,
     });
     try {
+      // `findings`/`pendingFixes` are what the dashboard is showing right
+      // now — passed so chat's answers stay grounded in exactly that, not
+      // a version it re-derives fresh from the raw model alone. Same
+      // "send the full store shape, the API route narrows it" pattern
+      // ResimulateButton.tsx already uses for `pendingFixes`.
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, message, history }),
+        body: JSON.stringify({ model, message, history, findings, pendingFixes }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Chat failed.");

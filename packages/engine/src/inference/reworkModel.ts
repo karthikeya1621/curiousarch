@@ -79,7 +79,7 @@ export interface PendingFixInput {
   fixTradeoff: string;
 }
 
-function formatPendingFixes(pendingFixes: PendingFixInput[]): string {
+export function formatPendingFixes(pendingFixes: PendingFixInput[]): string {
   if (pendingFixes.length === 0) return "";
   const lines = pendingFixes
     .map((f) => `- On "${f.componentId}": ${f.fixLabel} (addressing: ${f.findingTitle}) — tradeoff: ${f.fixTradeoff}`)
@@ -107,7 +107,14 @@ export async function reworkModel(
   // extended components come from the INPUT model, not the base rework's
   // own output — that output can never contain them (see REWORK_PROMPT).
   const previousExtended: Component[] = model.components.filter(isExtendedComponent);
-  const extended = await reviseExtendedComponents(previousExtended, result.data, options);
+  // A queued fix can target an extended component (e.g. "add a fallback"
+  // on an external-dependency) — passed through as the same
+  // `additionalContext` mechanism chatWithProject.ts uses for a chat
+  // message, so it isn't silently ignored by a call that only otherwise
+  // sees "previous extended components" + "current base topology".
+  // `formatPendingFixes` returns "" for an empty list, which is a no-op
+  // here exactly as it is on the base call above.
+  const extended = await reviseExtendedComponents(previousExtended, result.data, options, formatPendingFixes(pendingFixes));
 
   return {
     model: {

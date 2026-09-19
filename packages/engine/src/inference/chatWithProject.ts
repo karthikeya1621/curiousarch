@@ -18,16 +18,37 @@
  * updated topology" shape `reworkModel`/`applyAiFix` already use. A pure
  * question never reaches that second call at all.
  *
- * The model is embedded in the SYSTEM prompt here (not the user
- * content, unlike every other inference module) specifically so it's
- * cacheable across a multi-message conversation: as long as the model
- * hasn't changed between two chat messages, the system prompt string is
- * byte-identical, so structuredCall.ts's cache_control on `system`
- * actually saves reprocessing the (often large) model JSON, not just
- * the small static instructions. The moment the model does change (a
- * fix/tier-change happened elsewhere), the system prompt naturally
- * differs and the cache misses once — correct, since the AI genuinely
- * needs to see the update.
+ * `findings`/`pendingFixes` (both optional): what the dashboard is
+ * currently showing — the AI-generated findings from `identifyFailures.ts`
+ * and any fixes the user has queued but not yet applied via Re-simulate.
+ * Found live: without these, chat had to re-derive an answer from the raw
+ * model alone, so "why did you flag X" could land on an answer that
+ * didn't quite match the wording already on screen, and chat had zero
+ * visibility into a fix the user had already decided to queue. Passed as
+ * context only — chat never asserts a finding of its own, and disagreeing
+ * with what's already displayed is a bug to notice, not something to
+ * paper over by having chat just echo the display text back.
+ *
+ * The model (and findings/pendingFixes alongside it) is embedded in the
+ * SYSTEM prompt here (not the user content, unlike every other inference
+ * module) specifically so it's cacheable across a multi-message
+ * conversation: as long as none of it has changed between two chat
+ * messages, the system prompt string is byte-identical, so
+ * structuredCall.ts's cache_control on `system` actually saves
+ * reprocessing the (often large) model JSON, not just the small static
+ * instructions. The moment any of it changes (a fix/tier-change happened
+ * elsewhere, or a fix got queued), the system prompt naturally differs
+ * and the cache misses once — correct, since the AI genuinely needs to
+ * see the update.
+ *
+ * A second, sequential call — same as `reworkModel.ts` — always follows a
+ * change: `extendedComponents.ts`'s `reviseExtendedComponents` re-evaluates
+ * any of the 7 "extended" kinds this system has, since the base
+ * `SystemModelSchema` call literally cannot represent them in its own
+ * output. Found live while wiring in findings/pendingFixes context: this
+ * step was missing entirely before, so a chat-driven change silently
+ * dropped every extended component the system already had — the exact
+ * same class of bug `reworkModel.ts` was fixed for earlier.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -35,8 +56,10 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { SystemModelSchema } from "./schema.ts";
 import { buildTool } from "./fromProse.ts";
+import { isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
+import { formatPendingFixes, type PendingFixInput } from "./reworkModel.ts";
 import { runStructuredCall, UTILITY_MODEL, type StructuredCallOptions } from "./structuredCall.ts";
-import type { SystemModel } from "../types.ts";
+import type { AiFinding, Component, SystemModel } from "../types.ts";
 
 // A fresh z.object() rather than a shared singleton — no reused object
 // identity in this schema, so no $ref-hoisting gotcha (see fromProse.ts's
@@ -71,7 +94,15 @@ function buildRouteTool(): Anthropic.Tool {
   };
 }
 
-function buildRoutePrompt(model: SystemModel): string {
+function formatFindings(findings: AiFinding[]): string {
+  if (findings.length === 0) return "";
+  const lines = findings
+    .map((f) => `- [${f.severity}] "${f.title}" on "${f.componentId}": ${f.explanation}`)
+    .join("\n");
+  return `\n\nThe dashboard is currently showing these findings - ground any answer about risk in them where they're relevant (matching what's already on screen, not re-deriving a differently-worded version of the same thing), and don't contradict one without a real reason to:\n${lines}`;
+}
+
+function buildRoutePrompt(model: SystemModel, findings: AiFinding[], pendingFixes: PendingFixInput[]): string {
   return `You are an experienced architect chatting with someone about a system architecture they are actively building - this is a LEARNING TOOL, so answers should be clear and plain-language, never jargon-heavy.
 
 You may be continuing an earlier conversation - use any prior turns for context (e.g. a message like "why is that?" refers back to what you just said).
@@ -86,19 +117,25 @@ Output only the structured decision.
 
 Current model:
 
-${JSON.stringify(model, null, 2)}`;
+${JSON.stringify(model, null, 2)}${formatFindings(findings)}${formatPendingFixes(pendingFixes)}`;
 }
 
-function buildChangePrompt(model: SystemModel): string {
+function buildChangePrompt(model: SystemModel, findings: AiFinding[], pendingFixes: PendingFixInput[]): string {
   return `You are implementing a SPECIFIC architectural change the user just asked for, in plain English - a separate step already decided this message is a real change request, not a question, so your only job here is to genuinely implement it.
 
 You may be continuing an earlier conversation - use any prior turns for context if the request refers back to something already discussed.
 
 Modify the model to implement the request - flip the relevant trait(s), and/or add, remove, or rewire components as the request actually requires. Everything else about the system should stay exactly as it was unless the request specifically requires a change to it - do not use this as an opportunity to reconsider the whole system.
 
+Some components in the model may be of an EXTENDED kind (external-dependency, load-balancer, message-broker, cdn, object-storage, scheduled-job, config-store). These are handled entirely by a separate step, not by you: your own structured output must never include a component of one of these kinds, must never reuse one of their ids for anything (even a base-kind component that seems related), and must OMIT any edge whose "from" or "to" is one of their ids from your output - even though such an edge existed in the input, the separate step re-adds it correctly, so leaving it out here is correct, not a mistake.
+
+This applies even when the user's request is specifically about one of these kinds (e.g. "add a CDN", "add a message broker", "remove the payment dependency") - in that case your own output for the base topology simply doesn't change on account of that part of the request at all, since the separate step is the one that implements it; only make a base-kind change here if some OTHER part of the same request genuinely calls for one. Do not refuse or explain this in your output - this is a structured-data call, not commentary.
+
+Every OTHER edge from the input, between two components you're both keeping (neither one an extended kind), must still be present in your output exactly as it was, unless the request specifically requires removing it.
+
 Rules, same as always:
 - Every trait is a rough category (a boolean or a small set of choices), never a number.
-- You may only use the five existing component kinds (gateway, service, cache, database, queue) - reuse one of them with a descriptive label for a real technology (a message broker or CDN is usually best modelled as a queue or cache with the right label), don't invent a new kind.
+- Beyond the extended kinds mentioned above (which you never emit yourself), you may only use the five base component kinds (gateway, service, cache, database, queue) - don't invent another new one.
 - For anything that still conceptually exists, reuse its EXACT same component id - this is how the interface keeps track of what's the same thing, not a new one. Only mint a new id for a component this specific request genuinely adds.
 - Keep the same top-level "id" and "name".
 - Every trait needs a rationale and a provenance. A value you are changing specifically to implement this request is "inferred" - never "stated". "stated" is only for something that was already true and you're leaving unchanged.
@@ -108,7 +145,7 @@ Output only the structured model. Do not add findings, recommendations, or comme
 
 Current model:
 
-${JSON.stringify(model, null, 2)}`;
+${JSON.stringify(model, null, 2)}${formatFindings(findings)}${formatPendingFixes(pendingFixes)}`;
 }
 
 export interface ChatWithProjectResult {
@@ -123,10 +160,12 @@ export async function chatWithProject(
   model: SystemModel,
   message: string,
   history: Anthropic.MessageParam[] = [],
+  findings: AiFinding[] = [],
+  pendingFixes: PendingFixInput[] = [],
   options: StructuredCallOptions = {},
 ): Promise<ChatWithProjectResult> {
   const route = await runStructuredCall(
-    buildRoutePrompt(model),
+    buildRoutePrompt(model, findings, pendingFixes),
     message,
     RouteSchema,
     buildRouteTool(),
@@ -144,7 +183,7 @@ export async function chatWithProject(
   }
 
   const change = await runStructuredCall(
-    buildChangePrompt(model),
+    buildChangePrompt(model, findings, pendingFixes),
     `Requested change: "${message}"`,
     SystemModelSchema,
     buildTool(),
@@ -152,11 +191,26 @@ export async function chatWithProject(
     "chatWithProject:change",
   );
 
+  // Sequential, not parallel — same reason as reworkModel.ts: this needs
+  // the freshly-produced base component ids to correctly wire the
+  // extended components back in. Previous extended components come from
+  // the INPUT model, not the change call's own output — that output can
+  // never contain them (see buildChangePrompt above).
+  const previousExtended: Component[] = model.components.filter(isExtendedComponent);
+  const extended = await reviseExtendedComponents(
+    previousExtended,
+    change.data,
+    options,
+    `\n\nThe user specifically asked for this change just now: "${message}"`,
+  );
+
   return {
     isQuestion: false,
     reply: route.data.reply,
     model: {
       ...change.data,
+      components: [...change.data.components, ...extended.components],
+      edges: [...change.data.edges, ...extended.edges],
       workload: { ...change.data.workload, users: model.workload.users, requests: model.workload.requests },
     },
     repaired: route.repaired || change.repaired,

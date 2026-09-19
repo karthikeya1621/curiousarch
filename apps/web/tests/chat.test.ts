@@ -41,8 +41,9 @@ describe("POST /api/chat", () => {
     expect(body.isQuestion).toBe(true);
     expect(body.reply).toMatch(/short/i);
     expect(body.model).toBeUndefined();
-    // No `history` field sent — defaults to an empty array, not undefined.
-    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is the cache short-lived?", []);
+    // No `history`/`findings`/`pendingFixes` sent — each defaults to an
+    // empty array, not undefined.
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is the cache short-lived?", [], [], []);
   });
 
   it("forwards a provided history array to chatWithProject", async () => {
@@ -54,7 +55,28 @@ describe("POST /api/chat", () => {
 
     await POST(jsonRequest({ model: checkout, message: "what about the database?", history }));
 
-    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "what about the database?", history);
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "what about the database?", history, [], []);
+  });
+
+  it("forwards provided findings and pendingFixes to chatWithProject", async () => {
+    chatWithProjectMock.mockResolvedValueOnce({ isQuestion: true, reply: "Because it's a single instance.", repaired: false });
+    const findings = [
+      {
+        code: "SINGLE_POINT_OF_FAILURE",
+        severity: "critical",
+        componentId: "svc",
+        title: "Single instance",
+        explanation: "The order service runs as a single instance.",
+        fixes: [],
+      },
+    ];
+    const pendingFixes = [
+      { componentId: "svc", findingTitle: "Single instance", fixLabel: "Add a second instance", fixTradeoff: "More cost." },
+    ];
+
+    await POST(jsonRequest({ model: checkout, message: "why is this risky?", findings, pendingFixes }));
+
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is this risky?", [], findings, pendingFixes);
   });
 
   it("returns the updated model for a change request", async () => {
