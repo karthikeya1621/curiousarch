@@ -17,7 +17,11 @@ function SegmentedToggle({
   label: string;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="flex rounded-md border border-slate-200 p-0.5 dark:border-slate-700">
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className="flex rounded-md border border-slate-200 p-0.5 dark:border-slate-700"
+    >
       {options.map((opt) => (
         <button
           key={opt}
@@ -59,7 +63,9 @@ function TierControl({
 
   return (
     <div className="border-b border-slate-100 pb-3 pt-2 last:border-b-0 dark:border-slate-700">
-      <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{label}</span>
+      <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+        {label}
+      </span>
       <div className="mt-1.5">
         <SegmentedToggle
           options={options}
@@ -90,7 +96,9 @@ export function ControlPanel({ model }: { model: SystemModel }) {
   return (
     <Card padding="sm" className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Controls</h3>
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+          Controls
+        </h3>
         <button
           onClick={undo}
           disabled={history.length === 0}
@@ -101,12 +109,14 @@ export function ControlPanel({ model }: { model: SystemModel }) {
         </button>
       </div>
 
-      {model.workload.users?.included && <TierControl dimension="users" value={model.workload.users} />}
+      {model.workload.users?.included && (
+        <TierControl dimension="users" value={model.workload.users} />
+      )}
       {model.workload.requests?.included && (
         <TierControl dimension="requests" value={model.workload.requests} />
       )}
 
-      <div className="border-t border-slate-100 pt-2 dark:border-slate-700">
+      <div className="pt-2">
         <p className="text-xs text-slate-500 dark:text-slate-400">
           Click any node in the diagram to see its properties and fix history.
         </p>

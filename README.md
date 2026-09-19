@@ -22,10 +22,13 @@ workspace package (`@archsim/engine`).
 
 ```bash
 npm install
-npm test          # runs packages/engine's test suite
+npm test          # runs both workspaces' test suites (112 tests)
 npm run typecheck
 npm run dev        # serves apps/web
 ```
 
-See `plans/PLAN-0.md` through `PLAN-3.md` for the phased product plan, and
+See `plans/PLAN-4.md` onward for the phased product plan (PLAN-0 through
+PLAN-3 covered the work already shipped — auth, persistence, multi-project
+support, the AI-generated-findings pivot — and were deleted rather than
+kept as a stale roadmap; see git history if you need them), and
 `CONTEXT.md` for AI-assisted development context.

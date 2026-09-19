@@ -139,91 +139,74 @@ matter how the schema was tuned.
 | ~~Chat is for correction, not Q&A~~ — superseded | `chatWithProject.ts` now does both deliberately: the AI itself decides whether a message is a question (answered directly, model untouched) or a change request (implemented as a real model update). Findings still never come from chat — a question's answer is prose, not a new finding — but "never Q&A" is no longer true. |
 | Credits, not subscription | Usage is bursty and low-frequency; subscription fights the pattern. |
 
-## Current state (historical snapshot — see note before relying on file names)
+## Current state
 
-**This entire section is frozen at the categorical-pivot moment** (traits +
-a hand-written pattern catalogue, replacing the numeric queueing engine). A
-great deal has happened since that this section never got updated for:
-auth, persistence, multi-project support, a full UX redesign, dark mode,
-seven additional component kinds, cost guardrails, and — most relevant to
-anything else on this page — the pattern catalogue described below
-(`patterns.ts`/`solver.ts`/`whatif.ts`/`fixes.ts`, plus their CLI harnesses
-`bin/sim.ts`/`bin/whatif.ts`) has since been **deleted outright**, superseded
-by `identifyFailures.ts` (see "Findings are AI-generated" above). Treat
-every file path below as "what existed at the categorical pivot," not "what
-exists now" — check `packages/engine/README.md`'s own Structure section for
-the current file layout before editing anything named here.
+The app is a working, full-loop product, not a prototype: describe a system
+in prose, get a diagram with AI-identified findings and fixes, apply fixes
+or chat free-form to evolve it, Re-simulate to commit a change, save/reopen
+multiple projects across sessions. 112 tests passing (66 engine + 46 web),
+typecheck clean across both workspaces, pushed to `origin/main`.
 
-Engine (`packages/engine/`), as of the categorical pivot:
+**Auth + persistence.** Magic-link email and Google login (client-side
+Google Identity Services, not a redirect through Supabase's own domain —
+deliberately chosen so the consent screen shows this app's real origin),
+gated by `apps/web/middleware.ts`. Every project is a row in a Postgres
+`projects` table (`apps/web/lib/sessionStorage.ts`), not localStorage.
+Multi-project support (`ProjectsCard.tsx`, save/load/list/delete) lets a
+user hold several systems at once and switch between them.
 
-- `src/index.ts` — public entrypoint; import from here, not individual files
-  (excludes `src/inference/*`, reachable server-side via `src/server.ts`)
-- `src/server.ts` — server-only entrypoint (`@archsim/engine/server`) for
-  `fromProse`, used by `apps/web/app/api/infer/route.ts`
-- `src/types.ts` — `Trait<T>` (replaces the old `Parameter`; same
-  provenance/rationale contract, generic over category instead of number),
-  `Component`/`SystemModel`/`ScaleTier`, the shared `isTrait` guard
-- `src/patterns.ts` — **the engine now**: six pattern functions, each a
-  pure predicate over traits and topology, producing `Finding[]`
-- `src/components.ts` — down to just `isAsyncBoundary` (a queue is where a
-  synchronous failure chain stops); the numeric capacity model that used to
-  live here is gone
-- `src/solver.ts` — `simulate()` (cycle check + run every pattern),
-  `findBreakingTier()` (step through the four scale tiers)
-- `models/reference.ts` — three hand-modelled systems spanning the
-  severity spectrum: checkout (one critical finding at baseline — a real,
-  common gap, not contrived), url-shortener (a different critical finding),
-  media-upload (healthy, but with real warnings — the "warnings before
-  failure" point still has to hold)
-- `src/inference/schema.ts`, `prompt.ts`, `fromProse.ts` — prose in,
-  `SystemModel` out; every trait is a boolean or a small enum, never a
-  number; same tool-use + validation + one-repair-retry harness as before
-- `src/whatif.ts` — scenario catalogue (each scenario flips one trait
-  toward its riskier value, or steps the workload up one tier) +
-  apply/compare + `setTraitValue` (a user correction, marks the field
-  `"stated"`)
-- `src/fixes.ts` — fix catalogue keyed by finding code, each fix flips a
-  trait toward its safer value + apply-fix-then-resimulate
-- `bin/sim.ts`, `bin/whatif.ts` — CLI harnesses (prose or `--model <id>`,
-  `--scale <tier>`; indicator → failures → fixes with tradeoffs → resimulate)
+**Auto-save, not a Save button.** `AutoSaveIndicator.tsx` persists on a
+debounce (1500ms) keyed off a single `autosaveRevision` counter in
+`lib/store.ts`, bumped by every action the store considers save-worthy — a
+build, a chat reply, queueing a fix, Undo, restoring a version, a completed
+Re-simulate. Moving the workload-tier slider deliberately does **not** bump
+it (a parameter change to review, not to persist or redraw the canvas for
+on its own — see `FlowDiagram.tsx`'s matching `components`/`edges`-only
+layout dependency); only an explicit Re-simulate commits it.
 
-*(`src/patterns.ts`, `src/solver.ts`, `src/whatif.ts`, `src/fixes.ts`,
-`bin/sim.ts`, `bin/whatif.ts`, and `ScaleTier`/`findBreakingTier` no longer
-exist. `Finding`/`FindingCode` — the closed-enum shape this bullet list
-describes — were deleted along with them; the web app's actual findings
-type is `AiFinding`, described under "Findings are AI-generated" above.)*
+**Findings are AI-generated**, not pattern-matched — see the section above
+for the full history of that decision. `identifyFailures.ts` is the sole
+findings source, called after every real model change.
 
-UI (`apps/web/`) as of the categorical pivot: same shape as before the
-pivot, different content — `lib/store.ts`'s `updateTrait`/`setWorkloadScale`
-replace `updateParameter`/`setWorkloadRps` (identical push-history/undo
-semantics), `ControlPanel.tsx` renders a toggle switch per boolean trait and
-a two-option segmented control per enum trait instead of numeric inputs,
-`ComponentNode.tsx` shows a subtle amber ring instead of a `×N` badge when
-a service/database is a single-instance risk, `SystemDashboard.tsx` reports
-"breaks at `<tier>` scale" instead of an rps figure, and
-`components/UtilizationTable.tsx` is deleted (there's no numeric
-utilization left to show). All of this has since been superseded too —
-`lib/store.ts` now tracks a much larger surface (projects, chat, versions,
-auto-save), and `ControlPanel.tsx`/`SystemDashboard.tsx` have been through a
-full UX redesign. Don't use this paragraph as a guide to their current
-shape; read the actual files.
+**Twelve component kinds across two structured calls.** Five base kinds
+(gateway/service/cache/database/queue, `inference/schema.ts`) plus seven
+extended kinds (external dependency, load balancer, message broker, CDN,
+object storage, scheduled job, config store — `inference/
+extendedComponents.ts`), kept in a separate call because the base topology
+schema was already at Anthropic's strict-mode compiled-grammar size limit
+before the seven existed. Both propose (on Build) and revise (on
+Re-simulate) preserve existing components/edges by default rather than
+regenerating them from scratch — a real regression, found and fixed live
+earlier this project's history, is why that "preserve by default" language
+is explicit in both `REWORK_PROMPT` and `REVISE_PROMPT`.
 
-**Verified live** (one `fromProse` call, `bin/sim.ts` — since deleted,
-"Movie ticket booking system with 1M users"): produced a 6-component model
-(gateway, booking service, seat cache, booking database, booking queue)
-with a direct `booking-service -> booking-db` write path alongside the
-`-> seat-cache -> booking-db` read path — a genuinely sophisticated,
-correct topology — and flagged, correctly (via the since-deleted pattern
-catalogue): `SINGLE_POINT_OF_FAILURE` on the write-heavy database (no
-replica), `THUNDERING_HERD_RISK` on the seat cache (short TTL, small
-keyspace, no stampede protection), `CASCADING_FAILURE_RISK` on a 4-deep
-synchronous chain with no circuit breaker, plus two warnings (no
-dead-letter queue, fixed consumer scaling at large scale). Every provenance
-label was correctly categorized (no mislabeling this run). Kept as evidence
-the topology-inference call itself was already sound at this point in the
-project's history — the findings mechanism that judged it here is gone, but
-the topology it judged is the same kind of output `fromProse.ts` still
-produces today.
+**Guardrails, not just bigger `max_tokens`.** `MAX_BASE_COMPONENTS` (15),
+`MAX_EXTENDED_COMPONENTS` (6), `MAX_TOTAL_COMPONENTS` (21) are enforced at
+the schema level (rejection + repair retry) and again defensively in code:
+a description-length cap on Build (`apps/web/lib/limits.ts`), and a
+pre-flight warning in `ResimulateButton.tsx` when a model is within 2
+components of the cap.
+
+**Builds start at the basic tier, not pre-scaled for a stated target.**
+`workloadParameters.ts` has always snapped a stated number ("1M users") to
+a target while starting the actual tier at the lowest rung; the topology
+and extended-component prompts were later made to match that same
+philosophy — a "1M users" description still produces `instanceCount:
+"single"`, not architecture pre-built for the eventual scale.
+
+**UI**: two-column layout (Controls + Dashboard), chat as a floating
+widget (`ChatWidget.tsx`, backed by `chatWithProject.ts` — one free-text
+message in, the AI itself decides whether it's a question to answer or a
+change to make), Re-simulate as a canvas overlay, version history as a
+header dropdown with real timestamps, full dark mode with a manual
+Light/Dark/System toggle (`ThemeToggle.tsx` in `AccountMenu.tsx`).
+
+**Deleted, not extended:** the deterministic pattern-matching engine
+(`patterns.ts`/`solver.ts`/`whatif.ts`/`fixes.ts`, plus a `fixes.ts`-only AI
+helper, `proposeCacheTraits.ts`) is gone outright — see git history for its
+final form, and "Findings are AI-generated" above for why it was safe to
+remove rather than extend for the newer component kinds it never gained
+pattern logic for.
 
 ## Superseded: the numeric queueing engine
 
@@ -240,29 +223,19 @@ exact numbers against a hand-built oracle) doesn't apply to a categorical
 model, and `packages/engine/docs/inference-log.md` remains as the
 historical record of what that methodology found.
 
-## Next task (stale — see note)
+## Next task
 
-This section is frozen at the categorical-pivot moment, before Phase 2
-(auth, persistence, multi-project support) — listed below as "not started"
-— actually happened. It's kept for its still-relevant closing questions,
-not as an accurate list of what's currently open; don't treat "no Phase 2
-planning has happened" as true.
-
-- **Phase 1's closing question** ("does the loop produce a moment of
-  insight, or does it produce a diagram?") still hasn't been answered by a
-  human other than the user, and the pivot makes this worth re-asking fresh
-  — the loop's *content* changed even though its shape didn't.
-- **0.5** (running the flow against a system you've personally operated)
-  remains a known, accepted gap — see the git history for the pre-pivot
-  attempts at this. Worth doing opportunistically if a future session gets
-  the chance, especially now that the categorical model is much more
-  likely to produce something an operator would recognize as correct.
-- ~~The pattern catalogue is six patterns, not an exhaustive list~~ —
-  moot, the catalogue is deleted. The equivalent question now is whether
-  `identifyFailures.ts`'s prompt names enough real risk categories; it's a
-  prompt-tuning question, not a catalogue-coverage one.
-- ~~No Phase 2 planning has happened~~ — it has: auth, persistence, and
-  multi-project support are all built and live.
+Auth, persistence, multi-project support, the UX redesign, and the 7
+extended component kinds are all done and live. The phased plan for what's
+next lives in `plans/PLAN-4.md` onward, not here, so this list doesn't
+duplicate (and drift out of sync with) that document again — the previous
+version of this section did exactly that. In short: PLAN-4 (validate with
+real outside users and audit finding quality at volume), PLAN-5
+(shippable — cost instrumentation, credits, payments), PLAN-6 (earn trust —
+demonstrable finding quality, replacing the deleted engine's numeric
+calibration). `plans/PLAN-0.md` through `PLAN-3.md` covered the work
+that's now shipped and were deleted rather than kept as a stale roadmap —
+see git history if you need them.
 
 ## Working notes for AI assistance
 

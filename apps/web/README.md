@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# apps/web
 
-## Getting Started
+Next.js App Router UI for archsim — the full loop: describe a system in
+prose, get a diagram with AI-identified findings, apply fixes or chat
+free-form to evolve it, Re-simulate to commit a change, save and reopen
+multiple projects. Consumes `packages/engine` as a workspace package
+(`@archsim/engine`). See the repo root's `README.md` and `CONTEXT.md` for
+the product/architecture picture this app implements.
 
-First, run the development server:
+## Setup
+
+From the **monorepo root**, not this directory — this is an npm workspace,
+and `npm install` only produces one correct lockfile/symlink set when run
+from root:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Create `apps/web/.env.local` (gitignored, no example file checked in) with:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `ANTHROPIC_API_KEY` — required for every inference call (`fromProse`,
+  `identifyFailures`, `reworkModel`, chat). Optional `AI_REASONING_MODEL`/
+  `AI_UTILITY_MODEL` override the defaults (see
+  `packages/engine/src/inference/structuredCall.ts`).
+- `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Supabase
+  project credentials (`apps/web/lib/supabase/`), backing auth and the
+  `projects` table.
+- `NEXT_PUBLIC_GOOGLE_CLIENT_ID` — for the client-side Google Identity
+  Services login (`apps/web/app/login/page.tsx`).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The app is gated by `middleware.ts`; without these, login won't work.
 
-## Learn More
+## Run
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run dev        # from the monorepo root — serves http://localhost:3000
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Test
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm test          # from the monorepo root — runs both workspaces' vitest suites
+npm run typecheck # both workspaces; this app's script runs `next typegen` first
+```
 
-## Deploy on Vercel
+Tests here are unit-level only (the Zustand store in `lib/store.ts`, the
+API routes under `app/api/`) — nothing drives the actual rendered app
+end-to-end yet. For UI verification, see `.claude/skills/run-web/` (a
+Playwright driver usable without a logged-in session) or exercise it
+manually against a real login.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Structure
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+app/                    App Router pages and API routes (one route per engine inference call)
+app/login/              Magic-link + Google Identity Services login
+app/auth/callback/      Supabase auth callback handler
+middleware.ts           Gates every page behind a logged-in session
+components/             UI — see FlowDiagram.tsx (the canvas), ChatWidget.tsx,
+                        ProjectsCard.tsx, AutoSaveIndicator.tsx, AccountMenu.tsx
+lib/store.ts            The Zustand store — model, findings, chat, versions, projects
+lib/sessionStorage.ts   Supabase-backed project persistence (save/load/list/delete)
+lib/layout.ts           SystemModel -> React Flow nodes/edges via ELK.js
+lib/limits.ts           Client-side description-length cap, mirrored server-side
+lib/theme.ts            Light/Dark/System theme toggle
+```
