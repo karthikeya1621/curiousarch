@@ -17,6 +17,23 @@ export interface AppliedFixRecord {
   appliedAt: number;
 }
 
+/**
+ * A fix the user has chosen but that hasn't been implemented yet — see
+ * store.ts's own comment on `pendingFixes`. Carries enough of the
+ * original finding/fix to describe it precisely to the AI at
+ * Re-simulate time, since by then the finding that produced it may no
+ * longer be in `findings` at all (findings only refresh on Re-simulate).
+ */
+export interface PendingFix {
+  componentId: string;
+  findingCode: string;
+  findingTitle: string;
+  fixId: string;
+  fixLabel: string;
+  fixTradeoff: string;
+  queuedAt: number;
+}
+
 /** A checkpoint recorded on the initial build and every completed Re-simulate — see store.ts's own comment on `versions`. */
 export interface Version {
   id: string;
@@ -36,6 +53,7 @@ export interface SavedSession {
   findingsStale: boolean;
   chatMessages: ChatMessage[];
   appliedFixes: AppliedFixRecord[];
+  pendingFixes: PendingFix[];
   versions: Version[];
   savedAt: number;
 }

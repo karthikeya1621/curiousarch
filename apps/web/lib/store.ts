@@ -5,10 +5,11 @@ import {
   saveSession,
   type AppliedFixRecord,
   type ChatMessage,
+  type PendingFix,
   type Version,
 } from "./sessionStorage";
 
-export type { AppliedFixRecord, Version };
+export type { AppliedFixRecord, PendingFix, Version };
 
 /**
  * Blank canvas is the actual starting state — no preset system, no
@@ -25,6 +26,16 @@ const EMPTY_MODEL: SystemModel = {
   edges: [],
   workload: {},
 };
+
+/**
+ * How many prior chat messages (~4 exchanges) get sent as context on the
+ * next one. Bounded, not the full transcript: unbounded history means
+ * the request keeps growing every message for the life of a session —
+ * exactly the kind of cost creep this project has been actively cutting
+ * elsewhere. Enough for a real follow-up ("why is that?") to make sense;
+ * older context quietly drops off rather than being resent forever.
+ */
+const CHAT_HISTORY_WINDOW = 8;
 
 /**
  * Findings are AI-generated now (`identifyFailures`), not computed — see
@@ -96,6 +107,22 @@ interface AppState {
    */
   appliedFixes: AppliedFixRecord[];
   /**
+   * Fixes chosen but not yet implemented — "Apply this fix" no longer
+   * calls the AI immediately (that used to cost a live call on every
+   * single click); it queues the choice here instead, and Re-simulate is
+   * what actually sends it to the AI (as explicit context, alongside its
+   * own holistic review) and implements it. Only one queued entry per
+   * finding (matched by componentId + findingTitle, same key
+   * isFindingFixed.ts already uses for `appliedFixes`): picking a
+   * different fix for the same finding replaces the earlier choice
+   * rather than sending the AI two conflicting instructions for it.
+   * Cleared (moved
+   * into `appliedFixes`) by a successful `commitRework` — never by
+   * anything else, so queuing several fixes and resimulating once is the
+   * normal, cheaper way to use this.
+   */
+  pendingFixes: PendingFix[];
+  /**
    * The component object behind the currently-open detail modal — an
    * object, not just an id, so it works correctly whether the diagram on
    * screen is the live model or a previewed past version (see
@@ -115,6 +142,10 @@ interface AppState {
   setModel: (model: SystemModel) => void;
   setWorkloadTier: (dimension: "users" | "requests", tier: number) => void;
   applyFix: (newModel: SystemModel, appliedFix?: AppliedFixRecord) => void;
+  /** Queues a fix for the next Re-simulate — no AI call, no model change yet. Replaces any existing queued fix for the same finding. */
+  queueFix: (pendingFix: PendingFix) => void;
+  /** Removes a queued fix before Re-simulate runs. */
+  unqueueFix: (componentId: string, findingTitle: string) => void;
   commitRework: (newModel: SystemModel) => void;
   undo: () => void;
   setOpenComponentId: (id: string | null) => void;
@@ -197,6 +228,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   chatStatus: "idle",
   chatError: null,
   appliedFixes: [],
+  pendingFixes: [],
   viewingComponent: null,
   versions: [],
   previewVersionId: null,
@@ -214,6 +246,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatStatus: "idle",
       chatError: null,
       appliedFixes: [],
+      pendingFixes: [],
       viewingComponent: null,
       versions: [],
       previewVersionId: null,
@@ -251,8 +284,39 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  queueFix: (pendingFix) => {
+    const { pendingFixes } = get();
+    const withoutExisting = pendingFixes.filter(
+      (p) => !(p.componentId === pendingFix.componentId && p.findingTitle === pendingFix.findingTitle),
+    );
+    set({
+      pendingFixes: [...withoutExisting, pendingFix],
+      canResimulate: true,
+    });
+  },
+
+  unqueueFix: (componentId, findingTitle) => {
+    const { pendingFixes } = get();
+    set({
+      pendingFixes: pendingFixes.filter(
+        (p) => !(p.componentId === componentId && p.findingTitle === findingTitle),
+      ),
+      // Deliberately doesn't touch canResimulate — something else (a
+      // tier change, another still-queued fix) may still warrant it, and
+      // this app has no cheap way to tell "was it ONLY this" apart from
+      // that. Worst case, Re-simulate stays enabled with nothing new to
+      // do, which costs nothing until actually clicked.
+    });
+  },
+
   commitRework: (newModel) => {
-    const { model, history } = get();
+    const { model, history, appliedFixes, pendingFixes } = get();
+    const nowApplied: AppliedFixRecord[] = pendingFixes.map((p) => ({
+      componentId: p.componentId,
+      findingTitle: p.findingTitle,
+      fixLabel: p.fixLabel,
+      appliedAt: Date.now(),
+    }));
     set({
       model: newModel,
       history: [...history, model],
@@ -260,6 +324,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedFindingId: null,
       selectedFixId: null,
       canResimulate: false,
+      // Every queued fix just got sent to the AI as explicit context (see
+      // ResimulateButton.tsx) — whether or not the result perfectly
+      // reflects it, it's no longer "pending"; if identifyFailures (run
+      // right below) still finds the underlying issue, it'll simply
+      // reappear as a fresh, current, re-queueable finding.
+      pendingFixes: [],
+      appliedFixes: [...appliedFixes, ...nowApplied],
     });
     void refreshFindings(set, get, { recordVersion: true });
   },
@@ -296,6 +367,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       findingsError: null,
       findingsStale: false,
       canResimulate: false,
+      // Any queued fixes were chosen against the state being replaced —
+      // they no longer refer to anything meaningful once it's gone.
+      pendingFixes: [],
       previewVersionId: null,
       openComponentId: null,
       selectedFindingId: null,
@@ -321,6 +395,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // `?? []` covers a session saved before chat/fixes/versions existed.
       chatMessages: session.chatMessages ?? [],
       appliedFixes: session.appliedFixes ?? [],
+      pendingFixes: session.pendingFixes ?? [],
       versions: session.versions ?? [],
       chatStatus: "idle",
       chatError: null,
@@ -343,6 +418,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       findingsStale,
       chatMessages,
       appliedFixes,
+      pendingFixes,
       versions,
     } = get();
     const saved = saveSession({
@@ -355,6 +431,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       findingsStale,
       chatMessages,
       appliedFixes,
+      pendingFixes,
       versions,
     });
     if (saved) set({ lastSavedAt: saved.savedAt });
@@ -376,6 +453,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatStatus: "idle",
       chatError: null,
       appliedFixes: [],
+      pendingFixes: [],
       viewingComponent: null,
       versions: [],
       previewVersionId: null,
@@ -384,6 +462,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   sendChatMessage: async (message) => {
     const { model, chatMessages } = get();
+    // Bounded window, not the full transcript — see this file's own
+    // comment on CHAT_HISTORY_WINDOW: unbounded history is exactly the
+    // kind of cost creep this project has been actively cutting elsewhere.
+    const history = chatMessages
+      .slice(-CHAT_HISTORY_WINDOW)
+      .map((m) => ({ role: m.role, content: m.text }));
     set({
       chatMessages: [...chatMessages, { role: "user", text: message }],
       chatStatus: "loading",
@@ -393,7 +477,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, message }),
+        body: JSON.stringify({ model, message, history }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Chat failed.");

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { reworkModel } from "@archsim/engine/server";
+import type { PendingFixInput } from "@archsim/engine/server";
 import type { SystemModel } from "@archsim/engine";
 
 /**
@@ -17,13 +18,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Request body must be JSON." }, { status: 400 });
   }
 
-  const model = (body as { model?: unknown })?.model;
+  const { model, pendingFixes } = (body as { model?: unknown; pendingFixes?: unknown }) ?? {};
   if (!model) {
     return NextResponse.json({ error: "Expected a field \"model\" (SystemModel)." }, { status: 400 });
   }
 
   try {
-    const result = await reworkModel(model as SystemModel);
+    const result = await reworkModel(
+      model as SystemModel,
+      Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]) : [],
+    );
     return NextResponse.json({ model: result.model });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Rework failed.";

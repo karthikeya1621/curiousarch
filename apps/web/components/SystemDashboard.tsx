@@ -3,7 +3,7 @@
 import type { AiFinding, SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { findingKey } from "../lib/findingKey";
-import { isFindingFixed } from "../lib/isFindingFixed";
+import { getFixStatus } from "../lib/getFixStatus";
 import { FlowDiagram } from "./FlowDiagram";
 import { Card } from "./Card";
 import { Badge } from "./Badge";
@@ -26,6 +26,7 @@ export function SystemDashboard({
   const findingsStatus = useAppStore((s) => s.findingsStatus);
   const findingsStale = useAppStore((s) => s.findingsStale);
   const appliedFixes = useAppStore((s) => s.appliedFixes);
+  const pendingFixes = useAppStore((s) => s.pendingFixes);
   const isPreview = findingsOverride !== undefined;
   const findings = isPreview ? findingsOverride : liveFindings;
 
@@ -64,26 +65,31 @@ export function SystemDashboard({
               }
             >
               {findings.map((f) => {
-                // Never marked "Fixed" in a preview — appliedFixes is a
-                // global log, not scoped to the version being viewed, so
-                // cross-referencing it against a past snapshot would be
-                // misleading (it might reflect a fix applied after this
-                // version existed).
-                const fixed = !isPreview && isFindingFixed(f, appliedFixes);
+                // Never marked in a preview — appliedFixes/pendingFixes are
+                // global, not scoped to the version being viewed, so
+                // cross-referencing them against a past snapshot would be
+                // misleading (they might reflect something that happened
+                // after this version existed).
+                const status = isPreview ? "none" : getFixStatus(f, appliedFixes, pendingFixes);
                 return (
                   <div
                     key={findingKey(f)}
-                    className={"flex items-start gap-2 text-sm " + (fixed ? "opacity-60" : "")}
+                    className={"flex items-start gap-2 text-sm " + (status !== "none" ? "opacity-60" : "")}
                   >
                     <Badge tone={f.severity === "critical" ? "critical" : "warning"}>
                       {f.severity}
                     </Badge>
-                    {fixed && <Badge tone="success">Fixed</Badge>}
+                    {status === "queued" && <Badge tone="warning">Queued</Badge>}
+                    {status === "fixed" && <Badge tone="success">Fixed</Badge>}
                     <div className="min-w-0">
                       <span className="font-medium text-slate-900">{f.title}</span>
                       <span className="text-slate-400"> · {f.componentId}</span>
                       <p className="text-xs text-slate-500">
-                        {fixed ? "Fix applied — Re-simulate to confirm and refresh." : f.explanation}
+                        {status === "queued"
+                          ? "Queued — Re-simulate to see this fix in action."
+                          : status === "fixed"
+                            ? "Fix applied — Re-simulate to confirm and refresh."
+                            : f.explanation}
                       </p>
                     </div>
                   </div>

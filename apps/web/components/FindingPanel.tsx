@@ -3,26 +3,35 @@
 import { useState } from "react";
 import type { AiFinding, AiFix, SystemModel } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
-import { isFindingFixed } from "../lib/isFindingFixed";
+import { getFixStatus } from "../lib/getFixStatus";
 import { Badge } from "./Badge";
-import { SparklesIcon, XIcon } from "./icons";
+import { SparklesIcon, XIcon, WrenchIcon } from "./icons";
 
 /**
  * Unified finding + fix detail. A fix's own `label`/`tradeoff` are always
  * visible the moment it's picked — "Ask AI" is a separate, explicitly
  * triggered call for one or two extra sentences on why *this* fix fits
  * *this* system, never fired automatically on selection (see explainFix.ts).
+ *
+ * Picking a fix no longer calls the AI here — it QUEUES the choice
+ * (store.ts's `queueFix`), synchronously, no network call. Re-simulate is
+ * what actually implements it (see ResimulateButton.tsx), alongside its
+ * own holistic review — this is the cost-saving trade approved for this
+ * flow specifically (chat-driven changes stay immediate).
  */
 export function FindingPanel({ model, finding }: { model: SystemModel; finding: AiFinding }) {
   const selectedFixId = useAppStore((s) => s.selectedFixId);
   const selectFix = useAppStore((s) => s.selectFix);
   const selectFinding = useAppStore((s) => s.selectFinding);
-  const applyFix = useAppStore((s) => s.applyFix);
+  const queueFix = useAppStore((s) => s.queueFix);
+  const unqueueFix = useAppStore((s) => s.unqueueFix);
   const appliedFixes = useAppStore((s) => s.appliedFixes);
-  const alreadyFixed = isFindingFixed(finding, appliedFixes);
+  const pendingFixes = useAppStore((s) => s.pendingFixes);
+  const status = getFixStatus(finding, appliedFixes, pendingFixes);
+  const queuedFixId = pendingFixes.find(
+    (p) => p.componentId === finding.componentId && p.findingTitle === finding.title,
+  )?.fixId;
 
-  const [applying, setApplying] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
   const [rationale, setRationale] = useState<string | null>(null);
   const [askingAi, setAskingAi] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
@@ -52,28 +61,19 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
     }
   }
 
-  async function apply(fix: AiFix) {
-    if (applying) return;
-    setApplying(true);
-    setApplyError(null);
-    try {
-      const res = await fetch("/api/apply-ai-fix", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, finding, fix }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Failed to apply fix.");
-      applyFix(body.model as SystemModel, {
+  function toggleQueue(fix: AiFix) {
+    if (queuedFixId === fix.id) {
+      unqueueFix(finding.componentId, finding.title);
+    } else {
+      queueFix({
         componentId: finding.componentId,
+        findingCode: finding.code,
         findingTitle: finding.title,
+        fixId: fix.id,
         fixLabel: fix.label,
-        appliedAt: Date.now(),
+        fixTradeoff: fix.tradeoff,
+        queuedAt: Date.now(),
       });
-    } catch (err) {
-      setApplyError(err instanceof Error ? err.message : "Failed to apply fix.");
-    } finally {
-      setApplying(false);
     }
   }
 
@@ -95,7 +95,13 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
         </button>
       </div>
       <p className="text-xs text-slate-500">{finding.explanation}</p>
-      {alreadyFixed && (
+      {status === "queued" && (
+        <p className="mt-2 flex items-center gap-1 text-xs font-medium text-amber-700">
+          <Badge tone="warning">Queued</Badge>
+          Re-simulate to see this fix in action.
+        </p>
+      )}
+      {status === "fixed" && (
         <p className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-600">
           <Badge tone="success">Fixed</Badge>
           Re-simulate to confirm and refresh this finding.
@@ -105,6 +111,7 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
       <div className="mt-3 flex flex-col gap-1.5">
         {finding.fixes.map((fix) => {
           const isSelected = fix.id === selectedFixId;
+          const isQueued = queuedFixId === fix.id;
           return (
             <div
               key={fix.id}
@@ -138,14 +145,18 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
                       {askingAi ? "Asking…" : "Ask AI"}
                     </button>
                     <button
-                      onClick={() => apply(fix)}
-                      disabled={applying}
-                      className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white transition-colors enabled:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => toggleQueue(fix)}
+                      className={
+                        "flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors " +
+                        (isQueued
+                          ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                          : "bg-slate-900 text-white hover:bg-slate-700")
+                      }
                     >
-                      {applying ? "Applying…" : "Apply this fix"}
+                      {isQueued && <WrenchIcon className="h-3 w-3" />}
+                      {isQueued ? "Queued — click to remove" : "Queue this fix"}
                     </button>
                   </div>
-                  {applyError && <p className="text-[11px] text-rose-600">{applyError}</p>}
                 </div>
               )}
             </div>

@@ -41,7 +41,20 @@ describe("POST /api/chat", () => {
     expect(body.isQuestion).toBe(true);
     expect(body.reply).toMatch(/short/i);
     expect(body.model).toBeUndefined();
-    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is the cache short-lived?");
+    // No `history` field sent — defaults to an empty array, not undefined.
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is the cache short-lived?", []);
+  });
+
+  it("forwards a provided history array to chatWithProject", async () => {
+    chatWithProjectMock.mockResolvedValueOnce({ isQuestion: true, reply: "Because it's a hot key.", repaired: false });
+    const history = [
+      { role: "user", content: "why is the cache TTL short?" },
+      { role: "assistant", content: "Because it's a hot key." },
+    ];
+
+    await POST(jsonRequest({ model: checkout, message: "what about the database?", history }));
+
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "what about the database?", history);
   });
 
   it("returns the updated model for a change request", async () => {

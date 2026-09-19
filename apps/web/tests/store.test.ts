@@ -162,6 +162,101 @@ describe("component detail modal", () => {
   });
 });
 
+function pendingFix(overrides: Partial<import("../lib/store").PendingFix> = {}) {
+  return {
+    componentId: "svc",
+    findingCode: "SINGLE_POINT_OF_FAILURE",
+    findingTitle: "Single instance",
+    fixId: "add-instance",
+    fixLabel: "Add a second instance",
+    fixTradeoff: "More cost, no more single point of failure.",
+    queuedAt: 1,
+    ...overrides,
+  };
+}
+
+describe("queueFix / unqueueFix", () => {
+  it("queues a fix with no model change and no API call", () => {
+    useAppStore.setState({ model: degradedModel(), pendingFixes: [], canResimulate: false });
+
+    useAppStore.getState().queueFix(pendingFix());
+
+    const state = useAppStore.getState();
+    expect(state.pendingFixes).toHaveLength(1);
+    expect(state.canResimulate).toBe(true);
+    expect(state.model).toEqual(degradedModel()); // unchanged
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("replaces an existing queued fix for the same finding rather than adding a second one", () => {
+    useAppStore.setState({ pendingFixes: [pendingFix({ fixId: "add-instance" })] });
+
+    useAppStore.getState().queueFix(pendingFix({ fixId: "add-circuit-breaker", fixLabel: "Add a circuit breaker" }));
+
+    const state = useAppStore.getState();
+    expect(state.pendingFixes).toHaveLength(1);
+    expect(state.pendingFixes[0]!.fixId).toBe("add-circuit-breaker");
+  });
+
+  it("queues separately for different findings", () => {
+    useAppStore.setState({ pendingFixes: [] });
+
+    useAppStore.getState().queueFix(pendingFix({ findingTitle: "Single instance" }));
+    useAppStore.getState().queueFix(pendingFix({ findingTitle: "No circuit breaker", fixId: "add-circuit-breaker" }));
+
+    expect(useAppStore.getState().pendingFixes).toHaveLength(2);
+  });
+
+  it("unqueueFix removes only the matching entry", () => {
+    useAppStore.setState({
+      pendingFixes: [pendingFix({ findingTitle: "A" }), pendingFix({ findingTitle: "B" })],
+    });
+
+    useAppStore.getState().unqueueFix("svc", "A");
+
+    const state = useAppStore.getState();
+    expect(state.pendingFixes).toHaveLength(1);
+    expect(state.pendingFixes[0]!.findingTitle).toBe("B");
+  });
+});
+
+describe("commitRework moves pendingFixes into appliedFixes", () => {
+  it("on a successful Re-simulate, every queued fix becomes an applied one and the queue clears", async () => {
+    useAppStore.setState({
+      model: degradedModel(),
+      history: [],
+      appliedFixes: [],
+      pendingFixes: [pendingFix()],
+    });
+
+    useAppStore.getState().commitRework(fixedModel());
+
+    const state = useAppStore.getState();
+    expect(state.pendingFixes).toHaveLength(0);
+    expect(state.appliedFixes).toHaveLength(1);
+    expect(state.appliedFixes[0]).toMatchObject({
+      componentId: "svc",
+      findingTitle: "Single instance",
+      fixLabel: "Add a second instance",
+    });
+    expect(state.canResimulate).toBe(false);
+    await vi.waitFor(() => expect(useAppStore.getState().findingsStatus).toBe("done"));
+  });
+
+  it("restoreVersion clears any queued fixes — they no longer refer to anything meaningful", async () => {
+    useAppStore.setState({ model: degradedModel(), history: [], versions: [], pendingFixes: [pendingFix()] });
+    useAppStore.getState().commitRework(fixedModel()); // records a version, clears queue from the fix above
+    await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
+    const [version] = useAppStore.getState().versions;
+    useAppStore.getState().queueFix(pendingFix({ findingTitle: "Another one" }));
+    expect(useAppStore.getState().pendingFixes).toHaveLength(1);
+
+    useAppStore.getState().restoreVersion(version!.id);
+
+    expect(useAppStore.getState().pendingFixes).toHaveLength(0);
+  });
+});
+
 describe("findingsStale", () => {
   it("set by setWorkloadTier and applyFix, only cleared by an actual refresh (commitRework)", async () => {
     const model: SystemModel = {
@@ -431,5 +526,28 @@ describe("sendChatMessage", () => {
     expect(state.chatMessages).toEqual([{ role: "user", text: "what happens under load?" }]);
     expect(state.chatError).toMatch(/boom/);
     expect(state.chatStatus).toBe("idle");
+  });
+
+  it("sends only the last 8 prior messages as history, not the full transcript", async () => {
+    // 10 prior messages (5 exchanges) — more than the window.
+    const priorMessages = Array.from({ length: 10 }, (_, i) => ({
+      role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
+      text: `message ${i}`,
+    }));
+    useAppStore.setState({ model: degradedModel(), chatMessages: priorMessages });
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) =>
+      Promise.resolve(jsonResponse({ isQuestion: true, reply: "ok" })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await useAppStore.getState().sendChatMessage("a new question");
+
+    const [, requestInit] = fetchMock.mock.calls[0]!;
+    const sentBody = JSON.parse(requestInit!.body as string);
+    expect(sentBody.history).toHaveLength(8);
+    // The oldest 2 of the 10 prior messages (indices 0-1) should have
+    // been dropped, keeping indices 2-9.
+    expect(sentBody.history[0]).toEqual({ role: "user", content: "message 2" });
+    expect(sentBody.history.at(-1)).toEqual({ role: "assistant", content: "message 9" });
   });
 });

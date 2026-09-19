@@ -18,11 +18,15 @@ function toolUseResponse(name: string, input: unknown): Anthropic.Message {
   } as unknown as Anthropic.Message;
 }
 
-function fakeClient(responses: Anthropic.Message[]): Anthropic {
+function fakeClient(
+  responses: Anthropic.Message[],
+  onCreate?: (params: Anthropic.MessageCreateParams) => void,
+): Anthropic {
   let call = 0;
   return {
     messages: {
-      create: async () => {
+      create: async (params: Anthropic.MessageCreateParams) => {
+        onCreate?.(params);
         const response = responses[call];
         call++;
         if (!response) throw new Error("fakeClient: no more canned responses");
@@ -83,7 +87,7 @@ const changedModel = {
 describe("chatWithProject", () => {
   it("answers a question directly without touching the model", async () => {
     const client = fakeClient([toolUseResponse("route_chat_message", questionRoute)]);
-    const result = await chatWithProject(checkout, "why is the cache TTL short?", { client });
+    const result = await chatWithProject(checkout, "why is the cache TTL short?", [], { client });
 
     expect(result.isQuestion).toBe(true);
     expect(result.reply).toMatch(/short TTL/i);
@@ -95,7 +99,7 @@ describe("chatWithProject", () => {
       toolUseResponse("route_chat_message", changeRoute),
       toolUseResponse("emit_system_model", changedModel),
     ]);
-    const result = await chatWithProject(checkout, "add a CDN in front of the gateway", { client });
+    const result = await chatWithProject(checkout, "add a CDN in front of the gateway", [], { client });
 
     expect(result.isQuestion).toBe(false);
     expect(result.reply).toMatch(/CDN/i);
@@ -113,9 +117,32 @@ describe("chatWithProject", () => {
       toolUseResponse("route_chat_message", changeRoute),
       toolUseResponse("emit_system_model", changedModel),
     ]);
-    const result = await chatWithProject(withParameters, "add a CDN", { client });
+    const result = await chatWithProject(withParameters, "add a CDN", [], { client });
 
     expect(result.model!.workload.users).toEqual({ included: true, tier: 10_000, target: 1_000_000 });
+  });
+
+  it("forwards prior conversation turns to both the route and change calls", async () => {
+    const history: Anthropic.MessageParam[] = [
+      { role: "user", content: "why is the cache TTL short?" },
+      { role: "assistant", content: "Because showtime availability changes frequently." },
+    ];
+    const seenMessages: Anthropic.MessageParam[][] = [];
+    const client = fakeClient(
+      [toolUseResponse("route_chat_message", changeRoute), toolUseResponse("emit_system_model", changedModel)],
+      (params) => seenMessages.push(params.messages),
+    );
+
+    await chatWithProject(checkout, "make it long-lived instead", history, { client });
+
+    // Both calls (route, then change) should see the same prior history,
+    // followed by the new user turn.
+    expect(seenMessages).toHaveLength(2);
+    for (const messages of seenMessages) {
+      expect(messages[0]).toEqual(history[0]);
+      expect(messages[1]).toEqual(history[1]);
+      expect(messages[2]?.role).toBe("user");
+    }
   });
 
   it("requires an API key when no client is injected", async () => {

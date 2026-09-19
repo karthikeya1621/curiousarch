@@ -25,6 +25,14 @@ export interface StructuredCallOptions {
   /** Per-request timeout in ms. */
   timeoutMs?: number;
   client?: Anthropic;
+  /**
+   * Prior conversation turns, prepended before the new user turn — the
+   * only caller that sets this today is chatWithProject.ts, for genuine
+   * multi-turn memory. Every other caller (fromProse, reworkModel,
+   * identifyFailures, applyAiFix) is a one-shot call and simply never
+   * sets it, so this is a no-op for them.
+   */
+  history?: Anthropic.MessageParam[];
 }
 
 export interface StructuredCallResult<T> {
@@ -106,6 +114,7 @@ export async function runStructuredCall<T>(
   const cachedTool: Anthropic.Tool = { ...tool, cache_control: { type: "ephemeral" } };
 
   const messages: Anthropic.MessageParam[] = [
+    ...(options.history ?? []),
     { role: "user", content: userContent },
   ];
 

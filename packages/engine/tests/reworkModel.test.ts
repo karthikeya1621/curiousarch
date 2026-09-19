@@ -64,11 +64,15 @@ function toolUseResponse(input: unknown): Anthropic.Message {
   } as unknown as Anthropic.Message;
 }
 
-function fakeClient(responses: Anthropic.Message[]): Anthropic {
+function fakeClient(
+  responses: Anthropic.Message[],
+  onCreate?: (params: Anthropic.MessageCreateParams) => void,
+): Anthropic {
   let call = 0;
   return {
     messages: {
-      create: async () => {
+      create: async (params: Anthropic.MessageCreateParams) => {
+        onCreate?.(params);
         const response = responses[call];
         call++;
         if (!response) throw new Error("fakeClient: no more canned responses");
@@ -81,7 +85,7 @@ function fakeClient(responses: Anthropic.Message[]): Anthropic {
 describe("reworkModel", () => {
   it("returns a model unrepaired when the first attempt validates", async () => {
     const client = fakeClient([toolUseResponse(validReworkInput)]);
-    const result = await reworkModel(checkout, { client });
+    const result = await reworkModel(checkout, [], { client });
 
     expect(result.repaired).toBe(false);
     expect(() => simulate(result.model)).not.toThrow();
@@ -96,7 +100,7 @@ describe("reworkModel", () => {
       toolUseResponse(invalidReworkInput),
       toolUseResponse(validReworkInput),
     ]);
-    const result = await reworkModel(checkout, { client });
+    const result = await reworkModel(checkout, [], { client });
 
     expect(result.repaired).toBe(true);
   });
@@ -111,7 +115,7 @@ describe("reworkModel", () => {
       toolUseResponse(invalidReworkInput),
     ]);
 
-    await expect(reworkModel(checkout, { client, maxRetries: 1 })).rejects.toThrow(
+    await expect(reworkModel(checkout, [], { client, maxRetries: 1 })).rejects.toThrow(
       /still failed validation/i,
     );
   });
@@ -123,7 +127,7 @@ describe("reworkModel", () => {
       toolUseResponse(validReworkInput),
     ]);
 
-    const result = await reworkModel(checkout, { client });
+    const result = await reworkModel(checkout, [], { client });
     expect(result.repaired).toBe(true);
   });
 
@@ -147,9 +151,49 @@ describe("reworkModel", () => {
       },
     };
     const client = fakeClient([toolUseResponse(validReworkInput)]);
-    const result = await reworkModel(withParameters, { client });
+    const result = await reworkModel(withParameters, [], { client });
 
     expect(result.model.workload.users).toEqual({ included: true, tier: 10_000, target: 1_000_000 });
     expect(result.model.workload.requests).toEqual({ included: false, tier: 1000, target: 1000 });
+  });
+
+  it("includes queued pending fixes as explicit context in the user content, not the (cacheable) system prompt", async () => {
+    let seenSystem: unknown;
+    let seenUserContent: unknown;
+    const client = fakeClient([toolUseResponse(validReworkInput)], (params) => {
+      seenSystem = params.system;
+      seenUserContent = (params.messages[0] as { content: unknown }).content;
+    });
+
+    await reworkModel(
+      checkout,
+      [
+        {
+          componentId: "svc",
+          findingTitle: "No circuit breaker before the database",
+          fixLabel: "Add a circuit breaker on the order service",
+          fixTradeoff: "Failures surface as fast errors instead of hangs.",
+        },
+      ],
+      { client },
+    );
+
+    expect(seenUserContent).toContain("svc");
+    expect(seenUserContent).toContain("Add a circuit breaker on the order service");
+    expect(seenUserContent).toContain("No circuit breaker before the database");
+    // The static instructions must stay identical whether or not fixes
+    // are queued, or the system-prompt cache never hits.
+    expect(JSON.stringify(seenSystem)).not.toContain("circuit breaker");
+  });
+
+  it("omits the pending-fixes section entirely when none are queued", async () => {
+    let seenUserContent: unknown;
+    const client = fakeClient([toolUseResponse(validReworkInput)], (params) => {
+      seenUserContent = (params.messages[0] as { content: unknown }).content;
+    });
+
+    await reworkModel(checkout, [], { client });
+
+    expect(seenUserContent).not.toContain("specifically chosen to apply");
   });
 });

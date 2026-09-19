@@ -17,6 +17,17 @@
  * `SystemModelSchema`/`buildTool` unchanged — the same "produce a whole
  * updated topology" shape `reworkModel`/`applyAiFix` already use. A pure
  * question never reaches that second call at all.
+ *
+ * The model is embedded in the SYSTEM prompt here (not the user
+ * content, unlike every other inference module) specifically so it's
+ * cacheable across a multi-message conversation: as long as the model
+ * hasn't changed between two chat messages, the system prompt string is
+ * byte-identical, so structuredCall.ts's cache_control on `system`
+ * actually saves reprocessing the (often large) model JSON, not just
+ * the small static instructions. The moment the model does change (a
+ * fix/tier-change happened elsewhere), the system prompt naturally
+ * differs and the cache misses once — correct, since the AI genuinely
+ * needs to see the update.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -60,19 +71,28 @@ function buildRouteTool(): Anthropic.Tool {
   };
 }
 
-const ROUTE_PROMPT = `You are an experienced architect chatting with someone about a system architecture they are actively building - this is a LEARNING TOOL, so answers should be clear and plain-language, never jargon-heavy.
+function buildRoutePrompt(model: SystemModel): string {
+  return `You are an experienced architect chatting with someone about a system architecture they are actively building - this is a LEARNING TOOL, so answers should be clear and plain-language, never jargon-heavy.
 
-You are given the CURRENT MODEL as JSON and a single message from the user. Decide:
+You may be continuing an earlier conversation - use any prior turns for context (e.g. a message like "why is that?" refers back to what you just said).
+
+Decide, for the latest message:
 - Is this a QUESTION about the architecture (asking "why", "what would happen if", "how does X work", or similar, without asking for an actual change)? If so, set isQuestion to true and put a clear, plain-language ANSWER in "reply", grounded in specifics from the actual model (real component names, real traits) rather than generic textbook language.
 - Or is this a REQUEST TO CHANGE the architecture (asking to add, remove, replace, or reconfigure something)? If so, set isQuestion to false and put a short, one-sentence restatement of the change you are about to make in "reply" (e.g. "Adding a CDN in front of the API Gateway to absorb static asset traffic.").
 
 If the message is ambiguous, prefer treating it as a question and explain what you'd need to know to make a specific change.
 
-Output only the structured decision.`;
+Output only the structured decision.
 
-const CHANGE_PROMPT = `You are implementing a SPECIFIC architectural change the user just asked for, in plain English - a separate step already decided this message is a real change request, not a question, so your only job here is to genuinely implement it.
+Current model:
 
-You will be given the requested change as free text, and the current model as JSON.
+${JSON.stringify(model, null, 2)}`;
+}
+
+function buildChangePrompt(model: SystemModel): string {
+  return `You are implementing a SPECIFIC architectural change the user just asked for, in plain English - a separate step already decided this message is a real change request, not a question, so your only job here is to genuinely implement it.
+
+You may be continuing an earlier conversation - use any prior turns for context if the request refers back to something already discussed.
 
 Modify the model to implement the request - flip the relevant trait(s), and/or add, remove, or rewire components as the request actually requires. Everything else about the system should stay exactly as it was unless the request specifically requires a change to it - do not use this as an opportunity to reconsider the whole system.
 
@@ -84,7 +104,12 @@ Rules, same as always:
 - Every trait needs a rationale and a provenance. A value you are changing specifically to implement this request is "inferred" - never "stated". "stated" is only for something that was already true and you're leaving unchanged.
 - The model must remain a DAG - never create an edge back into a component that is upstream of it.
 
-Output only the structured model. Do not add findings, recommendations, or commentary.`;
+Output only the structured model. Do not add findings, recommendations, or commentary.
+
+Current model:
+
+${JSON.stringify(model, null, 2)}`;
+}
 
 export interface ChatWithProjectResult {
   isQuestion: boolean;
@@ -97,17 +122,20 @@ export interface ChatWithProjectResult {
 export async function chatWithProject(
   model: SystemModel,
   message: string,
+  history: Anthropic.MessageParam[] = [],
   options: StructuredCallOptions = {},
 ): Promise<ChatWithProjectResult> {
   const route = await runStructuredCall(
-    ROUTE_PROMPT,
-    `Current model:\n\n${JSON.stringify(model, null, 2)}\n\nMessage: ${message}`,
+    buildRoutePrompt(model),
+    message,
     RouteSchema,
     buildRouteTool(),
     // Classifying question-vs-change doesn't need Sonnet — see
     // structuredCall.ts's own comment on UTILITY_MODEL. The actual change
     // implementation below keeps the default (full reasoning) model.
-    { model: UTILITY_MODEL, ...options },
+    // `history` last: it's chatWithProject's own dedicated parameter, not
+    // something `options` should be able to shadow.
+    { model: UTILITY_MODEL, ...options, history },
     "chatWithProject:route",
   );
 
@@ -116,11 +144,11 @@ export async function chatWithProject(
   }
 
   const change = await runStructuredCall(
-    CHANGE_PROMPT,
-    `Requested change: "${message}"\n\nCurrent model:\n\n${JSON.stringify(model, null, 2)}`,
+    buildChangePrompt(model),
+    `Requested change: "${message}"`,
     SystemModelSchema,
     buildTool(),
-    options,
+    { ...options, history },
     "chatWithProject:change",
   );
 

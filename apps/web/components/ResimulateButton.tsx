@@ -7,17 +7,22 @@ import { useAppStore } from "../lib/store";
 /**
  * Gated by `canResimulate`, not always-on: it only lights up once
  * something has actually changed since the last review (a raised tier or
- * an applied fix — see store.ts's own comment on why `setWorkloadTier`
+ * a queued fix — see store.ts's own comment on why `setWorkloadTier`
  * doesn't refresh findings itself, leaving this button as the deliberate
  * next step). Commits through `commitRework`, not `applyFix` — a rework
  * has nothing new to reconsider immediately after (findings just got
  * refreshed for the model this produced), whereas `applyFix` sets
  * `canResimulate: true` because it's the kind of change that invites a
  * follow-up rework of the whole system, not a self-contained one.
+ *
+ * Sends `pendingFixes` along with the model — this is the one call that
+ * actually implements every queued fix (see reworkModel.ts's own comment
+ * on why that context lives in the user content, not the system prompt).
  */
 export function ResimulateButton({ model }: { model: SystemModel }) {
   const canResimulate = useAppStore((s) => s.canResimulate);
   const commitRework = useAppStore((s) => s.commitRework);
+  const pendingFixes = useAppStore((s) => s.pendingFixes);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +34,7 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       const res = await fetch("/api/rework", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model }),
+        body: JSON.stringify({ model, pendingFixes }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Rework failed.");
@@ -55,6 +60,12 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       {!canResimulate && !loading && (
         <p className="max-w-xs text-right text-[11px] text-slate-400">
           Change a parameter or apply a fix first
+        </p>
+      )}
+      {canResimulate && !loading && pendingFixes.length > 0 && (
+        <p className="max-w-xs text-right text-[11px] text-amber-700">
+          {pendingFixes.length} fix{pendingFixes.length === 1 ? "" : "es"} queued — Re-simulate to see{" "}
+          {pendingFixes.length === 1 ? "it" : "them"} in action.
         </p>
       )}
       {error && <p className="max-w-xs text-right text-[11px] text-rose-600">{error}</p>}

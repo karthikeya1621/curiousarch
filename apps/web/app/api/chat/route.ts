@@ -16,7 +16,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Request body must be JSON." }, { status: 400 });
   }
 
-  const { model, message } = (body as { model?: unknown; message?: unknown }) ?? {};
+  const { model, message, history } =
+    (body as { model?: unknown; message?: unknown; history?: unknown }) ?? {};
   if (!model || typeof message !== "string" || message.trim().length === 0) {
     return NextResponse.json(
       { error: "Expected { model: SystemModel, message: string }." },
@@ -24,8 +25,16 @@ export async function POST(request: Request) {
     );
   }
 
+  // Structurally compatible with Anthropic.MessageParam[] (plain string
+  // content) without needing the SDK type here — the store is the one
+  // place that builds this from `chatMessages`, already bounded to a
+  // short window (see store.ts's own comment).
+  const chatHistory = Array.isArray(history)
+    ? (history as { role: "user" | "assistant"; content: string }[])
+    : [];
+
   try {
-    const result = await chatWithProject(model as SystemModel, message);
+    const result = await chatWithProject(model as SystemModel, message, chatHistory);
     return NextResponse.json({
       isQuestion: result.isQuestion,
       reply: result.reply,
