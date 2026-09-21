@@ -2,7 +2,7 @@
 
 Next.js App Router UI for archsim — the full loop: describe a system in
 prose, get a diagram with AI-identified findings, apply fixes or chat
-free-form to evolve it, Re-simulate to commit a change, save and reopen
+free-form to queue changes, Re-simulate to apply what's queued, save and reopen
 multiple projects. Consumes `packages/engine` as a workspace package
 (`@archsim/engine`). See the repo root's `README.md` and `CONTEXT.md` for
 the product/architecture picture this app implements.

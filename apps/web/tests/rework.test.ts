@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { checkout, MAX_TOTAL_COMPONENTS } from "@archsim/engine";
-import { MAX_REQUEST_BYTES } from "../lib/limits";
+import { MAX_PENDING_CHANGES, MAX_REQUEST_BYTES } from "../lib/limits";
 
 const reworkModelMock = vi.fn();
 vi.mock("@archsim/engine/server", () => ({
@@ -36,7 +36,7 @@ describe("POST /api/rework", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.model.id).toBe(checkout.id);
-    expect(reworkModelMock).toHaveBeenCalledWith(checkout, []);
+    expect(reworkModelMock).toHaveBeenCalledWith(checkout, [], []);
   });
 
   it("forwards a provided pendingFixes array to reworkModel", async () => {
@@ -47,7 +47,25 @@ describe("POST /api/rework", () => {
 
     await POST(jsonRequest({ model: checkout, pendingFixes }));
 
-    expect(reworkModelMock).toHaveBeenCalledWith(checkout, pendingFixes);
+    expect(reworkModelMock).toHaveBeenCalledWith(checkout, pendingFixes, []);
+  });
+
+  it("forwards queued chat changes to reworkModel", async () => {
+    reworkModelMock.mockResolvedValueOnce({ model: checkout, raw: {}, repaired: false });
+    const pendingChanges = [{ request: "add a CDN", instruction: 'Add a CDN before "gw".' }];
+
+    await POST(jsonRequest({ model: checkout, pendingChanges }));
+
+    expect(reworkModelMock).toHaveBeenCalledWith(checkout, [], pendingChanges);
+  });
+
+  it("rejects an oversized or malformed pendingChanges with 400", async () => {
+    const tooMany = Array.from({ length: MAX_PENDING_CHANGES + 1 }, () => ({ request: "a", instruction: "b" }));
+    for (const pendingChanges of [tooMany, "nope", [{ request: 1, instruction: "b" }]]) {
+      const res = await POST(jsonRequest({ model: checkout, pendingChanges }));
+      expect(res.status).toBe(400);
+    }
+    expect(reworkModelMock).not.toHaveBeenCalled();
   });
 
   it("rejects a missing model with 400", async () => {

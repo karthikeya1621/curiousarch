@@ -28,6 +28,16 @@
  * cacheable) across every rework call regardless of how many fixes are
  * queued this time.
  *
+ * `pendingChanges` (optional): changes the user asked for in chat since the
+ * last Re-simulate. Chat no longer edits the model itself — it queues the
+ * request, and this call is what implements it (alongside `pendingFixes`,
+ * same user-content placement and for the same caching reason). Each carries
+ * the user's own words AND a self-contained instruction written when the
+ * message was sent (references like "it"/"that one" already resolved against
+ * the conversation and any earlier queued change), so nothing about what was
+ * meant is lost by the time the conversation has scrolled out of the chat
+ * history window.
+ *
  * A second call, sequential and unconditional, always follows the base
  * rework above: `extendedComponents.ts`'s `reviseExtendedComponents`
  * re-evaluates any components of the 7 "extended" kinds (external
@@ -46,9 +56,9 @@ import { EXTENDED_KINDS, isExtendedComponent, reviseExtendedComponents } from ".
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { MAX_BASE_COMPONENTS, type Component, type SystemModel } from "../types.ts";
 
-const REWORK_PROMPT = `You are reconsidering an EXISTING rough architectural model, not describing a new system from scratch. You will be given the current model as JSON - its components, their traits, the edges between them, and its workload.users/workload.requests for context (each has "included": whether that dimension is relevant to this system, "tier": the current rough step on a small ladder, and "target": the original ambition for it). Some of it may already reflect real fixes that were applied (an added component, a corrected trait). You may also be given a list of specific fixes the user has already chosen to apply.
+const REWORK_PROMPT = `You are reconsidering an EXISTING rough architectural model, not describing a new system from scratch. You will be given the current model as JSON - its components, their traits, the edges between them, and its workload.users/workload.requests for context (each has "included": whether that dimension is relevant to this system, "tier": the current rough step on a small ladder, and "target": the original ambition for it). Some of it may already reflect real fixes that were applied (an added component, a corrected trait). You may also be given a list of specific fixes the user has already chosen to apply, and a list of changes the user asked for in chat.
 
-If specific fixes are listed, implement each of them precisely first - they are already-decided choices, not suggestions to evaluate. Then reconsider the ARCHITECTURE holistically on top of that, the way an architect revisiting a system does: given where this system stands now (including its current scale), does it call for anything more - additional scaling on a component, a new service, a new connection, a component that should be split or added, a trait that's clearly wrong given the rest of the system? You may leave everything else exactly as it is if nothing more is warranted - do not change something just to have changed it. You are not deciding the workload parameters themselves - only the architecture that serves them.
+If specific fixes or requested changes are listed, implement each of them precisely first - they are already-decided choices, not suggestions to evaluate. Requested changes are listed oldest first; where a later one conflicts with (or cancels) an earlier one, the later one wins. If a requested change is about one of the EXTENDED kinds described below, do not attempt it yourself - the separate step that owns those kinds implements it, so your own output simply doesn't change on account of that part of the request; only make a base-kind change for a request that genuinely calls for one. Then reconsider the ARCHITECTURE holistically on top of that, the way an architect revisiting a system does: given where this system stands now (including its current scale), does it call for anything more - additional scaling on a component, a new service, a new connection, a component that should be split or added, a trait that's clearly wrong given the rest of the system? You may leave everything else exactly as it is if nothing more is warranted - do not change something just to have changed it. You are not deciding the workload parameters themselves - only the architecture that serves them.
 
 Some components in the model may be of an EXTENDED kind (${EXTENDED_KINDS.join(", ")}) - these are shown to you for context only and are reworked by a separate step, never by you. Your own output must never include one of these kinds, and their ids are OFF LIMITS to you entirely - never reuse one of their ids for a component of your own, even a base-kind one that seems related; that id is already taken by something the separate step owns. The ONLY edges you omit are ones whose "from" or "to" references one of THEIR ids specifically - every other edge from the input, between components you're keeping, must still be present in your output exactly as it was unless the architecture genuinely no longer calls for that specific connection. Dropping an edge between two components you both kept, for any reason other than a deliberate architectural change, is a mistake - when in doubt, keep it.
 
@@ -79,6 +89,24 @@ export interface PendingFixInput {
   fixTradeoff: string;
 }
 
+/**
+ * A change the user asked for in chat — see this file's own top comment.
+ * `request` is their exact words; `instruction` is the self-contained
+ * restatement the chat step wrote (real component ids, references resolved).
+ */
+export interface PendingChangeInput {
+  request: string;
+  instruction: string;
+}
+
+export function formatPendingChanges(pendingChanges: PendingChangeInput[]): string {
+  if (pendingChanges.length === 0) return "";
+  const lines = pendingChanges
+    .map((c, i) => `${i + 1}. The user asked: "${c.request}"\n   Instruction: ${c.instruction}`)
+    .join("\n");
+  return `\n\nThe user has also asked for these changes to the architecture in chat (oldest first; a later one overrides an earlier one where they conflict) — implement each one, in addition to your normal holistic review:\n${lines}`;
+}
+
 export function formatPendingFixes(pendingFixes: PendingFixInput[]): string {
   if (pendingFixes.length === 0) return "";
   const lines = pendingFixes
@@ -90,11 +118,13 @@ export function formatPendingFixes(pendingFixes: PendingFixInput[]): string {
 export async function reworkModel(
   model: SystemModel,
   pendingFixes: PendingFixInput[] = [],
+  pendingChanges: PendingChangeInput[] = [],
   options: StructuredCallOptions = {},
 ): Promise<ReworkModelResult> {
+  const pendingContext = `${formatPendingFixes(pendingFixes)}${formatPendingChanges(pendingChanges)}`;
   const result = await runStructuredCall(
     REWORK_PROMPT,
-    `Here is the current model:\n\n${JSON.stringify(model)}${formatPendingFixes(pendingFixes)}`,
+    `Here is the current model:\n\n${JSON.stringify(model)}${pendingContext}`,
     SystemModelSchema,
     buildTool(),
     { maxRetries: 2, ...options },
@@ -107,14 +137,14 @@ export async function reworkModel(
   // extended components come from the INPUT model, not the base rework's
   // own output — that output can never contain them (see REWORK_PROMPT).
   const previousExtended: Component[] = model.components.filter(isExtendedComponent);
-  // A queued fix can target an extended component (e.g. "add a fallback"
-  // on an external-dependency) — passed through as the same
-  // `additionalContext` mechanism chatWithProject.ts uses for a chat
-  // message, so it isn't silently ignored by a call that only otherwise
-  // sees "previous extended components" + "current base topology".
-  // `formatPendingFixes` returns "" for an empty list, which is a no-op
-  // here exactly as it is on the base call above.
-  const extended = await reviseExtendedComponents(previousExtended, result.data, options, formatPendingFixes(pendingFixes));
+  // A queued fix or a chat-requested change can target an extended component
+  // ("add a fallback" on an external-dependency, "add a CDN") — and the base
+  // call above is told to leave exactly those to this step, so this is the
+  // ONLY place they get implemented. Passed as `additionalContext` so it
+  // isn't silently ignored by a call that otherwise only sees "previous
+  // extended components" + "current base topology". Empty when nothing is
+  // queued, which is a no-op here exactly as it is on the base call.
+  const extended = await reviseExtendedComponents(previousExtended, result.data, options, pendingContext);
 
   return {
     model: {

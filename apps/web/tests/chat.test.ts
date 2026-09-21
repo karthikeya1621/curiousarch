@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { checkout, MAX_TOTAL_COMPONENTS } from "@archsim/engine";
-import { MAX_CHAT_MESSAGE_LENGTH, MAX_REQUEST_BYTES } from "../lib/limits";
+import { MAX_CHAT_MESSAGE_LENGTH, MAX_PENDING_CHANGES, MAX_REQUEST_BYTES } from "../lib/limits";
 
 const chatWithProjectMock = vi.fn();
 vi.mock("@archsim/engine/server", () => ({
@@ -29,7 +29,7 @@ function jsonRequest(body: unknown): Request {
 }
 
 describe("POST /api/chat", () => {
-  it("returns a plain answer for a question, with no model", async () => {
+  it("returns a plain answer for a question, with nothing to queue", async () => {
     chatWithProjectMock.mockResolvedValueOnce({
       isQuestion: true,
       reply: "The cache TTL is short because listings change often.",
@@ -41,10 +41,10 @@ describe("POST /api/chat", () => {
     const body = await res.json();
     expect(body.isQuestion).toBe(true);
     expect(body.reply).toMatch(/short/i);
-    expect(body.model).toBeUndefined();
-    // No `history`/`findings`/`pendingFixes` sent — each defaults to an
-    // empty array, not undefined.
-    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is the cache short-lived?", [], [], []);
+    expect(body.instruction).toBeUndefined();
+    // No `history`/`findings`/`pendingFixes`/`pendingChanges` sent — each
+    // defaults to an empty array, not undefined.
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is the cache short-lived?", [], [], [], []);
   });
 
   it("forwards a provided history array to chatWithProject", async () => {
@@ -56,7 +56,7 @@ describe("POST /api/chat", () => {
 
     await POST(jsonRequest({ model: checkout, message: "what about the database?", history }));
 
-    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "what about the database?", history, [], []);
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "what about the database?", history, [], [], []);
   });
 
   it("forwards provided findings and pendingFixes to chatWithProject", async () => {
@@ -77,15 +77,14 @@ describe("POST /api/chat", () => {
 
     await POST(jsonRequest({ model: checkout, message: "why is this risky?", findings, pendingFixes }));
 
-    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is this risky?", [], findings, pendingFixes);
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is this risky?", [], findings, pendingFixes, []);
   });
 
-  it("returns the updated model for a change request", async () => {
-    const updated = { ...checkout, name: "Checkout / order placement (updated)" };
+  it("returns the instruction to queue for a change request — and no model", async () => {
     chatWithProjectMock.mockResolvedValueOnce({
       isQuestion: false,
       reply: "Adding a CDN in front of the gateway.",
-      model: updated,
+      instruction: 'Add a CDN before "gw".',
       repaired: false,
     });
 
@@ -93,7 +92,28 @@ describe("POST /api/chat", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.isQuestion).toBe(false);
-    expect(body.model.name).toBe(updated.name);
+    expect(body.instruction).toBe('Add a CDN before "gw".');
+    expect(body.model).toBeUndefined();
+  });
+
+  it("forwards the queued chat changes so a follow-up can build on them", async () => {
+    chatWithProjectMock.mockResolvedValueOnce({ isQuestion: true, reply: "ok", repaired: false });
+    const pendingChanges = [{ request: "add a CDN", instruction: 'Add a CDN before "gw".' }];
+
+    await POST(jsonRequest({ model: checkout, message: "and a cache behind it?", pendingChanges }));
+
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "and a cache behind it?", [], [], [], pendingChanges);
+  });
+
+  it.each([
+    ["not an array", "add a CDN"],
+    ["too many entries", Array.from({ length: MAX_PENDING_CHANGES + 1 }, () => ({ request: "a", instruction: "b" }))],
+    ["an entry missing its instruction", [{ request: "add a CDN" }]],
+    ["an over-long instruction", [{ request: "a", instruction: "x".repeat(MAX_CHAT_MESSAGE_LENGTH + 1) }]],
+  ])("rejects pendingChanges that are %s with 400", async (_label, pendingChanges) => {
+    const res = await POST(jsonRequest({ model: checkout, message: "hi", pendingChanges }));
+    expect(res.status).toBe(400);
+    expect(chatWithProjectMock).not.toHaveBeenCalled();
   });
 
   it("rejects a missing model with 400", async () => {

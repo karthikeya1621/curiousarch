@@ -2,27 +2,29 @@ import { NextResponse } from "next/server";
 import { chatWithProject } from "@archsim/engine/server";
 import type { PendingFixInput } from "@archsim/engine/server";
 import type { AiFinding, SystemModel } from "@archsim/engine";
-import { MAX_CHAT_MESSAGE_LENGTH, isValidModelShape } from "../../../lib/limits";
+import { MAX_CHAT_MESSAGE_LENGTH, isValidModelShape, parsePendingChanges } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 
 /**
  * Server-only, same reason as api/infer/route.ts. Backs the sidebar chat
- * box for an EXISTING project — never resets or replaces it, only ever
- * answers a question or applies a change the AI itself decided the
- * message calls for (see chatWithProject.ts).
+ * box for an EXISTING project — never resets or replaces it, and never
+ * edits it: it answers a question, or turns a change request into an
+ * `instruction` the client queues for the next Re-simulate (see
+ * chatWithProject.ts).
  */
 export async function POST(request: Request) {
   const parsed = await readJsonBody(request);
   if ("error" in parsed) return parsed.error;
   const body = parsed.body;
 
-  const { model, message, history, findings, pendingFixes } =
+  const { model, message, history, findings, pendingFixes, pendingChanges } =
     (body as {
       model?: unknown;
       message?: unknown;
       history?: unknown;
       findings?: unknown;
       pendingFixes?: unknown;
+      pendingChanges?: unknown;
     }) ?? {};
   if (
     !model ||
@@ -37,6 +39,11 @@ export async function POST(request: Request) {
       },
       { status: 400 },
     );
+  }
+
+  const queuedChanges = parsePendingChanges(pendingChanges);
+  if (queuedChanges === null) {
+    return NextResponse.json({ error: "pendingChanges must be a short list of { request, instruction } strings." }, { status: 400 });
   }
 
   // Structurally compatible with Anthropic.MessageParam[] (plain string
@@ -59,11 +66,12 @@ export async function POST(request: Request) {
       chatHistory,
       currentFindings,
       currentPendingFixes,
+      queuedChanges,
     );
     return NextResponse.json({
       isQuestion: result.isQuestion,
       reply: result.reply,
-      model: result.model,
+      instruction: result.instruction,
     });
   } catch (err) {
     return upstreamError(err, "Chat failed.");

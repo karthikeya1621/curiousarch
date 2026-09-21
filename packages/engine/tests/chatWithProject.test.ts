@@ -1,15 +1,16 @@
 /**
  * `chatWithProject` against a fake Anthropic client - no network, no API
- * cost. A change request makes two sequential calls (route, then the
- * topology mutation, sharing the same `runStructuredCall` retry machinery
- * as every other inference module here); a question makes only the first.
+ * cost. Exactly ONE call now, question or change: a change request is
+ * queued by the caller (the model isn't rewritten here), so what matters
+ * is that the call returns a usable self-contained instruction and that
+ * everything the AI needs to write one — queued fixes, queued changes,
+ * the conversation — actually reaches it.
  */
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
 import { chatWithProject } from "../src/inference/chatWithProject.js";
 import { checkout } from "../models/reference.js";
-import type { SystemModel } from "../src/types.js";
 
 function toolUseResponse(name: string, input: unknown): Anthropic.Message {
   return {
@@ -38,66 +39,25 @@ function fakeClient(
 const questionRoute = {
   isQuestion: true,
   reply: "The cache has a short TTL because showtime availability changes frequently.",
+  instruction: "",
 };
 
-const changeRoute = { isQuestion: false, reply: "Adding a CDN in front of the API Gateway." };
-
-const changedModel = {
-  id: "checkout",
-  name: "Checkout / order placement",
-  workload: {},
-  components: [
-    {
-      id: "gw",
-      label: "API Gateway",
-      kind: "gateway",
-      hasRateLimiting: { rationale: "Requests pass through a rate-limited API gateway.", provenance: "stated", value: true },
-    },
-    {
-      id: "cdn",
-      label: "CDN",
-      kind: "cache",
-      ttl: { rationale: "Static assets cached at the edge.", provenance: "inferred", value: "long" },
-      keyspaceSize: { rationale: "One entry per static asset.", provenance: "inferred", value: "large" },
-      hasStampedeProtection: { rationale: "CDNs handle this natively.", provenance: "inferred", value: true },
-    },
-    {
-      id: "svc",
-      label: "Order service",
-      kind: "service",
-      instanceCount: { rationale: "Eight instances.", provenance: "stated", value: "multiple" },
-      hasCircuitBreaker: { rationale: "Protects downstream calls.", provenance: "stated", value: true },
-    },
-    {
-      id: "db",
-      label: "PostgreSQL (primary)",
-      kind: "database",
-      instanceCount: { rationale: "Two replicas.", provenance: "stated", value: "has-replicas" },
-      writeVolume: { rationale: "Order inserts dominate.", provenance: "stated", value: "high" },
-    },
-  ],
-  edges: [
-    { from: "gw", to: "cdn" },
-    { from: "gw", to: "svc" },
-    { from: "svc", to: "db" },
-  ],
+const changeRoute = {
+  isQuestion: false,
+  reply: "Adding a CDN in front of the API Gateway.",
+  instruction: 'Add a CDN component between the client and the API Gateway "gw" to serve static assets.',
 };
-
-// chatWithProject now always follows a change request with a second,
-// sequential call to reviseExtendedComponents (see chatWithProject.ts's
-// own top comment) — every fakeClient response list exercising a change
-// request below needs one more canned response for it. Empty
-// components/edges is a valid response and keeps every existing assertion
-// about the route/change calls unaffected.
-function emptyExtendedResponse(): Anthropic.Message {
-  return toolUseResponse("emit_extended_components", { components: [], edges: [] });
-}
 
 const noFindings: never[] = [];
 const noPendingFixes: never[] = [];
+const noPendingChanges: never[] = [];
+
+function systemText(params: Anthropic.MessageCreateParams): string {
+  return Array.isArray(params.system) ? params.system.map((s) => s.text).join("") : (params.system ?? "");
+}
 
 describe("chatWithProject", () => {
-  it("answers a question directly without touching the model", async () => {
+  it("answers a question directly, with nothing to queue", async () => {
     const client = fakeClient([toolUseResponse("route_chat_message", questionRoute)]);
     const result = await chatWithProject(
       checkout,
@@ -105,82 +65,51 @@ describe("chatWithProject", () => {
       [],
       noFindings,
       noPendingFixes,
+      noPendingChanges,
       { client },
     );
 
     expect(result.isQuestion).toBe(true);
     expect(result.reply).toMatch(/short TTL/i);
-    expect(result.model).toBeUndefined();
+    expect(result.instruction).toBeUndefined();
   });
 
-  it("implements a change request and returns the updated model", async () => {
-    const client = fakeClient([
-      toolUseResponse("route_chat_message", changeRoute),
-      toolUseResponse("emit_system_model", changedModel),
-      emptyExtendedResponse(),
-    ]);
+  it("turns a change request into a queueable instruction — in ONE call, without rewriting the model", async () => {
+    let calls = 0;
+    const client = fakeClient([toolUseResponse("route_chat_message", changeRoute)], () => calls++);
     const result = await chatWithProject(
       checkout,
       "add a CDN in front of the gateway",
       [],
       noFindings,
       noPendingFixes,
+      noPendingChanges,
       { client },
     );
 
     expect(result.isQuestion).toBe(false);
     expect(result.reply).toMatch(/CDN/i);
-    expect(result.model).toBeDefined();
-    expect(result.model!.components.some((c) => c.id === "cdn")).toBe(true);
+    expect(result.instruction).toBe(changeRoute.instruction);
+    expect(calls).toBe(1);
+    expect("model" in result).toBe(false);
   });
 
-  it("carries workload.users/requests forward unchanged on a change request", async () => {
-    const withParameters: SystemModel = {
-      ...checkout,
-      workload: { ...checkout.workload, users: { included: true, tier: 10_000, target: 1_000_000 } },
-    };
-    const client = fakeClient([
-      toolUseResponse("route_chat_message", changeRoute),
-      toolUseResponse("emit_system_model", changedModel),
-      emptyExtendedResponse(),
-    ]);
-    const result = await chatWithProject(withParameters, "add a CDN", [], noFindings, noPendingFixes, { client });
+  it("falls back to the user's own words if the AI leaves the instruction blank", async () => {
+    const client = fakeClient([toolUseResponse("route_chat_message", { ...changeRoute, instruction: "   " })]);
+    const result = await chatWithProject(
+      checkout,
+      "add a CDN in front of the gateway",
+      [],
+      noFindings,
+      noPendingFixes,
+      noPendingChanges,
+      { client },
+    );
 
-    expect(result.model!.workload.users).toEqual({ included: true, tier: 10_000, target: 1_000_000 });
+    expect(result.instruction).toBe("add a CDN in front of the gateway");
   });
 
-  it("preserves an existing extended component across a change request", async () => {
-    const withExtended: SystemModel = {
-      ...checkout,
-      components: [
-        ...checkout.components,
-        {
-          id: "payments",
-          label: "Payment Processor API",
-          kind: "external-dependency",
-          hasTimeout: { rationale: "A timeout is configured.", provenance: "stated", value: true },
-          hasFallback: { rationale: "No fallback configured.", provenance: "default", value: false },
-        },
-      ],
-      edges: [...checkout.edges, { from: "svc", to: "payments" }],
-    };
-    const client = fakeClient([
-      toolUseResponse("route_chat_message", changeRoute),
-      toolUseResponse("emit_system_model", changedModel),
-      // The revise call echoes the previous extended component back,
-      // same as a real "keep by default" response would.
-      toolUseResponse("emit_extended_components", {
-        components: [withExtended.components[3]],
-        edges: [{ from: "svc", to: "payments" }],
-      }),
-    ]);
-
-    const result = await chatWithProject(withExtended, "add a CDN", [], noFindings, noPendingFixes, { client });
-
-    expect(result.model!.components.some((c) => c.id === "payments")).toBe(true);
-  });
-
-  it("includes current findings and pending fixes as context in both prompts", async () => {
+  it("includes findings, queued fixes AND queued changes as context — marked as not yet in the model", async () => {
     const findings = [
       {
         code: "SINGLE_POINT_OF_FAILURE",
@@ -194,49 +123,42 @@ describe("chatWithProject", () => {
     const pendingFixes = [
       { componentId: "svc", findingTitle: "Single instance", fixLabel: "Add a second instance", fixTradeoff: "More cost." },
     ];
+    const pendingChanges = [
+      { request: "add a CDN in front of the gateway", instruction: 'Add a CDN before "gw".' },
+    ];
     const seenSystemPrompts: string[] = [];
-    const client = fakeClient(
-      [toolUseResponse("route_chat_message", questionRoute)],
-      (params) => {
-        const system = Array.isArray(params.system) ? params.system.map((s) => s.text).join("") : (params.system ?? "");
-        seenSystemPrompts.push(system);
-      },
+    const client = fakeClient([toolUseResponse("route_chat_message", questionRoute)], (params) =>
+      seenSystemPrompts.push(systemText(params)),
     );
 
-    await chatWithProject(checkout, "why is this risky?", [], findings, pendingFixes, { client });
+    await chatWithProject(checkout, "why is this risky?", [], findings, pendingFixes, pendingChanges, { client });
 
     expect(seenSystemPrompts[0]).toMatch(/Single instance/);
     expect(seenSystemPrompts[0]).toMatch(/Add a second instance/);
+    // Both the user's words and the self-contained instruction are shown.
+    expect(seenSystemPrompts[0]).toMatch(/add a CDN in front of the gateway/);
+    expect(seenSystemPrompts[0]).toMatch(/Add a CDN before "gw"/);
+    expect(seenSystemPrompts[0]).toMatch(/NOT in that model yet/);
   });
 
-  it("forwards prior conversation turns to the route and change calls, but not the extended-components call", async () => {
+  it("forwards prior conversation turns, followed by the new user turn", async () => {
     const history: Anthropic.MessageParam[] = [
       { role: "user", content: "why is the cache TTL short?" },
       { role: "assistant", content: "Because showtime availability changes frequently." },
     ];
     const seenMessages: Anthropic.MessageParam[][] = [];
-    const client = fakeClient(
-      [
-        toolUseResponse("route_chat_message", changeRoute),
-        toolUseResponse("emit_system_model", changedModel),
-        emptyExtendedResponse(),
-      ],
-      (params) => seenMessages.push(params.messages),
+    const client = fakeClient([toolUseResponse("route_chat_message", changeRoute)], (params) =>
+      seenMessages.push(params.messages),
     );
 
-    await chatWithProject(checkout, "make it long-lived instead", history, noFindings, noPendingFixes, { client });
+    await chatWithProject(checkout, "make it long-lived instead", history, noFindings, noPendingFixes, noPendingChanges, {
+      client,
+    });
 
-    // The route and change calls should see the same prior history,
-    // followed by the new user turn. The extended-components revise call
-    // (third) never receives conversation history — same as
-    // reworkModel.ts's own equivalent call — so it's a single fresh turn.
-    expect(seenMessages).toHaveLength(3);
-    for (const messages of seenMessages.slice(0, 2)) {
-      expect(messages[0]).toEqual(history[0]);
-      expect(messages[1]).toEqual(history[1]);
-      expect(messages[2]?.role).toBe("user");
-    }
-    expect(seenMessages[2]).toHaveLength(1);
+    expect(seenMessages).toHaveLength(1);
+    expect(seenMessages[0]![0]).toEqual(history[0]);
+    expect(seenMessages[0]![1]).toEqual(history[1]);
+    expect(seenMessages[0]![2]?.role).toBe("user");
   });
 
   it("requires an API key when no client is injected", async () => {

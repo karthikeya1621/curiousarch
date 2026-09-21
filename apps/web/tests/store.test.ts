@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkout } from "@archsim/engine";
 import type { SystemModel } from "@archsim/engine";
+import { MAX_PENDING_CHANGES } from "../lib/limits";
 import { useAppStore } from "../lib/store";
 
 /**
@@ -699,34 +700,46 @@ describe("sendChatMessage", () => {
     const state = useAppStore.getState();
     expect(state.chatMessages).toEqual([
       { role: "user", text: "why is the cache TTL short?" },
-      { role: "assistant", text: "Because it's a hot key.", changed: false },
+      { role: "assistant", text: "Because it's a hot key." },
     ]);
     expect(state.model).toBe(model);
     expect(state.canResimulate).toBe(false);
   });
 
-  it("applies a change request exactly like a fix: commits the model, enables Re-simulate, no identifyFailures call", async () => {
+  it("QUEUES a change request instead of applying it: the model stays as it is, Re-simulate turns on, no other call", async () => {
     const model = degradedModel();
-    const changed = fixedModel();
     useAppStore.setState({ model, chatMessages: [] });
     const fetchMock = vi.fn(() =>
-      Promise.resolve(jsonResponse({ isQuestion: false, reply: "Added a second instance.", model: changed })),
+      Promise.resolve(
+        jsonResponse({
+          isQuestion: false,
+          reply: "Adding a second instance.",
+          instruction: 'Set the order service "svc" to multiple instances.',
+        }),
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
     await useAppStore.getState().sendChatMessage("add another instance");
 
     const state = useAppStore.getState();
-    expect(state.model).toEqual(changed);
+    expect(state.model).toBe(model); // untouched until Re-simulate
     expect(state.canResimulate).toBe(true);
-    expect(state.findingsStale).toBe(true);
+    expect(state.findingsStale).toBe(false); // the model didn't change, so the findings still describe it
+    expect(state.chatChangeSinceResimulate).toBe(false);
+    expect(state.pendingChanges).toEqual([
+      {
+        id: expect.any(String),
+        request: "add another instance", // the user's exact words…
+        instruction: 'Set the order service "svc" to multiple instances.', // …and the self-contained restatement
+        queuedAt: expect.any(Number),
+      },
+    ]);
     expect(state.chatMessages.at(-1)).toEqual({
       role: "assistant",
-      text: "Added a second instance.",
-      changed: true,
+      text: "Adding a second instance.",
+      change: { id: state.pendingChanges[0]!.id, status: "queued" },
     });
-    // Only the chat call itself — applying the resulting change no longer
-    // spends a second (identifyFailures) call on its own.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith("/api/chat", expect.objectContaining({ method: "POST" }));
   });
@@ -802,14 +815,14 @@ describe("async responses that arrive after the project changed", () => {
 
     const pending = useAppStore.getState().sendChatMessage("add another instance");
     useAppStore.getState().startNewProject();
-    gate.resolve(jsonResponse({ isQuestion: false, reply: "Added.", model: fixedModel() }));
+    gate.resolve(jsonResponse({ isQuestion: false, reply: "Added.", instruction: "Add an instance." }));
     await pending;
 
     const state = useAppStore.getState();
     expect(state.model.components).toEqual([]);
     expect(state.chatMessages).toEqual([]);
+    expect(state.pendingChanges).toEqual([]);
     expect(state.canResimulate).toBe(false);
-    expect(state.chatChangeSinceResimulate).toBe(false);
   });
 
   it("drops a findings response (and its version snapshot) that lands after the project was switched", async () => {
@@ -843,22 +856,21 @@ describe("async responses that arrive after the project changed", () => {
     expect(useAppStore.getState().findings).toEqual([someFinding("newer")]); // but only the latest is shown
   });
 
-  it("withholds a chat change when the model was edited while the AI was working, rather than overwriting the edit", async () => {
-    useAppStore.setState({ model: modelWithUsers(), chatMessages: [] });
+  it("still queues a chat change when a tier moved while the AI was working — nothing to overwrite, so nothing withheld", async () => {
+    useAppStore.setState({ model: modelWithUsers(), baselineModel: modelWithUsers(), chatMessages: [] });
     const gate = deferred<Response>();
     vi.stubGlobal("fetch", vi.fn(() => gate.promise));
 
     const pending = useAppStore.getState().sendChatMessage("add another instance");
     useAppStore.getState().setWorkloadTier("users", 10_000);
-    gate.resolve(jsonResponse({ isQuestion: false, reply: "Added.", model: fixedModel() }));
+    gate.resolve(jsonResponse({ isQuestion: false, reply: "Added.", instruction: "Add an instance." }));
     await pending;
 
     const state = useAppStore.getState();
-    expect(state.model.workload.users?.tier).toBe(10_000);
-    expect(state.chatChangeSinceResimulate).toBe(false);
-    const last = state.chatMessages.at(-1)!;
-    expect(last.changed).toBe(false);
-    expect(last.text).toMatch(/Not applied/);
+    expect(state.model.workload.users?.tier).toBe(10_000); // the tier edit is intact
+    expect(state.pendingChanges).toHaveLength(1); // and so is the request
+    expect(state.chatMessages.at(-1)!.change?.status).toBe("queued");
+    expect(state.parametersChangedSinceResimulate).toBe(true);
   });
 });
 
@@ -1160,5 +1172,213 @@ describe("reverting a change clears what's pending (derived from the baseline, n
     useAppStore.getState().revertParameters();
     expect(useAppStore.getState().model.workload.users?.tier).toBe(100);
     expect(pendingFlags()).toEqual({ params: false, chat: false, canResimulate: false, stale: false });
+  });
+});
+
+describe("queued chat changes", () => {
+  const changeReply = (n = 1) =>
+    jsonResponse({ isQuestion: false, reply: `Queued ${n}.`, instruction: `Instruction ${n}.` });
+  const stubChat = (...responses: Response[]) => {
+    const fetchMock = vi.fn();
+    for (const r of responses) fetchMock.mockResolvedValueOnce(r);
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  };
+  const builtProject = () => {
+    const model = modelWithUsers();
+    useAppStore.setState({ model, baselineModel: model, chatMessages: [], canResimulate: false, findingsStale: false });
+    return model;
+  };
+  const sentBody = (fetchMock: ReturnType<typeof vi.fn>, call: number) =>
+    JSON.parse((fetchMock.mock.calls[call]![1] as RequestInit).body as string);
+
+  it("sends the whole queue with every later message, so a follow-up builds on it — including past the history window", async () => {
+    builtProject();
+    const fetchMock = stubChat(changeReply(1), changeReply(2), jsonResponse({ isQuestion: true, reply: "ok" }));
+
+    await useAppStore.getState().sendChatMessage("add a CDN");
+    await useAppStore.getState().sendChatMessage("put a cache behind it");
+    // Enough filler to push both requests out of the 8-message history window.
+    useAppStore.setState((st) => ({
+      chatMessages: [
+        ...st.chatMessages,
+        ...Array.from({ length: 10 }, (_, i) => ({ role: "user" as const, text: `filler ${i}` })),
+      ],
+    }));
+    await useAppStore.getState().sendChatMessage("what's queued?");
+
+    expect(sentBody(fetchMock, 0).pendingChanges).toEqual([]);
+    expect(sentBody(fetchMock, 1).pendingChanges).toHaveLength(1);
+    const third = sentBody(fetchMock, 2);
+    expect(third.history.some((m: { content: string }) => m.content === "add a CDN")).toBe(false); // out of the window…
+    expect(third.pendingChanges.map((c: { request: string; instruction: string }) => [c.request, c.instruction])).toEqual([
+      ["add a CDN", "Instruction 1."], // …but still fully known, verbatim and restated
+      ["put a cache behind it", "Instruction 2."],
+    ]);
+  });
+
+  it("a plain question queues nothing and leaves Re-simulate off", async () => {
+    builtProject();
+    stubChat(jsonResponse({ isQuestion: true, reply: "Because." }));
+    await useAppStore.getState().sendChatMessage("why?");
+    expect(useAppStore.getState().pendingChanges).toEqual([]);
+    expect(useAppStore.getState().canResimulate).toBe(false);
+  });
+
+  it("removing a queued change takes it out, marks its chat message removed, and turns Re-simulate off if nothing else is pending", async () => {
+    builtProject();
+    stubChat(changeReply(1));
+    await useAppStore.getState().sendChatMessage("add a CDN");
+    const id = useAppStore.getState().pendingChanges[0]!.id;
+    const revision = useAppStore.getState().autosaveRevision;
+
+    useAppStore.getState().unqueueChatChange(id);
+
+    const state = useAppStore.getState();
+    expect(state.pendingChanges).toEqual([]);
+    expect(state.canResimulate).toBe(false);
+    expect(state.chatMessages.at(-1)!.change).toEqual({ id, status: "removed" });
+    expect(state.autosaveRevision).toBe(revision + 1);
+  });
+
+  it("removing one leaves Re-simulate on while another change, a fix or a parameter change is still pending", async () => {
+    builtProject();
+    stubChat(changeReply(1), changeReply(2));
+    await useAppStore.getState().sendChatMessage("one");
+    await useAppStore.getState().sendChatMessage("two");
+    const [first, second] = useAppStore.getState().pendingChanges;
+
+    useAppStore.getState().unqueueChatChange(first!.id);
+    expect(useAppStore.getState().canResimulate).toBe(true); // "two" still waiting
+    expect(useAppStore.getState().chatMessages.filter((m) => m.change?.status === "queued")).toHaveLength(1);
+
+    useAppStore.getState().queueFix(pendingFix());
+    useAppStore.getState().unqueueChatChange(second!.id);
+    expect(useAppStore.getState().canResimulate).toBe(true); // the queued fix still warrants it
+  });
+
+  it("removing an id that isn't queued does nothing", () => {
+    builtProject();
+    const revision = useAppStore.getState().autosaveRevision;
+    useAppStore.getState().unqueueChatChange("nope");
+    expect(useAppStore.getState().autosaveRevision).toBe(revision);
+  });
+
+  it("Reset (revert parameters) leaves a queued chat change, and Re-simulate, in place", async () => {
+    builtProject();
+    stubChat(changeReply(1));
+    await useAppStore.getState().sendChatMessage("add a CDN");
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+
+    useAppStore.getState().revertParameters();
+
+    expect(useAppStore.getState().parametersChangedSinceResimulate).toBe(false);
+    expect(useAppStore.getState().pendingChanges).toHaveLength(1);
+    expect(useAppStore.getState().canResimulate).toBe(true);
+  });
+
+  it("reverting a parameter with a chat change queued keeps Re-simulate on (derived, not latched)", async () => {
+    builtProject();
+    stubChat(changeReply(1));
+    await useAppStore.getState().sendChatMessage("add a CDN");
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    useAppStore.getState().setWorkloadTier("users", 100);
+    expect(useAppStore.getState().canResimulate).toBe(true);
+    expect(useAppStore.getState().findingsStale).toBe(false);
+  });
+
+  it("commitRework (Re-simulate) clears the queue and flips its chat messages to applied", async () => {
+    builtProject();
+    stubChat(changeReply(1), jsonResponse({ isQuestion: true, reply: "just an answer" }));
+    await useAppStore.getState().sendChatMessage("add a CDN");
+    await useAppStore.getState().sendChatMessage("why?");
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonResponse({ findings: [] }))));
+
+    useAppStore.getState().commitRework(fixedModel());
+    await flush();
+
+    const state = useAppStore.getState();
+    expect(state.pendingChanges).toEqual([]);
+    expect(state.chatMessages.filter((m) => m.change).map((m) => m.change!.status)).toEqual(["applied"]);
+    expect(state.canResimulate).toBe(false);
+  });
+
+  it("commitRework leaves an already-removed change marked removed, not applied", async () => {
+    builtProject();
+    stubChat(changeReply(1));
+    await useAppStore.getState().sendChatMessage("add a CDN");
+    useAppStore.getState().unqueueChatChange(useAppStore.getState().pendingChanges[0]!.id);
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonResponse({ findings: [] }))));
+
+    useAppStore.getState().commitRework(fixedModel());
+    await flush();
+
+    expect(useAppStore.getState().chatMessages.at(-1)!.change!.status).toBe("removed");
+  });
+
+  it("restoring a version discards the queue and marks its chat messages removed", async () => {
+    builtProject();
+    stubChat(changeReply(1));
+    await useAppStore.getState().sendChatMessage("add a CDN");
+    useAppStore.setState({ versions: [{ id: "v1", model: degradedModel(), findings: [], createdAt: 1 }] });
+
+    useAppStore.getState().restoreVersion("v1");
+
+    const state = useAppStore.getState();
+    expect(state.pendingChanges).toEqual([]);
+    expect(state.chatMessages.at(-1)!.change!.status).toBe("removed");
+    expect(state.canResimulate).toBe(false);
+  });
+
+  it("refuses to queue past MAX_PENDING_CHANGES, and says so in the reply instead of dropping it silently", async () => {
+    builtProject();
+    useAppStore.setState({
+      pendingChanges: Array.from({ length: MAX_PENDING_CHANGES }, (_, i) => ({
+        id: `c${i}`,
+        request: `r${i}`,
+        instruction: `i${i}`,
+        queuedAt: i,
+      })),
+    });
+    stubChat(changeReply(99));
+
+    await useAppStore.getState().sendChatMessage("one more");
+
+    const state = useAppStore.getState();
+    expect(state.pendingChanges).toHaveLength(MAX_PENDING_CHANGES);
+    const last = state.chatMessages.at(-1)!;
+    expect(last.change).toBeUndefined();
+    expect(last.text).toMatch(/Not queued/);
+  });
+
+  it("is persisted with the project: a reload keeps the queue, its chat status, and Re-simulate", async () => {
+    builtProject();
+    stubChat(changeReply(1));
+    await useAppStore.getState().sendChatMessage("add a CDN");
+    await useAppStore.getState().saveToStorage();
+    const id = useAppStore.getState().currentProjectId!;
+    const queued = useAppStore.getState().pendingChanges;
+
+    useAppStore.getState().startNewProject();
+    expect(useAppStore.getState().pendingChanges).toEqual([]); // a new project starts clean
+    await useAppStore.getState().openProject(id);
+
+    const state = useAppStore.getState();
+    expect(state.pendingChanges).toEqual(queued);
+    expect(state.chatMessages.at(-1)!.change).toEqual({ id: queued[0]!.id, status: "queued" });
+    expect(state.canResimulate).toBe(true);
+    expect(state.findingsStale).toBe(false);
+  });
+
+  it("a project saved before chat changes were queued loads with an empty queue", async () => {
+    builtProject();
+    await useAppStore.getState().saveToStorage();
+    const id = useAppStore.getState().currentProjectId!;
+    delete (fakeProjects.get(id) as { data: Record<string, unknown> }).data.pendingChanges;
+
+    useAppStore.getState().startNewProject();
+    await useAppStore.getState().openProject(id);
+
+    expect(useAppStore.getState().pendingChanges).toEqual([]);
   });
 });

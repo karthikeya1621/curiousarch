@@ -33,8 +33,28 @@ export interface ProjectSummary {
 export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
-  /** True on an assistant message that actually changed the model — lets the UI distinguish it from a plain answer. */
+  /**
+   * On an assistant reply that was a change REQUEST (not a plain answer):
+   * which queued change it is and where that stands — "queued" until the next
+   * Re-simulate applies it ("applied"), or "removed" if the user took it back
+   * out of the queue (or restored a version, which discards the queue).
+   */
+  change?: { id: string; status: "queued" | "applied" | "removed" };
+  /** Legacy: set by the old chat, which changed the model immediately. Rendered as an applied change. */
   changed?: boolean;
+}
+
+/**
+ * A change the user asked for in chat, waiting for Re-simulate — see
+ * store.ts's own comment on `pendingChanges`. `request` is their exact words
+ * and `instruction` the self-contained restatement written when they sent it
+ * (see chatWithProject.ts): both go to the AI at Re-simulate time.
+ */
+export interface PendingChatChange {
+  id: string;
+  request: string;
+  instruction: string;
+  queuedAt: number;
 }
 
 /** A log entry, not a live-derived list — see store.ts's own comment on `appliedFixes`. */
@@ -87,6 +107,8 @@ export interface SavedSession {
   chatMessages: ChatMessage[];
   appliedFixes: AppliedFixRecord[];
   pendingFixes: PendingFix[];
+  /** Optional: absent on a project saved before chat changes were queued. */
+  pendingChanges?: PendingChatChange[];
   versions: Version[];
   savedAt: number;
 }

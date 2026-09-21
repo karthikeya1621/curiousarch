@@ -136,15 +136,15 @@ matter how the schema was tuned.
 | No drag-and-drop | The crowded lane. SysSimulator and ~8 others already do canvas + simulation, free. |
 | React Flow for rendering | Still needed for nodes/edges/click targets. Layout is programmatic (ELK). |
 | ELK.js with pinned node identity | Must animate, not repaint. Regeneration is frequent here, so instability is worse than in a drag tool. |
-| ~~Chat is for correction, not Q&A~~ — superseded | `chatWithProject.ts` now does both deliberately: the AI itself decides whether a message is a question (answered directly, model untouched) or a change request (implemented as a real model update). Findings still never come from chat — a question's answer is prose, not a new finding — but "never Q&A" is no longer true. |
+| ~~Chat is for correction, not Q&A~~ — superseded | `chatWithProject.ts` now does both deliberately: the AI itself decides whether a message is a question (answered directly, model untouched) or a change request. A change request is **queued**, not applied: chat returns a restatement plus a self-contained `instruction`, the store keeps it in `pendingChanges` beside the queued fixes, and Re-simulate (`reworkModel`) implements every queued item together — so the canvas only moves on the one deliberate, billed step. Each queued change keeps the user's exact words and the resolved instruction, and chat is shown the whole queue on every message, so nothing is lost as the conversation scrolls out of the history window. Findings still never come from chat — a question's answer is prose, not a new finding — but "never Q&A" is no longer true. |
 | Credits, not subscription | Usage is bursty and low-frequency; subscription fights the pattern. |
 
 ## Current state
 
 The app is a working, full-loop product, not a prototype: describe a system
 in prose, get a diagram with AI-identified findings and fixes, apply fixes
-or chat free-form to evolve it, Re-simulate to commit a change, save/reopen
-multiple projects across sessions. 163 tests passing (70 engine + 93 web),
+or chat free-form to queue changes to it, Re-simulate to apply everything queued, save/reopen
+multiple projects across sessions. 184 tests passing (71 engine + 113 web),
 typecheck clean across both workspaces, pushed to `origin/main`.
 
 **Auth + persistence.** Magic-link email and Google login (client-side

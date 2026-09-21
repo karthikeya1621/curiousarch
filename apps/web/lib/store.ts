@@ -7,11 +7,13 @@ import {
   deleteProject,
   type AppliedFixRecord,
   type ChatMessage,
+  type PendingChatChange,
   type PendingFix,
   type ProjectSummary,
   type SavedSession,
   type Version,
 } from "./sessionStorage";
+import { MAX_PENDING_CHANGES } from "./limits";
 
 export type { AppliedFixRecord, PendingFix, ProjectSummary, Version };
 
@@ -98,9 +100,8 @@ let openSeq = 0;
  * `setModel`/`commitRework`, the two actions that themselves represent
  * "the user asked to see the current state of a system" (a fresh build,
  * or a completed Re-simulate). `setWorkloadTier` and `applyFix`
- * deliberately do NOT trigger it: moving the tier slider or applying a
- * fix (including a chat-driven change, which commits through `applyFix`
- * too) is a change to review, not an automatic request for the AI's
+ * deliberately do NOT trigger it, and neither does queueing a fix or a chat
+ * change: each is a change to review, not an automatic request for the AI's
  * opinion — that's what the Re-simulate button is for. Every live
  * inference call costs real money, so this is a deliberate cost/
  * freshness tradeoff, not an oversight: `findings` visibly goes stale
@@ -125,8 +126,8 @@ interface AppState {
   /**
    * True specifically since a workload-tier control moved, reset once a
    * Re-simulate (or restoring a version) addresses it — narrower than
-   * `canResimulate`, which also flips true for a queued fix or an applied/
-   * chat-driven change, and can't by itself tell those apart. Exists so
+   * `canResimulate`, which also flips true for a queued fix or chat change
+   * (or an architecture difference), and can't by itself tell those apart. Exists so
    * `ResimulateButton.tsx` can show a "parameters changed" note
    * specifically for a tier move, independent of (and alongside) its
    * separate "N fixes queued" note — the two are not mutually exclusive,
@@ -152,16 +153,16 @@ interface AppState {
    */
   baselineModel: SystemModel | null;
   /**
-   * Same pattern as `parametersChangedSinceResimulate`, for the other
-   * source `canResimulate` can't itself distinguish: the architecture
-   * (components/edges) differs from `baselineModel`. In practice that's a
-   * chat-driven change — `FindingPanel.tsx` only ever queues fixes, so no
-   * other live path edits the architecture directly.
+   * The architecture (components/edges) differs from `baselineModel` — a
+   * change already IN the model that Re-simulate hasn't reviewed. Chat no
+   * longer produces one (its changes are queued as `pendingChanges` instead),
+   * so in practice this is only ever true for a project saved back when chat
+   * edited the model directly; the notes panel still shows it for those.
    */
   chatChangeSinceResimulate: boolean;
   /**
-   * True once the model has changed (a raised tier, an applied fix, a
-   * chat-driven change) without `findings` having been recomputed for it
+   * True once the model has changed (a raised tier, an applied fix, an
+   * architecture edit) without `findings` having been recomputed for it
    * yet — the dashboard mutes the findings list and shows a caption while
    * this is true, since otherwise a stale and a fresh findings list are
    * visually identical. Set by `setWorkloadTier`/`applyFix`; only a
@@ -175,8 +176,8 @@ interface AppState {
   hydrated: boolean;
   /**
    * Bumped by every action AutoSaveIndicator.tsx should actually persist —
-   * a fresh build, a chat-driven change, queueing/unqueueing a fix, a
-   * Reset, restoring a version, a completed Re-simulate. Deliberately NOT
+   * a fresh build, a chat reply (a queued change or not), queueing/unqueueing a
+   * fix or chat change, a Reset, restoring a version, a completed Re-simulate. Deliberately NOT
    * bumped by `setWorkloadTier`: moving the tier slider is a parameter
    * change to review, not something to save (or redraw the canvas for —
    * see FlowDiagram.tsx's own comment) on its own; only an explicit
@@ -205,8 +206,8 @@ interface AppState {
    * even if a later change reverts one (same relationship a git log has to
    * `git revert`), so a component's modal can show its history honestly. Only
    * the formal finding->fix flow (`FindingPanel`) records an entry; a
-   * chat-driven change can't be reliably attributed to one component
-   * without diffing the model, so it doesn't.
+   * chat-requested change can't be reliably attributed to one component
+   * (and isn't in the model until Re-simulate), so it doesn't.
    */
   appliedFixes: AppliedFixRecord[];
   /**
@@ -225,6 +226,19 @@ interface AppState {
    * normal, cheaper way to use this.
    */
   pendingFixes: PendingFix[];
+  /**
+   * Changes the user asked for in chat, queued the same way as
+   * `pendingFixes`: chat no longer edits the model itself (that used to cost
+   * a full model rewrite per message, and a second rework at Re-simulate). It
+   * records the request here, and Re-simulate — the one deliberate step —
+   * sends every entry to the AI as an explicit instruction. Each holds the
+   * user's exact words AND a self-contained restatement (see
+   * chatWithProject.ts), so no context is lost by waiting; chat itself is
+   * shown this queue on every message so follow-ups build on it. Cleared by
+   * `commitRework` (their chat messages flip to "applied") and by
+   * `restoreVersion` (they flip to "removed"); capped at MAX_PENDING_CHANGES.
+   */
+  pendingChanges: PendingChatChange[];
   /**
    * The component object behind the currently-open detail modal — an
    * object, not just an id, so it works correctly whether the diagram on
@@ -248,6 +262,8 @@ interface AppState {
   queueFix: (pendingFix: PendingFix) => void;
   /** Removes a queued fix before Re-simulate runs. */
   unqueueFix: (componentId: string, findingTitle: string) => void;
+  /** Takes a queued chat change back out before Re-simulate runs; its chat message shows it as removed. */
+  unqueueChatChange: (id: string) => void;
   commitRework: (newModel: SystemModel) => void;
   /**
    * Puts the workload controls back to the values the last simulation used
@@ -284,7 +300,7 @@ interface AppState {
   openProject: (id: string) => Promise<void>;
   /** Deletes a saved project. If it was the open one, resets to a blank canvas (like `startNewProject`). */
   deleteProjectById: (id: string) => Promise<void>;
-  /** A free-text message about the current project — answered, or turned into an actual model change, by the AI itself (see chatWithProject.ts). */
+  /** A free-text message about the current project — answered, or queued as a change for the next Re-simulate, by the AI itself (see chatWithProject.ts). */
   sendChatMessage: (message: string) => Promise<void>;
 }
 
@@ -297,6 +313,7 @@ interface AppState {
 function sessionToState(session: SavedSession): Partial<AppState> {
   const versions = session.versions ?? [];
   const pendingFixes = session.pendingFixes ?? [];
+  const pendingChanges = session.pendingChanges ?? [];
   // The model the findings describe. Saved with the project from now on; for
   // one saved before that existed, recover it: every Build and Re-simulate
   // records a version of exactly the model it analyzed, so the newest version
@@ -326,13 +343,14 @@ function sessionToState(session: SavedSession): Partial<AppState> {
     // Re-derived from the data whenever there's a baseline, overriding the
     // persisted flags: what's pending is a fact about model vs baseline, so a
     // saved flag that disagrees (an older project's latched one) is just wrong.
-    ...derivePending(session.model, baselineModel, pendingFixes),
+    ...derivePending(session.model, baselineModel, pendingFixes, pendingChanges),
     lastSavedAt: session.savedAt,
     // `?? []` covers a session saved before chat/fixes/versions existed.
     chatMessages: session.chatMessages ?? [],
     appliedFixes: session.appliedFixes ?? [],
-    pendingFixes: session.pendingFixes ?? [],
-    versions: session.versions ?? [],
+    pendingFixes,
+    pendingChanges,
+    versions,
     chatStatus: "idle",
     chatError: null,
     openComponentId: null,
@@ -362,10 +380,15 @@ function deepEqual(a: unknown, b: unknown): boolean {
  * is no baseline to compare against; callers then fall back to latching.
  *
  * `findingsStale` means exactly "findings don't match the model" — a queued
- * fix alone doesn't change the model, so it makes Re-simulate available
- * (`canResimulate`) without making the findings stale.
+ * fix or chat change doesn't change the model, so it makes Re-simulate
+ * available (`canResimulate`) without making the findings stale.
  */
-function derivePending(model: SystemModel, baseline: SystemModel | null, pendingFixes: PendingFix[]) {
+function derivePending(
+  model: SystemModel,
+  baseline: SystemModel | null,
+  pendingFixes: PendingFix[],
+  pendingChanges: PendingChatChange[],
+) {
   if (!baseline) return null;
   const parametersChanged = !deepEqual(model.workload, baseline.workload);
   const architectureChanged =
@@ -374,7 +397,7 @@ function derivePending(model: SystemModel, baseline: SystemModel | null, pending
     parametersChangedSinceResimulate: parametersChanged,
     chatChangeSinceResimulate: architectureChanged,
     findingsStale: parametersChanged || architectureChanged,
-    canResimulate: parametersChanged || architectureChanged || pendingFixes.length > 0,
+    canResimulate: parametersChanged || architectureChanged || pendingFixes.length > 0 || pendingChanges.length > 0,
   };
 }
 
@@ -404,6 +427,7 @@ function emptySession() {
     chatError: null,
     appliedFixes: [] as AppliedFixRecord[],
     pendingFixes: [] as PendingFix[],
+    pendingChanges: [] as PendingChatChange[],
     viewingComponent: null,
     versions: [] as Version[],
     previewVersionId: null,
@@ -451,7 +475,7 @@ async function refreshFindings(
             findings,
             findingsStatus: "done" as const,
             baselineModel: model,
-            ...derivePending(state.model, model, state.pendingFixes),
+            ...derivePending(state.model, model, state.pendingFixes, state.pendingChanges),
           }
         : {}),
       // `model` — the value fetched against, captured before the `await`
@@ -508,8 +532,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     // only an explicit Re-simulate commits it. See this field's own doc
     // comment on AppState.
     const next = { ...model, workload: { ...model.workload, [dimension]: { ...current, tier } } };
-    const { baselineModel, pendingFixes } = get();
-    const derived = derivePending(next, baselineModel, pendingFixes);
+    const { baselineModel, pendingFixes, pendingChanges } = get();
+    const derived = derivePending(next, baselineModel, pendingFixes, pendingChanges);
     set({
       model: next,
       // Derived, so moving a tier back to where it started clears it. With
@@ -530,7 +554,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applyFix: (newModel, appliedFix) => {
-    const { appliedFixes, chatChangeSinceResimulate, baselineModel, pendingFixes } = get();
+    const { appliedFixes, chatChangeSinceResimulate, baselineModel, pendingFixes, pendingChanges } = get();
     set({
       model: newModel,
       openComponentId: null,
@@ -543,7 +567,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // (so it can be undone away); with none (a legacy project), latched:
       // stale + Re-simulate available, and — only when `appliedFix` is
       // absent, i.e. a chat change — the chat flag set, never cleared.
-      ...(derivePending(newModel, baselineModel, pendingFixes) ?? {
+      ...(derivePending(newModel, baselineModel, pendingFixes, pendingChanges) ?? {
         canResimulate: true,
         chatChangeSinceResimulate: appliedFix ? chatChangeSinceResimulate : true,
         findingsStale: true,
@@ -566,7 +590,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   unqueueFix: (componentId, findingTitle) => {
-    const { model, pendingFixes, baselineModel } = get();
+    const { model, pendingFixes, pendingChanges, baselineModel } = get();
     const remaining = pendingFixes.filter(
       (p) => !(p.componentId === componentId && p.findingTitle === findingTitle),
     );
@@ -578,12 +602,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       // to be left alone because there was no way to tell, which kept an
       // enabled (and soon billable) button with nothing left to do. With
       // no baseline (a legacy project) it's still left alone.
-      ...(baselineModel ? { canResimulate: derivePending(model, baselineModel, remaining)!.canResimulate } : {}),
+      ...(baselineModel ? { canResimulate: derivePending(model, baselineModel, remaining, pendingChanges)!.canResimulate } : {}),
+    });
+  },
+
+  unqueueChatChange: (id) => {
+    const { model, pendingFixes, pendingChanges, baselineModel, chatMessages } = get();
+    if (!pendingChanges.some((c) => c.id === id)) return;
+    const remaining = pendingChanges.filter((c) => c.id !== id);
+    set({
+      pendingChanges: remaining,
+      chatMessages: chatMessages.map((m) =>
+        m.change?.id === id ? { ...m, change: { ...m.change, status: "removed" as const } } : m,
+      ),
+      autosaveRevision: get().autosaveRevision + 1,
+      // Same rule as unqueueFix: Re-simulate stays available only if
+      // something else still warrants it.
+      ...(baselineModel
+        ? { canResimulate: derivePending(model, baselineModel, pendingFixes, remaining)!.canResimulate }
+        : {}),
     });
   },
 
   commitRework: (newModel) => {
-    const { appliedFixes, pendingFixes } = get();
+    const { appliedFixes, pendingFixes, chatMessages } = get();
     const nowApplied: AppliedFixRecord[] = pendingFixes.map((p) => ({
       componentId: p.componentId,
       findingTitle: p.findingTitle,
@@ -605,6 +647,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       // right below) still finds the underlying issue, it'll simply
       // reappear as a fresh, current, re-queueable finding.
       pendingFixes: [],
+      // Same for queued chat changes — they were sent alongside the fixes,
+      // so their chat messages now read "applied".
+      pendingChanges: [],
+      chatMessages: chatMessages.map((m) =>
+        m.change?.status === "queued" ? { ...m, change: { ...m.change, status: "applied" as const } } : m,
+      ),
       appliedFixes: [...appliedFixes, ...nowApplied],
       autosaveRevision: get().autosaveRevision + 1,
     });
@@ -612,14 +660,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   revertParameters: () => {
-    const { model, baselineModel, pendingFixes } = get();
+    const { model, baselineModel, pendingFixes, pendingChanges } = get();
     if (!baselineModel) return;
     const next = { ...model, workload: baselineModel.workload };
     set({
       model: next,
       // Re-derived rather than blanket-cleared: a chat change or queued fix
       // made alongside the parameters is still pending afterwards.
-      ...derivePending(next, baselineModel, pendingFixes)!,
+      ...derivePending(next, baselineModel, pendingFixes, pendingChanges)!,
       // Persist the reverted state (see setWorkloadTier for why).
       autosaveRevision: get().autosaveRevision + 1,
     });
@@ -638,7 +686,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   previewVersion: (id) => set({ previewVersionId: id }),
 
   restoreVersion: (id) => {
-    const { versions } = get();
+    const { versions, chatMessages } = get();
     const version = versions.find((v) => v.id === id);
     if (!version) return;
     // Any findings request still in flight was for the state being
@@ -657,6 +705,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Any queued fixes were chosen against the state being replaced —
       // they no longer refer to anything meaningful once it's gone.
       pendingFixes: [],
+      // Same reasoning for queued chat changes — discarded, and their chat
+      // messages say so rather than still claiming to be queued.
+      pendingChanges: [],
+      chatMessages: chatMessages.map((m) =>
+        m.change?.status === "queued" ? { ...m, change: { ...m.change, status: "removed" as const } } : m,
+      ),
       previewVersionId: null,
       openComponentId: null,
       selectedFindingId: null,
@@ -705,6 +759,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatMessages,
       appliedFixes,
       pendingFixes,
+      pendingChanges,
       versions,
     } = get();
     const saved = await saveProject(currentProjectId, {
@@ -720,6 +775,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatMessages,
       appliedFixes,
       pendingFixes,
+      pendingChanges,
       versions,
     });
     if (saved) {
@@ -772,11 +828,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   sendChatMessage: async (message) => {
-    const { model, chatMessages, findings, pendingFixes } = get();
+    const { model, chatMessages, findings, pendingFixes, pendingChanges } = get();
     const epoch = sessionEpoch;
     // Bounded window, not the full transcript — see this file's own
     // comment on CHAT_HISTORY_WINDOW: unbounded history is exactly the
     // kind of cost creep this project has been actively cutting elsewhere.
+    // Nothing a queued change needs is lost to the window: each carries its
+    // own self-contained instruction (see `pendingChanges`), and the whole
+    // queue is sent below on every message.
     const history = chatMessages
       .slice(-CHAT_HISTORY_WINDOW)
       .map((m) => ({ role: m.role, content: m.text }));
@@ -786,15 +845,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatError: null,
     });
     try {
-      // `findings`/`pendingFixes` are what the dashboard is showing right
-      // now — passed so chat's answers stay grounded in exactly that, not
-      // a version it re-derives fresh from the raw model alone. Same
-      // "send the full store shape, the API route narrows it" pattern
-      // ResimulateButton.tsx already uses for `pendingFixes`.
+      // `findings`/`pendingFixes`/`pendingChanges` are what the dashboard
+      // and queue are showing right now — passed so chat's answers stay
+      // grounded in exactly that (and a follow-up change builds on what's
+      // already queued), not a version it re-derives from the raw model
+      // alone. Same "send the full store shape, the API route narrows it"
+      // pattern ResimulateButton.tsx uses.
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, message, history, findings, pendingFixes }),
+        body: JSON.stringify({ model, message, history, findings, pendingFixes, pendingChanges }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Chat failed.");
@@ -803,33 +863,43 @@ export const useAppStore = create<AppState>((set, get) => ({
       // itself already reset chat status.)
       if (epoch !== sessionEpoch) return;
 
-      const changedModel = body.model as SystemModel | undefined;
-      // The AI built `changedModel` from the `model` it was sent. If the
-      // live model moved on during the wait (a tier change, a Reset…),
-      // applying it would silently discard that edit — so the change is
-      // withheld and the user is told, rather than clobbering their work.
-      const superseded = changedModel !== undefined && get().model !== model;
-      const replyText = superseded
-        ? `${body.reply as string} — Not applied: the system changed while this was running. Ask again to apply it to the current version.`
-        : (body.reply as string);
+      const reply = body.reply as string;
+      const instruction = body.instruction as string | undefined;
+      // A change request: queued, never applied — the model on screen does
+      // not move until Re-simulate. Nothing about the live model can make
+      // this stale (unlike the old apply-immediately path, which had to
+      // withhold a change if a tier moved mid-flight), so there's no
+      // race to guard beyond the epoch check above. Only the cap can
+      // refuse it, and that's said in the reply rather than dropped silently.
+      const wantsQueue = instruction !== undefined && !body.isQuestion;
+      const queueFull = wantsQueue && get().pendingChanges.length >= MAX_PENDING_CHANGES;
+      const change: PendingChatChange | null =
+        wantsQueue && !queueFull
+          ? { id: crypto.randomUUID(), request: message, instruction, queuedAt: Date.now() }
+          : null;
       set((state) => ({
         chatMessages: [
           ...state.chatMessages,
-          { role: "assistant", text: replyText, changed: changedModel !== undefined && !superseded },
+          {
+            role: "assistant",
+            text: queueFull
+              ? `${reply} — Not queued: ${MAX_PENDING_CHANGES} changes are already waiting. Re-simulate to apply them first, then ask again.`
+              : reply,
+            ...(change ? { change: { id: change.id, status: "queued" as const } } : {}),
+          },
         ],
         chatStatus: "idle",
-        // A plain Q&A answer never touches `model`, so nothing else here
-        // would bump this — worth persisting anyway so the conversation
-        // survives a reload. A model-changing reply bumps it again via
-        // `applyFix` just below, which is harmless (the indicator only
-        // cares that this changed, not by how much).
+        ...(change
+          ? {
+              pendingChanges: [...state.pendingChanges, change],
+              // Re-simulate is what applies it; the findings themselves
+              // aren't stale (the model hasn't changed), same as a queued fix.
+              canResimulate: true,
+            }
+          : {}),
+        // The conversation (and a queued change) should survive a reload.
         autosaveRevision: state.autosaveRevision + 1,
       }));
-      // A change request — commit it exactly like applying a fix: clear
-      // stale selections, mark findings stale, and
-      // enable Re-simulate (which is what will actually refresh findings,
-      // if and when the user clicks it — no identifyFailures call here).
-      if (changedModel && !superseded) get().applyFix(changedModel);
     } catch (err) {
       if (epoch !== sessionEpoch) return;
       set({ chatStatus: "idle", chatError: err instanceof Error ? err.message : "Chat failed." });

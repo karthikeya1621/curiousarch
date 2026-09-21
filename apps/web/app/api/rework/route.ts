@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { reworkModel } from "@archsim/engine/server";
 import type { PendingFixInput } from "@archsim/engine/server";
 import type { SystemModel } from "@archsim/engine";
-import { isValidModelShape } from "../../../lib/limits";
+import { isValidModelShape, parsePendingChanges } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 
 /**
@@ -17,7 +17,8 @@ export async function POST(request: Request) {
   if ("error" in parsed) return parsed.error;
   const body = parsed.body;
 
-  const { model, pendingFixes } = (body as { model?: unknown; pendingFixes?: unknown }) ?? {};
+  const { model, pendingFixes, pendingChanges } =
+    (body as { model?: unknown; pendingFixes?: unknown; pendingChanges?: unknown }) ?? {};
   if (!model || !isValidModelShape(model)) {
     return NextResponse.json(
       { error: "Expected a field \"model\" (a valid, reasonably-sized SystemModel)." },
@@ -25,10 +26,16 @@ export async function POST(request: Request) {
     );
   }
 
+  const queuedChanges = parsePendingChanges(pendingChanges);
+  if (queuedChanges === null) {
+    return NextResponse.json({ error: "pendingChanges must be a short list of { request, instruction } strings." }, { status: 400 });
+  }
+
   try {
     const result = await reworkModel(
       model as SystemModel,
       Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]) : [],
+      queuedChanges,
     );
     return NextResponse.json({ model: result.model });
   } catch (err) {

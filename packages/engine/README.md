@@ -4,7 +4,7 @@ Headless architecture-modelling engine. No React, no DOM.
 
 ```bash
 npm install
-npm test          # 70 tests
+npm test          # 71 tests
 npm run typecheck
 ```
 
@@ -100,7 +100,7 @@ src/inference/workloadParameters.ts Extracts workload.users/requests; always sta
 src/inference/identifyFailures.ts   The web app's only findings source: one free-form AI call given the model
 src/inference/applyAiFix.ts         Applies one already-decided AI-suggested fix to the model
 src/inference/explainFix.ts         One sentence of AI narration for why a fix fits this specific system
-src/inference/chatWithProject.ts    Free-text chat about the current project — answers questions or proposes a model change
+src/inference/chatWithProject.ts    Free-text chat about the current project — answers questions, or turns a change request into a queueable instruction (applied later by reworkModel)
 src/inference/structuredCall.ts     Shared tool-use + Zod validation + one repair retry core, used by every call above
 models/reference.ts                 Three hand-modelled systems, reused across the test suite as realistic fixtures
 tests/                              Schema tests, tool-schema tests, one test file per inference module

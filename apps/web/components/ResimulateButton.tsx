@@ -28,14 +28,16 @@ const NEAR_CAP_THRESHOLD = MAX_TOTAL_COMPONENTS - 2;
  * `canResimulate: true` because it's the kind of change that invites a
  * follow-up rework of the whole system, not a self-contained one.
  *
- * Sends `pendingFixes` along with the model — this is the one call that
- * actually implements every queued fix (see reworkModel.ts's own comment
- * on why that context lives in the user content, not the system prompt).
+ * Sends `pendingFixes` and `pendingChanges` (chat requests) along with the
+ * model — this is the one call that actually implements every queued item
+ * (see reworkModel.ts's own comment on why that context lives in the user
+ * content, not the system prompt).
  */
 export function ResimulateButton({ model }: { model: SystemModel }) {
   const canResimulate = useAppStore((s) => s.canResimulate);
   const commitRework = useAppStore((s) => s.commitRework);
   const pendingFixes = useAppStore((s) => s.pendingFixes);
+  const pendingChanges = useAppStore((s) => s.pendingChanges);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,18 +49,19 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       const res = await fetch("/api/rework", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, pendingFixes }),
+        body: JSON.stringify({ model, pendingFixes, pendingChanges }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Rework failed.");
-      // The result was built from the `model` and `pendingFixes` sent
-      // above. If either moved on during the wait (a tier change, a newly
-      // queued fix, a different project opened), committing it would
-      // discard that edit — and `commitRework` clears the WHOLE queue, so a
-      // fix queued mid-flight would be marked applied without ever having
-      // been sent to the AI. Withhold it instead and say why.
+      // The result was built from the `model`, `pendingFixes` and
+      // `pendingChanges` sent above. If any moved on during the wait (a tier
+      // change, a newly queued fix or chat change, a different project
+      // opened), committing it would discard that edit — and `commitRework`
+      // clears the WHOLE queues, so something queued mid-flight would be
+      // marked applied without ever having been sent to the AI. Withhold it
+      // instead and say why.
       const live = useAppStore.getState();
-      if (live.model !== model || live.pendingFixes !== pendingFixes) {
+      if (live.model !== model || live.pendingFixes !== pendingFixes || live.pendingChanges !== pendingChanges) {
         setError("The system changed while Re-simulate was running — run it again to include those changes.");
         return;
       }
@@ -82,7 +85,7 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
         // compact toolbar/canvas control (Figma, Miro, etc.); ResimulateNotes
         // stays visible on its own since it's prompting an action, not
         // just explaining an inert state.
-        title={!canResimulate && !loading ? "Change a parameter or apply a fix first" : undefined}
+        title={!canResimulate && !loading ? "Change a parameter, queue a fix or ask for a change first" : undefined}
         // Solid fill, not the old pale violet-50/border treatment — this
         // sits on top of the canvas now, competing with diagram content
         // for attention, so it needs real visual weight when it's actually

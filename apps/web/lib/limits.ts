@@ -22,6 +22,15 @@ export const MAX_DESCRIPTION_LENGTH = 1500;
 export const MAX_CHAT_MESSAGE_LENGTH = 1500;
 
 /**
+ * Most chat-requested changes that can be waiting for a Re-simulate at once.
+ * Every one is sent to the AI as explicit context on the next rework (and to
+ * every chat message in between), so an unbounded queue is unbounded prompt
+ * growth; the same cap is enforced client-side (store.ts refuses to queue
+ * past it) and server-side (/api/chat and /api/rework reject a bigger queue).
+ */
+export const MAX_PENDING_CHANGES = 10;
+
+/**
  * Cap on the raw request body size for every route that accepts an
  * EXISTING client-submitted model back (`/api/chat`, `/api/identify-
  * failures`, `/api/rework`, `/api/explain-fix`) rather than building a
@@ -75,4 +84,25 @@ export function isValidModelShape(model: unknown): boolean {
 export function isRequestTooLarge(request: Request): boolean {
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   return contentLength > MAX_REQUEST_BYTES;
+}
+
+/**
+ * Shape check for a client-submitted queue of chat changes (`/api/chat`,
+ * `/api/rework`): a bounded array of `{ request, instruction }` strings, each
+ * within the chat-message length cap — these go straight into a prompt, so
+ * they get the same treatment `message` does. `instruction` is AI-written but
+ * round-trips through the client, so it's untrusted here too.
+ */
+export function parsePendingChanges(value: unknown): { request: string; instruction: string }[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_PENDING_CHANGES) return null;
+  const out: { request: string; instruction: string }[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) return null;
+    const { request, instruction } = item as Record<string, unknown>;
+    if (typeof request !== "string" || typeof instruction !== "string") return null;
+    if (request.length > MAX_CHAT_MESSAGE_LENGTH || instruction.length > MAX_CHAT_MESSAGE_LENGTH) return null;
+    out.push({ request, instruction });
+  }
+  return out;
 }

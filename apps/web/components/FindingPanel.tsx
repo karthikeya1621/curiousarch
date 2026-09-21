@@ -17,7 +17,7 @@ import { SparklesIcon, XIcon, WrenchIcon } from "./icons";
  * (store.ts's `queueFix`), synchronously, no network call. Re-simulate is
  * what actually implements it (see ResimulateButton.tsx), alongside its
  * own holistic review — this is the cost-saving trade approved for this
- * flow specifically (chat-driven changes stay immediate).
+ * flow, and chat-requested changes are queued the same way (see store.ts's `pendingChanges`).
  */
 export function FindingPanel({ model, finding }: { model: SystemModel; finding: AiFinding }) {
   const selectedFixId = useAppStore((s) => s.selectedFixId);

@@ -80,7 +80,9 @@ channel, that is its job" is no longer the rule. What should still hold:
   context for exactly this reason.
 - Explanation-only turns (a question, not a change) are a candidate for
   the cheap model tier if 5.1's numbers show they're a meaningful cost
-  share — check `chatWithProject.ts`'s current model choice against that.
+  share — done: chat is now a single small structured call on the cheap
+  model tier for questions and change requests alike (a change is queued,
+  and `reworkModel.ts` implements it at Re-simulate).
 
 **Acceptance:** an adversarial test set of architecture questions produces
 no answer that isn't traceable to something actually in the model it was

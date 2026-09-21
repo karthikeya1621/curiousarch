@@ -19,14 +19,51 @@ import { SparklesIcon, WrenchIcon, XIcon } from "./icons";
 const SLASH_COMP_PATTERN = /(^|\s)\/comp(\S*)$/i;
 const MAX_SUGGESTIONS = 8;
 
+const CHANGE_STATUS_STYLE = {
+  queued: { label: "Queued", tone: "text-amber-600 dark:text-amber-400" },
+  applied: { label: "Applied", tone: "text-emerald-600 dark:text-emerald-400" },
+  removed: { label: "Removed", tone: "text-slate-400" },
+} as const;
+
+/**
+ * Where a chat-requested change stands: queued until the next Re-simulate
+ * applies it (removable until then), applied afterwards, or removed. Only
+ * "queued" offers Remove — an applied change is in the model now, and undoing
+ * it is a new request, not a queue edit.
+ */
+function ChangeStatus({
+  status,
+  onRemove,
+}: {
+  status: keyof typeof CHANGE_STATUS_STYLE;
+  onRemove?: () => void;
+}) {
+  const { label, tone } = CHANGE_STATUS_STYLE[status];
+  return (
+    <div className={`mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide ${tone}`}>
+      <WrenchIcon className="h-3 w-3" />
+      {label}
+      {status === "queued" && onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="ml-1 rounded px-1 font-medium normal-case tracking-normal text-slate-500 underline-offset-2 hover:text-slate-800 hover:underline dark:text-slate-400 dark:hover:text-slate-200"
+        >
+          Remove
+        </button>
+      )}
+    </div>
+  );
+}
+
 /**
  * The chat panel for an EXISTING project — distinct from ProseInput,
  * which only ever builds a brand-new system (blank canvas / "New
  * Project"). This never resets or replaces the model on its own; the AI
- * decides per-message whether it's answering a question or making an
- * actual change (see chatWithProject.ts), and a change is committed the
- * same way applying a fix is (Re-simulate re-enabled,
- * findings refreshed). Reads the current model from the store itself
+ * decides per-message whether it's answering a question or being asked for
+ * a change (see chatWithProject.ts), and a change is QUEUED the same way
+ * choosing a fix is: it takes effect on the next Re-simulate, not now, and
+ * can be removed until then. Reads the current model from the store itself
  * (via `sendChatMessage`), not a prop — there's nothing else here that
  * needs it.
  *
@@ -40,6 +77,7 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
   const chatError = useAppStore((s) => s.chatError);
   const sendChatMessage = useAppStore((s) => s.sendChatMessage);
   const components = useAppStore((s) => s.model.components);
+  const unqueueChatChange = useAppStore((s) => s.unqueueChatChange);
   const [draft, setDraft] = useState("");
   // Typing more after "/comp" re-narrows the list; Escape dismisses it
   // for the rest of this token without touching the typed text. Both
@@ -101,6 +139,7 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
       <p className="text-xs text-slate-500 dark:text-slate-400">
         Ask a question about this architecture, or ask for a change — e.g. &quot;why is
         the cache short-TTL?&quot; or &quot;add a CDN in front of the gateway&quot;.
+        Changes are queued and applied when you Re-simulate.
       </p>
 
       {chatMessages.length > 0 && (
@@ -115,13 +154,15 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
                   : "self-start bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300")
               }
             >
-              {m.role === "assistant" && m.changed && (
-                <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-                  <WrenchIcon className="h-3 w-3" />
-                  Applied
-                </div>
+              {m.role === "assistant" && (m.change || m.changed) && (
+                <ChangeStatus
+                  // `changed` is the old chat's flag, from when a change was
+                  // applied to the model immediately.
+                  status={m.change?.status ?? "applied"}
+                  onRemove={m.change ? () => unqueueChatChange(m.change!.id) : undefined}
+                />
               )}
-              {m.text}
+              <span className={m.change?.status === "removed" ? "text-slate-400 line-through" : ""}>{m.text}</span>
             </div>
           ))}
           {chatStatus === "loading" && (

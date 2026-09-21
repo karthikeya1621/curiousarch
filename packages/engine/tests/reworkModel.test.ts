@@ -97,7 +97,7 @@ function fakeClient(
 describe("reworkModel", () => {
   it("returns a model unrepaired when the first attempt validates", async () => {
     const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()]);
-    const result = await reworkModel(checkout, [], { client });
+    const result = await reworkModel(checkout, [], [], { client });
 
     expect(result.repaired).toBe(false);
     // Confirms the rework kept the same id and preserved a component id
@@ -112,7 +112,7 @@ describe("reworkModel", () => {
       toolUseResponse(validReworkInput),
       emptyExtendedResponse(),
     ]);
-    const result = await reworkModel(checkout, [], { client });
+    const result = await reworkModel(checkout, [], [], { client });
 
     expect(result.repaired).toBe(true);
   });
@@ -127,7 +127,7 @@ describe("reworkModel", () => {
       toolUseResponse(invalidReworkInput),
     ]);
 
-    await expect(reworkModel(checkout, [], { client, maxRetries: 1 })).rejects.toThrow(
+    await expect(reworkModel(checkout, [], [], { client, maxRetries: 1 })).rejects.toThrow(
       /still failed validation/i,
     );
   });
@@ -140,7 +140,7 @@ describe("reworkModel", () => {
       emptyExtendedResponse(),
     ]);
 
-    const result = await reworkModel(checkout, [], { client });
+    const result = await reworkModel(checkout, [], [], { client });
     expect(result.repaired).toBe(true);
   });
 
@@ -164,7 +164,7 @@ describe("reworkModel", () => {
       },
     };
     const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()]);
-    const result = await reworkModel(withParameters, [], { client });
+    const result = await reworkModel(withParameters, [], [], { client });
 
     expect(result.model.workload.users).toEqual({ included: true, tier: 10_000, target: 1_000_000 });
     expect(result.model.workload.requests).toEqual({ included: false, tier: 1000, target: 1000 });
@@ -195,6 +195,7 @@ describe("reworkModel", () => {
           fixTradeoff: "Failures surface as fast errors instead of hangs.",
         },
       ],
+      [],
       { client },
     );
 
@@ -216,8 +217,48 @@ describe("reworkModel", () => {
       },
     );
 
-    await reworkModel(checkout, [], { client });
+    await reworkModel(checkout, [], [], { client });
 
     expect(seenUserContent).not.toContain("specifically chosen to apply");
+  });
+
+  it("hands every queued chat change to BOTH calls — the user's words and the self-contained instruction, oldest first", async () => {
+    const userContents: { tool: string; content: string }[] = [];
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      const tool = (params.tools?.[0] as { name?: string } | undefined)?.name ?? "";
+      userContents.push({ tool, content: JSON.stringify((params.messages[0] as { content: unknown }).content) });
+    });
+
+    await reworkModel(
+      checkout,
+      [],
+      [
+        { request: "add a CDN", instruction: 'Add a CDN in front of "gw".' },
+        { request: "put a cache behind it", instruction: 'Add a cache behind the CDN "cdn" from the previous change.' },
+      ],
+      { client },
+    );
+
+    // Base call AND the extended-components call: the latter is the one that
+    // actually implements an extended-kind request such as a CDN, so it must
+    // not be left seeing only the fixes.
+    expect(userContents.map((c) => c.tool)).toEqual(["emit_system_model", "emit_extended_components"]);
+    for (const { content } of userContents) {
+      expect(content).toContain("add a CDN");
+      expect(content).toContain("Add a CDN in front of");
+      expect(content).toContain("put a cache behind it");
+      expect(content.indexOf("add a CDN")).toBeLessThan(content.indexOf("put a cache behind it"));
+    }
+  });
+
+  it("keeps queued chat changes out of the cacheable system prompt", async () => {
+    let seenSystem: unknown;
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      if ((params.tools?.[0] as { name?: string } | undefined)?.name === "emit_system_model") seenSystem = params.system;
+    });
+
+    await reworkModel(checkout, [], [{ request: "add a CDN", instruction: "Add a CDN." }], { client });
+
+    expect(JSON.stringify(seenSystem)).not.toContain("Add a CDN.");
   });
 });
