@@ -87,8 +87,11 @@ function TierControl({
 }
 
 export function ControlPanel({ model }: { model: SystemModel }) {
-  const history = useAppStore((s) => s.history);
-  const undo = useAppStore((s) => s.undo);
+  // Enabled only when a control actually differs from the last simulation's
+  // values (and there IS a baseline to go back to) — not a step-back through
+  // history: it puts the controls where the last Re-simulate left them.
+  const canRevert = useAppStore((s) => s.parametersChangedSinceResimulate && s.baselineModel !== null);
+  const revertParameters = useAppStore((s) => s.revertParameters);
 
   // Blank canvas — nothing to control until a system exists.
   if (model.components.length === 0) return null;
@@ -100,12 +103,13 @@ export function ControlPanel({ model }: { model: SystemModel }) {
           Controls
         </h3>
         <button
-          onClick={undo}
-          disabled={history.length === 0}
+          onClick={revertParameters}
+          disabled={!canRevert}
+          title="Put the controls back to the values the last simulation used"
           className="flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition-colors enabled:hover:border-slate-300 enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:enabled:hover:border-slate-500 dark:enabled:hover:bg-slate-700"
         >
           <UndoIcon className="h-3.5 w-3.5" />
-          Undo
+          Reset
         </button>
       </div>
 

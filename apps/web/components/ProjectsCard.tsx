@@ -12,7 +12,7 @@ import { FolderIcon, TrashIcon, CheckCircleIcon } from "./icons";
  * Always-visible, not a dropdown — same reasoning as ControlPanel.tsx's
  * own "Controls" card: something checked often enough belongs in view,
  * not behind a click. "+ New project" sits top-right exactly like
- * Controls' own "Undo" button, so the two cards read as one family.
+ * Controls' own "Reset" button, so the two cards read as one family.
  * Re-fetches whenever a save could have changed the list (mount,
  * `currentProjectId`, or `lastSavedAt` changing) — a cheap DB query, no
  * AI cost involved.

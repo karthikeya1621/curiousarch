@@ -56,7 +56,7 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { SystemModelSchema } from "./schema.ts";
 import { buildTool } from "./fromProse.ts";
-import { isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
+import { EXTENDED_KINDS, isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
 import { formatPendingFixes, type PendingFixInput } from "./reworkModel.ts";
 import { runStructuredCall, UTILITY_MODEL, type StructuredCallOptions } from "./structuredCall.ts";
 import type { AiFinding, Component, SystemModel } from "../types.ts";
@@ -117,7 +117,7 @@ Output only the structured decision.
 
 Current model:
 
-${JSON.stringify(model, null, 2)}${formatFindings(findings)}${formatPendingFixes(pendingFixes)}`;
+${JSON.stringify(model)}${formatFindings(findings)}${formatPendingFixes(pendingFixes)}`;
 }
 
 function buildChangePrompt(model: SystemModel, findings: AiFinding[], pendingFixes: PendingFixInput[]): string {
@@ -127,7 +127,7 @@ You may be continuing an earlier conversation - use any prior turns for context 
 
 Modify the model to implement the request - flip the relevant trait(s), and/or add, remove, or rewire components as the request actually requires. Everything else about the system should stay exactly as it was unless the request specifically requires a change to it - do not use this as an opportunity to reconsider the whole system.
 
-Some components in the model may be of an EXTENDED kind (external-dependency, load-balancer, message-broker, cdn, object-storage, scheduled-job, config-store). These are handled entirely by a separate step, not by you: your own structured output must never include a component of one of these kinds, must never reuse one of their ids for anything (even a base-kind component that seems related), and must OMIT any edge whose "from" or "to" is one of their ids from your output - even though such an edge existed in the input, the separate step re-adds it correctly, so leaving it out here is correct, not a mistake.
+Some components in the model may be of an EXTENDED kind (${EXTENDED_KINDS.join(", ")}). These are handled entirely by a separate step, not by you: your own structured output must never include a component of one of these kinds, must never reuse one of their ids for anything (even a base-kind component that seems related), and must OMIT any edge whose "from" or "to" is one of their ids from your output - even though such an edge existed in the input, the separate step re-adds it correctly, so leaving it out here is correct, not a mistake.
 
 This applies even when the user's request is specifically about one of these kinds (e.g. "add a CDN", "add a message broker", "remove the payment dependency") - in that case your own output for the base topology simply doesn't change on account of that part of the request at all, since the separate step is the one that implements it; only make a base-kind change here if some OTHER part of the same request genuinely calls for one. Do not refuse or explain this in your output - this is a structured-data call, not commentary.
 
@@ -145,7 +145,7 @@ Output only the structured model. Do not add findings, recommendations, or comme
 
 Current model:
 
-${JSON.stringify(model, null, 2)}${formatFindings(findings)}${formatPendingFixes(pendingFixes)}`;
+${JSON.stringify(model)}${formatFindings(findings)}${formatPendingFixes(pendingFixes)}`;
 }
 
 export interface ChatWithProjectResult {

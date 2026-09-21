@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { explainFix } from "@archsim/engine/server";
 import type { SystemModel } from "@archsim/engine";
+import { isValidModelShape } from "../../../lib/limits";
+import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 
 /**
  * Server-only, same reason as api/infer/route.ts. Backs the "Ask AI"
@@ -9,18 +11,24 @@ import type { SystemModel } from "@archsim/engine";
  * are already visible without this call).
  */
 export async function POST(request: Request) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Request body must be JSON." }, { status: 400 });
-  }
+  const parsed = await readJsonBody(request);
+  if ("error" in parsed) return parsed.error;
+  const body = parsed.body;
 
   const { model, componentId, fixLabel, findingCode } =
     (body as { model?: unknown; componentId?: unknown; fixLabel?: unknown; findingCode?: unknown }) ?? {};
-  if (!model || typeof componentId !== "string" || typeof fixLabel !== "string" || typeof findingCode !== "string") {
+  if (
+    !model ||
+    !isValidModelShape(model) ||
+    typeof componentId !== "string" ||
+    typeof fixLabel !== "string" ||
+    typeof findingCode !== "string"
+  ) {
     return NextResponse.json(
-      { error: "Expected { model: SystemModel, componentId: string, fixLabel: string, findingCode: string }." },
+      {
+        error:
+          "Expected { model: SystemModel, componentId: string, fixLabel: string, findingCode: string } — model must be a valid, reasonably-sized SystemModel.",
+      },
       { status: 400 },
     );
   }
@@ -29,7 +37,6 @@ export async function POST(request: Request) {
     const { rationale } = await explainFix(model as SystemModel, componentId, fixLabel, findingCode);
     return NextResponse.json({ rationale });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to explain fix.";
-    return NextResponse.json({ error: message }, { status: 502 });
+    return upstreamError(err, "Failed to explain fix.");
   }
 }

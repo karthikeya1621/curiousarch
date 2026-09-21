@@ -49,7 +49,7 @@ export async function applyAiFix(
   const content =
     `Finding: ${finding.code} — ${finding.title}\n${finding.explanation}\nOn component: "${finding.componentId}"\n\n` +
     `Fix to apply: "${fix.label}"\nTradeoff: ${fix.tradeoff}\n\n` +
-    `Current model:\n\n${JSON.stringify(model, null, 2)}`;
+    `Current model:\n\n${JSON.stringify(model)}`;
 
   const result = await runStructuredCall(
     APPLY_FIX_PROMPT,

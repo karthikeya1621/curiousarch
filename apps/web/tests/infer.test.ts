@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { checkout } from "@archsim/engine";
-import { MAX_DESCRIPTION_LENGTH } from "../lib/limits";
+import { MAX_DESCRIPTION_LENGTH, MAX_REQUEST_BYTES } from "../lib/limits";
 
 const fromProseMock = vi.fn();
 vi.mock("@archsim/engine/server", () => ({
@@ -66,6 +66,18 @@ describe("POST /api/infer", () => {
       new Request("http://localhost/api/infer", { method: "POST", body: "not json" }),
     );
     expect(res.status).toBe(400);
+  });
+
+  it("rejects a request whose content-length exceeds MAX_REQUEST_BYTES with 413, without parsing the body", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/infer", {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": String(MAX_REQUEST_BYTES + 1) },
+        body: JSON.stringify({ description: "a system" }),
+      }),
+    );
+    expect(res.status).toBe(413);
+    expect(fromProseMock).not.toHaveBeenCalled();
   });
 
   it("surfaces a fromProse failure as a 502 with its message", async () => {

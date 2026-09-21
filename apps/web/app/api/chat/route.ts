@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { chatWithProject } from "@archsim/engine/server";
 import type { PendingFixInput } from "@archsim/engine/server";
 import type { AiFinding, SystemModel } from "@archsim/engine";
+import { MAX_CHAT_MESSAGE_LENGTH, isValidModelShape } from "../../../lib/limits";
+import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 
 /**
  * Server-only, same reason as api/infer/route.ts. Backs the sidebar chat
@@ -10,12 +12,9 @@ import type { AiFinding, SystemModel } from "@archsim/engine";
  * message calls for (see chatWithProject.ts).
  */
 export async function POST(request: Request) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Request body must be JSON." }, { status: 400 });
-  }
+  const parsed = await readJsonBody(request);
+  if ("error" in parsed) return parsed.error;
+  const body = parsed.body;
 
   const { model, message, history, findings, pendingFixes } =
     (body as {
@@ -25,9 +24,17 @@ export async function POST(request: Request) {
       findings?: unknown;
       pendingFixes?: unknown;
     }) ?? {};
-  if (!model || typeof message !== "string" || message.trim().length === 0) {
+  if (
+    !model ||
+    !isValidModelShape(model) ||
+    typeof message !== "string" ||
+    message.trim().length === 0 ||
+    message.length > MAX_CHAT_MESSAGE_LENGTH
+  ) {
     return NextResponse.json(
-      { error: "Expected { model: SystemModel, message: string }." },
+      {
+        error: `Expected { model: SystemModel, message: string } — message must be non-empty and at most ${MAX_CHAT_MESSAGE_LENGTH} characters, and model must be a valid, reasonably-sized SystemModel.`,
+      },
       { status: 400 },
     );
   }
@@ -59,7 +66,6 @@ export async function POST(request: Request) {
       model: result.model,
     });
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : "Chat failed.";
-    return NextResponse.json({ error: errorMessage }, { status: 502 });
+    return upstreamError(err, "Chat failed.");
   }
 }

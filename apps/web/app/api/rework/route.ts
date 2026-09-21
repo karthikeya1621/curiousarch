@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { reworkModel } from "@archsim/engine/server";
 import type { PendingFixInput } from "@archsim/engine/server";
 import type { SystemModel } from "@archsim/engine";
+import { isValidModelShape } from "../../../lib/limits";
+import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 
 /**
  * Server-only, same reason as api/infer/route.ts. Backs the "Re-simulate"
@@ -11,16 +13,16 @@ import type { SystemModel } from "@archsim/engine";
  * produce a model, never a finding.
  */
 export async function POST(request: Request) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Request body must be JSON." }, { status: 400 });
-  }
+  const parsed = await readJsonBody(request);
+  if ("error" in parsed) return parsed.error;
+  const body = parsed.body;
 
   const { model, pendingFixes } = (body as { model?: unknown; pendingFixes?: unknown }) ?? {};
-  if (!model) {
-    return NextResponse.json({ error: "Expected a field \"model\" (SystemModel)." }, { status: 400 });
+  if (!model || !isValidModelShape(model)) {
+    return NextResponse.json(
+      { error: "Expected a field \"model\" (a valid, reasonably-sized SystemModel)." },
+      { status: 400 },
+    );
   }
 
   try {
@@ -30,7 +32,6 @@ export async function POST(request: Request) {
     );
     return NextResponse.json({ model: result.model });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Rework failed.";
-    return NextResponse.json({ error: message }, { status: 502 });
+    return upstreamError(err, "Rework failed.");
   }
 }

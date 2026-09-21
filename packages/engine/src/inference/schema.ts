@@ -56,23 +56,40 @@ const PLACEHOLDER_RATIONALES = new Set([
   "lorem ipsum",
 ]);
 
-// Exported so other structured-output schemas can build a trait shape
-// without duplicating rationale/provenance/value (see extendedComponents.ts).
-export function traitSchema<T extends z.ZodTypeAny>(valueSchema: T) {
-  return z.object({
-    rationale: z
+/**
+ * A free-text "why" — at least a real sentence's worth, and never one of
+ * the throwaway placeholders above. Shared by every structured output that
+ * asks the AI for a rationale (each trait, and `explainFix`'s narration),
+ * so they all reject the same degenerate answers instead of one place
+ * quietly lagging behind.
+ *
+ * A FUNCTION, not a shared constant, on purpose: zod-to-json-schema
+ * `$ref`s a schema instance reused across two fields, and every trait in a
+ * model needs its own — see the note on BooleanTraitSchema below.
+ */
+export function rationaleSchema() {
+  return (
+    z
       .string()
       // A real one-line reason ("No mention of rate limiting; a basic
       // launch gateway typically lacks it") is never this short — raised
       // from `.min(1)` specifically to force out the single-word
-      // placeholders below, not to demand a longer style of writing.
-      .min(10, "Every trait needs an actual one-line reason, not a one-word placeholder.")
+      // placeholders above, not to demand a longer style of writing.
+      .min(10, "Needs an actual one-line reason, not a one-word placeholder.")
       .refine(
         (r) => !PLACEHOLDER_RATIONALES.has(r.trim().toLowerCase()),
         (r) => ({
-          message: `"${r}" is a placeholder, not a reason — state why this value was chosen, referencing what the prose said or what's typical for this kind of component.`,
+          message: `"${r}" is a placeholder, not a reason — state why, referencing what the prose said or what's specific to this system.`,
         }),
-      ),
+      )
+  );
+}
+
+// Exported so other structured-output schemas can build a trait shape
+// without duplicating rationale/provenance/value (see extendedComponents.ts).
+export function traitSchema<T extends z.ZodTypeAny>(valueSchema: T) {
+  return z.object({
+    rationale: rationaleSchema(),
     provenance: ProvenanceSchema,
     value: valueSchema,
   });

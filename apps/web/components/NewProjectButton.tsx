@@ -14,7 +14,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
  * clears `currentProjectId` so the next Save creates a new one.
  *
  * Rendered top-right of ProjectsCard.tsx's own header, styled to match
- * ControlPanel.tsx's "Undo" button exactly — both are a small bordered
+ * ControlPanel.tsx's "Reset" button exactly — both are a small bordered
  * action sitting opposite a card's title.
  */
 export function NewProjectButton({ onDone }: { onDone?: () => void }) {

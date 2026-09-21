@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { fromProse } from "@archsim/engine/server";
 import { MAX_DESCRIPTION_LENGTH } from "../../../lib/limits";
+import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 
 /**
  * Server-only: pulls in @anthropic-ai/sdk and reads ANTHROPIC_API_KEY via
@@ -9,12 +10,9 @@ import { MAX_DESCRIPTION_LENGTH } from "../../../lib/limits";
  * is required here since the Anthropic SDK isn't Edge-compatible.
  */
 export async function POST(request: Request) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Request body must be JSON." }, { status: 400 });
-  }
+  const parsed = await readJsonBody(request);
+  if ("error" in parsed) return parsed.error;
+  const body = parsed.body;
 
   const description = (body as { description?: unknown })?.description;
   if (typeof description !== "string" || description.trim().length === 0) {
@@ -36,7 +34,6 @@ export async function POST(request: Request) {
     const result = await fromProse(description);
     return NextResponse.json({ model: result.model });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Inference failed.";
-    return NextResponse.json({ error: message }, { status: 502 });
+    return upstreamError(err, "Inference failed.");
   }
 }

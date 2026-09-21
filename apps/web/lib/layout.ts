@@ -1,4 +1,4 @@
-import ELK from "elkjs/lib/elk.bundled.js";
+import type ELK from "elkjs/lib/elk.bundled.js";
 import { isAsyncBoundary } from "@archsim/engine";
 import type { Component, SystemModel } from "@archsim/engine";
 import type { Edge, Node } from "@xyflow/react";
@@ -19,7 +19,17 @@ export const TRAFFIC_NODE_ID = "__traffic__";
 export type ComponentNodeData = { component: Component };
 export type TrafficNodeData = Record<string, never>;
 
-const elk = new ELK();
+/**
+ * ELK is ~1.6 MB (the bundled build inlines its own worker), and nothing
+ * needs it until a diagram is first drawn — a static import put it in the
+ * main client bundle, so the login page and the blank canvas paid to
+ * download and parse it too. Loaded on first use and reused after.
+ */
+let elkInstance: Promise<InstanceType<typeof ELK>> | undefined;
+function getElk() {
+  elkInstance ??= import("elkjs/lib/elk.bundled.js").then((m) => new m.default());
+  return elkInstance;
+}
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT = 84;
@@ -77,6 +87,7 @@ export async function layoutModel(
     })),
   ];
 
+  const elk = await getElk();
   const graph = await elk.layout({
     id: "root",
     layoutOptions: {

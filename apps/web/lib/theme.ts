@@ -2,6 +2,25 @@ export type Theme = "light" | "dark" | "system";
 
 const THEME_KEY = "archsim:theme";
 
+const listeners = new Set<() => void>();
+
+/**
+ * Lets React read the theme via `useSyncExternalStore` (ThemeToggle.tsx)
+ * instead of copying it into state from an effect. Notified by `setTheme`
+ * in this tab, and by the `storage` event when another tab changes it.
+ */
+export function subscribeTheme(listener: () => void): () => void {
+  listeners.add(listener);
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === THEME_KEY) listener();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    listeners.delete(listener);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
 function prefersDark(): boolean {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
@@ -30,4 +49,5 @@ export function setTheme(theme: Theme) {
     // if it can't be remembered for the next one.
   }
   document.documentElement.classList.toggle("dark", resolveIsDark(theme));
+  listeners.forEach((listener) => listener());
 }

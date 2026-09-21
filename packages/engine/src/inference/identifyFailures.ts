@@ -46,7 +46,7 @@ const IDENTIFY_FAILURES_PROMPT = `You are a senior software architect reviewing 
 You are given the system as JSON: its components, their categorical traits (booleans and small categories, never precise numbers), the edges between them, and its workload (users and/or requests, each a rough scale rather than an exact number).
 
 For each REAL risk you find, report:
-- code: a short SCREAMING_SNAKE_CASE identifier. Reuse a well-known name if it genuinely fits (SINGLE_POINT_OF_FAILURE, THUNDERING_HERD_RISK, CASCADING_FAILURE_RISK, UNBOUNDED_ADMISSION, QUEUE_NO_DEAD_LETTER, FIXED_SCALING_AT_SCALE, UNCACHED_DATABASE_AT_SCALE, EXTERNAL_DEPENDENCY_NO_FALLBACK, LB_NO_HEALTH_CHECKS) or invent a new one if the risk is real but doesn't match any of those - these are a starting vocabulary, not an exhaustive list. Think like an architect, not a lookup table.
+- code: a short SCREAMING_SNAKE_CASE identifier. Reuse a well-known name if it genuinely fits (SINGLE_POINT_OF_FAILURE, THUNDERING_HERD_RISK, CASCADING_FAILURE_RISK, UNBOUNDED_ADMISSION, QUEUE_NO_DEAD_LETTER, FIXED_SCALING_AT_SCALE, UNCACHED_DATABASE_AT_SCALE, EXTERNAL_DEPENDENCY_NO_FALLBACK - ONLY for a component whose kind is "external-dependency", never for an internal service or database, LB_NO_HEALTH_CHECKS - ONLY for a load-balancer) or invent a new one if the risk is real but doesn't match any of those - these are a starting vocabulary, not an exhaustive list. Think like an architect, not a lookup table.
 - severity: "critical" (this will actually break something) or "warning" (a real risk, not yet a proven failure). Don't mark everything critical - that trains people to ignore critical.
 - componentId: which component (by its id in the JSON) this risk is on.
 - title: a short, plain label for the risk.
@@ -81,7 +81,7 @@ export async function identifyFailures(
 ): Promise<AiFinding[]> {
   const result = await runStructuredCall(
     IDENTIFY_FAILURES_PROMPT,
-    JSON.stringify(model, null, 2),
+    JSON.stringify(model),
     IdentifyFailuresResponseSchema,
     buildTool(),
     options,

@@ -144,7 +144,7 @@ matter how the schema was tuned.
 The app is a working, full-loop product, not a prototype: describe a system
 in prose, get a diagram with AI-identified findings and fixes, apply fixes
 or chat free-form to evolve it, Re-simulate to commit a change, save/reopen
-multiple projects across sessions. 112 tests passing (66 engine + 46 web),
+multiple projects across sessions. 163 tests passing (70 engine + 93 web),
 typecheck clean across both workspaces, pushed to `origin/main`.
 
 **Auth + persistence.** Magic-link email and Google login (client-side
@@ -158,7 +158,7 @@ user hold several systems at once and switch between them.
 **Auto-save, not a Save button.** `AutoSaveIndicator.tsx` persists on a
 debounce (1500ms) keyed off a single `autosaveRevision` counter in
 `lib/store.ts`, bumped by every action the store considers save-worthy — a
-build, a chat reply, queueing a fix, Undo, restoring a version, a completed
+build, a chat reply, queueing a fix, a Reset, restoring a version, a completed
 Re-simulate. Moving the workload-tier slider deliberately does **not** bump
 it (a parameter change to review, not to persist or redraw the canvas for
 on its own — see `FlowDiagram.tsx`'s matching `components`/`edges`-only

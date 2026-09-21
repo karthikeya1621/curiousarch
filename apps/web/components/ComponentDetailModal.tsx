@@ -5,55 +5,8 @@ import type { Component, Trait } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { Modal } from "./Modal";
 import { Badge, type BadgeTone } from "./Badge";
-import {
-  GatewayIcon,
-  ServiceIcon,
-  CacheIcon,
-  DatabaseIcon,
-  QueueIcon,
-  ExternalDependencyIcon,
-  LoadBalancerIcon,
-  MessageBrokerIcon,
-  CdnIcon,
-  ObjectStorageIcon,
-  ScheduledJobIcon,
-  ConfigStoreIcon,
-  WrenchIcon,
-  XIcon,
-} from "./icons";
-
-const KIND_ICON: Record<Component["kind"], (props: { className?: string }) => React.JSX.Element> = {
-  gateway: GatewayIcon,
-  service: ServiceIcon,
-  cache: CacheIcon,
-  database: DatabaseIcon,
-  queue: QueueIcon,
-  "external-dependency": ExternalDependencyIcon,
-  "load-balancer": LoadBalancerIcon,
-  "message-broker": MessageBrokerIcon,
-  cdn: CdnIcon,
-  "object-storage": ObjectStorageIcon,
-  "scheduled-job": ScheduledJobIcon,
-  "config-store": ConfigStoreIcon,
-};
-
-// Same 7 hues as ComponentNode.tsx's own KIND_TONE — kept in sync by hand
-// since each is a small, distinct Tailwind class map; cyan (the app's own
-// primary accent) is deliberately never used here either.
-const KIND_TONE: Record<Component["kind"], string> = {
-  gateway: "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300",
-  service: "bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300",
-  cache: "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300",
-  database: "bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300",
-  queue: "bg-teal-50 text-teal-600 dark:bg-teal-950/40 dark:text-teal-300",
-  "external-dependency": "bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-300",
-  "load-balancer": "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300",
-  "message-broker": "bg-fuchsia-50 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-300",
-  cdn: "bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-300",
-  "object-storage": "bg-orange-50 text-orange-600 dark:bg-orange-950/40 dark:text-orange-300",
-  "scheduled-job": "bg-lime-50 text-lime-600 dark:bg-lime-950/40 dark:text-lime-300",
-  "config-store": "bg-pink-50 text-pink-600 dark:bg-pink-950/40 dark:text-pink-300",
-};
+import { WrenchIcon, XIcon } from "./icons";
+import { KIND_ICON, KIND_TONE } from "./kindStyle";
 
 const PROVENANCE_TONE: Record<Trait<unknown>["provenance"], BadgeTone> = {
   stated: "info",

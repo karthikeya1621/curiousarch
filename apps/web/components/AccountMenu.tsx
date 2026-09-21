@@ -66,6 +66,10 @@ export function AccountMenu() {
         className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
       >
         {showAvatar ? (
+          // Plain <img>, not next/image: the avatar is a provider-hosted URL
+          // on an arbitrary host (would need a remotePatterns entry per
+          // identity provider), and "optimizing" a 32px circle is no gain.
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={avatarUrl}
             alt=""

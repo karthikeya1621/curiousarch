@@ -116,8 +116,15 @@ export function SystemDashboard({
               })}
             </div>
             {isStale && (
-              <p className="mt-1.5 text-[11px] text-slate-400">
-                Based on the previous version of this system — click Re-simulate to refresh.
+              // Framed as the user's own pending changes, not as the app's
+              // findings being wrong or "out of date" (which reads as a
+              // fault) or "previous version" (which reads as an earlier
+              // Re-simulate). Re-simulate is the deliberate, per-run step
+              // that applies queued fixes and parameter changes — and will be
+              // billed — so it has to be clear that nothing happens until
+              // then. Amber to match the "Updates since last Re-simulate" box.
+              <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+                Your changes are pending — Re-simulate to apply them and refresh these findings.
               </p>
             )}
           </>

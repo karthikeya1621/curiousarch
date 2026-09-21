@@ -13,6 +13,11 @@ import { useAppStore } from "../lib/store";
 const NEAR_CAP_THRESHOLD = MAX_TOTAL_COMPONENTS - 2;
 
 /**
+ * Just the button itself — the "N fixes queued" / "parameters changed"
+ * notes live in the separate ResimulateNotes.tsx, deliberately not nested
+ * inside this component's own container (see FlowDiagram.tsx, which
+ * renders them as two independent floating boxes, not one shared one).
+ *
  * Gated by `canResimulate`, not always-on: it only lights up once
  * something has actually changed since the last review (a raised tier or
  * a queued fix — see store.ts's own comment on why `setWorkloadTier`
@@ -46,6 +51,17 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Rework failed.");
+      // The result was built from the `model` and `pendingFixes` sent
+      // above. If either moved on during the wait (a tier change, a newly
+      // queued fix, a different project opened), committing it would
+      // discard that edit — and `commitRework` clears the WHOLE queue, so a
+      // fix queued mid-flight would be marked applied without ever having
+      // been sent to the AI. Withhold it instead and say why.
+      const live = useAppStore.getState();
+      if (live.model !== model || live.pendingFixes !== pendingFixes) {
+        setError("The system changed while Re-simulate was running — run it again to include those changes.");
+        return;
+      }
       commitRework(body.model as SystemModel);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Rework failed.");
@@ -63,9 +79,9 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
         // the canvas itself, where permanent explanatory text would just
         // compete with the diagram for attention. A disabled button
         // explaining itself on hover is the standard pattern for a
-        // compact toolbar/canvas control (Figma, Miro, etc.); the
-        // queued-fixes nudge below stays visible since it's prompting an
-        // action, not just explaining an inert state.
+        // compact toolbar/canvas control (Figma, Miro, etc.); ResimulateNotes
+        // stays visible on its own since it's prompting an action, not
+        // just explaining an inert state.
         title={!canResimulate && !loading ? "Change a parameter or apply a fix first" : undefined}
         // Solid fill, not the old pale violet-50/border treatment — this
         // sits on top of the canvas now, competing with diagram content
@@ -79,12 +95,6 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       >
         {loading ? "Re-simulating…" : "Re-simulate"}
       </button>
-      {canResimulate && !loading && pendingFixes.length > 0 && (
-        <p className="max-w-xs text-right text-[11px] text-amber-700 dark:text-amber-400">
-          {pendingFixes.length} fix{pendingFixes.length === 1 ? "" : "es"} queued — Re-simulate to see{" "}
-          {pendingFixes.length === 1 ? "it" : "them"} in action.
-        </p>
-      )}
       {!loading && model.components.length >= NEAR_CAP_THRESHOLD && (
         <p className="max-w-xs text-right text-[11px] text-amber-700 dark:text-amber-400">
           {model.components.length} of {MAX_TOTAL_COMPONENTS} components — close to the limit; the

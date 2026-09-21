@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getTheme, setTheme, type Theme } from "../lib/theme";
+import { useSyncExternalStore } from "react";
+import { getTheme, setTheme, subscribeTheme, type Theme } from "../lib/theme";
 import { SunIcon, MoonIcon, MonitorIcon } from "./icons";
 
 const OPTIONS: { value: Theme; label: string; icon: typeof SunIcon }[] = [
@@ -12,28 +12,22 @@ const OPTIONS: { value: Theme; label: string; icon: typeof SunIcon }[] = [
 
 /**
  * Lives inside AccountMenu.tsx's dropdown — a display preference belongs
- * with account settings, not a separate header control. Reads the
- * current value from localStorage on mount (not SSR'd — the boot script
- * in app/layout.tsx already applied the right class before this ever
- * renders, so there's no flash either way), and both persists and
- * applies a change via lib/theme.ts's single `setTheme`.
+ * with account settings, not a separate header control. The current value
+ * is read from localStorage as an external store (`useSyncExternalStore`,
+ * with "system" as the server snapshot — the boot script in
+ * app/layout.tsx already applied the right class before this ever renders,
+ * so there's no flash either way), and a change is both persisted and
+ * applied via lib/theme.ts's single `setTheme`.
  */
 export function ThemeToggle() {
-  const [theme, setThemeState] = useState<Theme>("system");
-
-  useEffect(() => {
-    setThemeState(getTheme());
-  }, []);
+  const theme = useSyncExternalStore(subscribeTheme, getTheme, (): Theme => "system");
 
   return (
     <div className="flex items-center gap-0.5 rounded-md bg-slate-100 p-0.5 dark:bg-slate-700">
       {OPTIONS.map(({ value, label, icon: Icon }) => (
         <button
           key={value}
-          onClick={() => {
-            setTheme(value);
-            setThemeState(value);
-          }}
+          onClick={() => setTheme(value)}
           aria-label={label}
           title={label}
           className={

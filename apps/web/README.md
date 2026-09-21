@@ -63,5 +63,7 @@ lib/store.ts            The Zustand store — model, findings, chat, versions, p
 lib/sessionStorage.ts   Supabase-backed project persistence (save/load/list/delete)
 lib/layout.ts           SystemModel -> React Flow nodes/edges via ELK.js
 lib/limits.ts           Client-side description-length cap, mirrored server-side
+lib/apiRoute.ts         Shared route plumbing: size guard + JSON parse + 502 mapping, used by all five API routes
+components/kindStyle.ts The one icon + color map per component kind (diagram card and detail modal share it)
 lib/theme.ts            Light/Dark/System theme toggle
 ```

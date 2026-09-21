@@ -42,7 +42,7 @@
 
 import { SystemModelSchema } from "./schema.ts";
 import { buildTool } from "./fromProse.ts";
-import { isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
+import { EXTENDED_KINDS, isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { MAX_BASE_COMPONENTS, type Component, type SystemModel } from "../types.ts";
 
@@ -50,7 +50,7 @@ const REWORK_PROMPT = `You are reconsidering an EXISTING rough architectural mod
 
 If specific fixes are listed, implement each of them precisely first - they are already-decided choices, not suggestions to evaluate. Then reconsider the ARCHITECTURE holistically on top of that, the way an architect revisiting a system does: given where this system stands now (including its current scale), does it call for anything more - additional scaling on a component, a new service, a new connection, a component that should be split or added, a trait that's clearly wrong given the rest of the system? You may leave everything else exactly as it is if nothing more is warranted - do not change something just to have changed it. You are not deciding the workload parameters themselves - only the architecture that serves them.
 
-Some components in the model may be of an EXTENDED kind (external-dependency, load-balancer, message-broker, cdn, object-storage, scheduled-job, config-store) - these are shown to you for context only and are reworked by a separate step, never by you. Your own output must never include one of these kinds, and their ids are OFF LIMITS to you entirely - never reuse one of their ids for a component of your own, even a base-kind one that seems related; that id is already taken by something the separate step owns. The ONLY edges you omit are ones whose "from" or "to" references one of THEIR ids specifically - every other edge from the input, between components you're keeping, must still be present in your output exactly as it was unless the architecture genuinely no longer calls for that specific connection. Dropping an edge between two components you both kept, for any reason other than a deliberate architectural change, is a mistake - when in doubt, keep it.
+Some components in the model may be of an EXTENDED kind (${EXTENDED_KINDS.join(", ")}) - these are shown to you for context only and are reworked by a separate step, never by you. Your own output must never include one of these kinds, and their ids are OFF LIMITS to you entirely - never reuse one of their ids for a component of your own, even a base-kind one that seems related; that id is already taken by something the separate step owns. The ONLY edges you omit are ones whose "from" or "to" references one of THEIR ids specifically - every other edge from the input, between components you're keeping, must still be present in your output exactly as it was unless the architecture genuinely no longer calls for that specific connection. Dropping an edge between two components you both kept, for any reason other than a deliberate architectural change, is a mistake - when in doubt, keep it.
 
 Rules, same as always:
 - Every trait is a rough category (a boolean or a small set of choices), never a number.
@@ -94,7 +94,7 @@ export async function reworkModel(
 ): Promise<ReworkModelResult> {
   const result = await runStructuredCall(
     REWORK_PROMPT,
-    `Here is the current model:\n\n${JSON.stringify(model, null, 2)}${formatPendingFixes(pendingFixes)}`,
+    `Here is the current model:\n\n${JSON.stringify(model)}${formatPendingFixes(pendingFixes)}`,
     SystemModelSchema,
     buildTool(),
     { maxRetries: 2, ...options },

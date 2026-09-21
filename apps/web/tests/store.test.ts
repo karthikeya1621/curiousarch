@@ -1,7 +1,7 @@
 /**
  * useAppStore is a Zustand hook, but the hook itself exposes getState/
  * setState statically — no React rendering needed to exercise it.
- * `setModel`/`commitRework`/`undo` trigger `refreshFindings`, which hits
+ * `setModel`/`commitRework` trigger `refreshFindings`, which hits
  * /api/identify-failures — stubbed here via a mocked global `fetch`,
  * never a live call. `applyFix` (and chat's change path, which commits
  * through it) deliberately does NOT — it only marks findings stale, to
@@ -122,7 +122,7 @@ function makeQuery() {
 vi.mock("../lib/supabase/client", () => ({
   createClient: () => ({
     auth: {
-      getUser: async () => ({ data: { user: authState.userId ? { id: authState.userId } : null } }),
+      getSession: async () => ({ data: { session: authState.userId ? { user: { id: authState.userId } } : null } }),
     },
     from: () => makeQuery(),
   }),
@@ -196,37 +196,24 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("applyFix", () => {
-  it("commits the given model directly, pushes undo history, and enables Re-simulate", () => {
-    useAppStore.setState({ model: degradedModel(), history: [] });
+  it("commits the given model directly and enables Re-simulate", () => {
+    useAppStore.setState({ model: degradedModel() });
 
     useAppStore.getState().applyFix(fixedModel());
 
     const svc = useAppStore.getState().model.components.find((c) => c.id === "svc");
     if (svc?.kind !== "service") throw new Error("expected service");
     expect(svc.instanceCount.value).toBe("multiple");
-    expect(useAppStore.getState().history).toHaveLength(1);
     expect(useAppStore.getState().canResimulate).toBe(true);
   });
 
   it("marks findings stale instead of refreshing them — costs no identifyFailures call", () => {
-    useAppStore.setState({ model: degradedModel(), history: [] });
+    useAppStore.setState({ model: degradedModel() });
 
     useAppStore.getState().applyFix(fixedModel());
 
     expect(useAppStore.getState().findingsStale).toBe(true);
     expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("pushes undo history so the fix can be reverted", () => {
-    useAppStore.setState({ model: degradedModel(), history: [] });
-
-    useAppStore.getState().applyFix(fixedModel());
-    expect(useAppStore.getState().history).toHaveLength(1);
-
-    useAppStore.getState().undo();
-    const svc = useAppStore.getState().model.components.find((c) => c.id === "svc");
-    if (svc?.kind !== "service") throw new Error("expected service");
-    expect(svc.instanceCount.value).toBe("single"); // reverted
   });
 
   it("clears the transient finding/fix/open-node selections", () => {
@@ -344,7 +331,6 @@ describe("commitRework moves pendingFixes into appliedFixes", () => {
   it("on a successful Re-simulate, every queued fix becomes an applied one and the queue clears", async () => {
     useAppStore.setState({
       model: degradedModel(),
-      history: [],
       appliedFixes: [],
       pendingFixes: [pendingFix()],
     });
@@ -364,7 +350,7 @@ describe("commitRework moves pendingFixes into appliedFixes", () => {
   });
 
   it("restoreVersion clears any queued fixes — they no longer refer to anything meaningful", async () => {
-    useAppStore.setState({ model: degradedModel(), history: [], versions: [], pendingFixes: [pendingFix()] });
+    useAppStore.setState({ model: degradedModel(), versions: [], pendingFixes: [pendingFix()] });
     useAppStore.getState().commitRework(fixedModel()); // records a version, clears queue from the fix above
     await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
     const [version] = useAppStore.getState().versions;
@@ -383,7 +369,7 @@ describe("findingsStale", () => {
       ...checkout,
       workload: { ...checkout.workload, users: { included: true, tier: 100, target: 1_000_000 } },
     };
-    useAppStore.setState({ model, history: [] });
+    useAppStore.setState({ model });
     useAppStore.getState().setWorkloadTier("users", 10_000);
     expect(useAppStore.getState().findingsStale).toBe(true);
 
@@ -420,8 +406,8 @@ describe("versions", () => {
     expect(version!.findings).toEqual([]);
   });
 
-  it("records another version on commitRework (Re-simulate), not on undo or applyFix", async () => {
-    useAppStore.setState({ model: degradedModel(), history: [], versions: [] });
+  it("records another version on commitRework (Re-simulate), not on a tier change, applyFix, or revertParameters", async () => {
+    useAppStore.setState({ model: degradedModel(), versions: [] });
     useAppStore.getState().setWorkloadTier("users", 10_000); // no version — not a resimulation
     useAppStore.getState().applyFix(fixedModel()); // no version either
     expect(useAppStore.getState().versions).toHaveLength(0);
@@ -429,19 +415,21 @@ describe("versions", () => {
     useAppStore.getState().commitRework(fixedModel());
     await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
 
-    useAppStore.getState().undo(); // reverting is not a resimulation either
-    await vi.waitFor(() => expect(useAppStore.getState().findingsStatus).toBe("done"));
+    const callsBefore = (fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    useAppStore.getState().revertParameters(); // reverting is not a resimulation either
+    await flush();
     expect(useAppStore.getState().versions).toHaveLength(1);
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBefore);
   });
 
-  it("restoreVersion makes a past version live, preserves the full versions list, and pushes onto history", async () => {
-    useAppStore.setState({ model: degradedModel(), history: [], versions: [] });
+  it("restoreVersion makes a past version live, makes it the baseline, and preserves the full versions list", async () => {
+    useAppStore.setState({ model: degradedModel(), versions: [] });
     useAppStore.getState().commitRework(fixedModel());
     await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
     const v1 = useAppStore.getState().versions[0]!;
 
     const laterModel = degradedModel();
-    useAppStore.setState({ model: laterModel, history: [] });
+    useAppStore.setState({ model: laterModel });
 
     useAppStore.getState().restoreVersion(v1.id);
 
@@ -451,7 +439,7 @@ describe("versions", () => {
     expect(state.canResimulate).toBe(false);
     expect(state.previewVersionId).toBeNull();
     expect(state.versions).toEqual([v1]); // restoring never shrinks the list
-    expect(state.history).toEqual([laterModel]); // one Undo away
+    expect(state.baselineModel).toEqual(v1.model);
   });
 
   it("previewVersion just sets previewVersionId, mutating nothing else", () => {
@@ -471,7 +459,7 @@ describe("setWorkloadTier", () => {
       ...checkout,
       workload: { ...checkout.workload, users: { included: true, tier: 100, target: 1_000_000 } },
     };
-    useAppStore.setState({ model, history: [], canResimulate: false });
+    useAppStore.setState({ model, canResimulate: false });
 
     useAppStore.getState().setWorkloadTier("users", 10_000);
 
@@ -498,32 +486,41 @@ describe("autosaveRevision", () => {
     expect(useAppStore.getState().autosaveRevision).toBe(0);
   });
 
-  it("is bumped by setModel, applyFix, queueFix, unqueueFix, commitRework, undo, and restoreVersion", async () => {
-    useAppStore.setState({ model: degradedModel(), history: [], versions: [], pendingFixes: [], autosaveRevision: 0 });
+  it("is bumped by setModel, applyFix, queueFix, unqueueFix, commitRework, revertParameters, and restoreVersion", async () => {
+    useAppStore.setState({ model: degradedModel(), versions: [], pendingFixes: [], autosaveRevision: 0 });
+    // Each action must move the counter past wherever it was. Compared
+    // relative to the previous value, not to fixed numbers: a Build or
+    // Re-simulate's findings arriving later bumps it too (see "persisting
+    // what a findings refresh produced"), which is asynchronous and would
+    // otherwise make an absolute count depend on timing.
+    let last = useAppStore.getState().autosaveRevision;
+    const bumped = () => {
+      const now = useAppStore.getState().autosaveRevision;
+      expect(now).toBeGreaterThan(last);
+      last = now;
+    };
 
     useAppStore.getState().setModel(fixedModel());
-    expect(useAppStore.getState().autosaveRevision).toBe(1);
-
+    bumped();
     useAppStore.getState().applyFix(fixedModel());
-    expect(useAppStore.getState().autosaveRevision).toBe(2);
-
+    bumped();
     useAppStore.getState().queueFix(pendingFix());
-    expect(useAppStore.getState().autosaveRevision).toBe(3);
-
+    bumped();
     useAppStore.getState().unqueueFix(pendingFix().componentId, pendingFix().findingTitle);
-    expect(useAppStore.getState().autosaveRevision).toBe(4);
+    bumped();
 
     useAppStore.getState().commitRework(fixedModel());
-    expect(useAppStore.getState().autosaveRevision).toBe(5);
-    await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
+    bumped();
+    await vi.waitFor(() => expect(useAppStore.getState().versions.length).toBeGreaterThan(0));
+    last = useAppStore.getState().autosaveRevision; // findings have landed; re-baseline
 
-    useAppStore.getState().undo();
-    expect(useAppStore.getState().autosaveRevision).toBe(6);
+    useAppStore.getState().revertParameters();
+    bumped();
 
     const version = useAppStore.getState().versions[0];
     if (!version) throw new Error("expected a recorded version");
     useAppStore.getState().restoreVersion(version.id);
-    expect(useAppStore.getState().autosaveRevision).toBe(7);
+    bumped();
   });
 });
 
@@ -544,8 +541,10 @@ describe("save/restore session", () => {
     const versions = [{ id: "v1", model, findings: [], createdAt: 1 }];
     useAppStore.setState({
       model,
-      history: [],
       findings: [],
+      // A queued fix is what makes Re-simulate available here — it's derived
+      // from the data on load now, not restored from a saved flag.
+      pendingFixes: [pendingFix()],
       canResimulate: true,
       chatMessages,
       appliedFixes,
@@ -643,7 +642,6 @@ describe("startNewProject", () => {
     const component = degradedModel().components[0]!;
     useAppStore.setState({
       model: degradedModel(),
-      history: [degradedModel()],
       canResimulate: true,
       chatMessages: [{ role: "user", text: "hi" }],
       appliedFixes: [{ componentId: "svc", findingTitle: "x", fixLabel: "y", appliedAt: 1 }],
@@ -656,7 +654,6 @@ describe("startNewProject", () => {
 
     const state = useAppStore.getState();
     expect(state.model.components).toHaveLength(0);
-    expect(state.history).toHaveLength(0);
     expect(state.canResimulate).toBe(false);
     expect(state.chatMessages).toHaveLength(0);
     expect(state.appliedFixes).toHaveLength(0);
@@ -667,7 +664,7 @@ describe("startNewProject", () => {
   });
 
   it("doesn't delete the previously saved project from the database — it just stops auto-resuming it", async () => {
-    useAppStore.setState({ model: degradedModel(), history: [] });
+    useAppStore.setState({ model: degradedModel() });
     await useAppStore.getState().saveToStorage();
     const projectId = useAppStore.getState().currentProjectId!;
 
@@ -711,7 +708,7 @@ describe("sendChatMessage", () => {
   it("applies a change request exactly like a fix: commits the model, enables Re-simulate, no identifyFailures call", async () => {
     const model = degradedModel();
     const changed = fixedModel();
-    useAppStore.setState({ model, chatMessages: [], history: [] });
+    useAppStore.setState({ model, chatMessages: [] });
     const fetchMock = vi.fn(() =>
       Promise.resolve(jsonResponse({ isQuestion: false, reply: "Added a second instance.", model: changed })),
     );
@@ -723,7 +720,6 @@ describe("sendChatMessage", () => {
     expect(state.model).toEqual(changed);
     expect(state.canResimulate).toBe(true);
     expect(state.findingsStale).toBe(true);
-    expect(state.history).toHaveLength(1);
     expect(state.chatMessages.at(-1)).toEqual({
       role: "assistant",
       text: "Added a second instance.",
@@ -768,5 +764,401 @@ describe("sendChatMessage", () => {
     // been dropped, keeping indices 2-9.
     expect(sentBody.history[0]).toEqual({ role: "user", content: "message 2" });
     expect(sentBody.history.at(-1)).toEqual({ role: "assistant", content: "message 9" });
+  });
+});
+
+/** A promise whose resolution the test controls — for asserting what happens to a response that arrives late. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+const someFinding = (title: string) => ({
+  code: "SINGLE_POINT_OF_FAILURE",
+  severity: "critical" as const,
+  componentId: "svc",
+  title,
+  explanation: "…",
+  fixes: [],
+});
+
+function modelWithUsers(): SystemModel {
+  return {
+    ...degradedModel(),
+    workload: { users: { included: true, tier: 100, target: 1_000_000 } },
+  };
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+describe("async responses that arrive after the project changed", () => {
+  it("drops a chat reply that lands after the project was switched, instead of applying it to the new one", async () => {
+    useAppStore.setState({ model: degradedModel(), chatMessages: [] });
+    const gate = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn(() => gate.promise));
+
+    const pending = useAppStore.getState().sendChatMessage("add another instance");
+    useAppStore.getState().startNewProject();
+    gate.resolve(jsonResponse({ isQuestion: false, reply: "Added.", model: fixedModel() }));
+    await pending;
+
+    const state = useAppStore.getState();
+    expect(state.model.components).toEqual([]);
+    expect(state.chatMessages).toEqual([]);
+    expect(state.canResimulate).toBe(false);
+    expect(state.chatChangeSinceResimulate).toBe(false);
+  });
+
+  it("drops a findings response (and its version snapshot) that lands after the project was switched", async () => {
+    const gate = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn(() => gate.promise));
+
+    useAppStore.getState().setModel(degradedModel());
+    useAppStore.getState().startNewProject();
+    gate.resolve(jsonResponse({ findings: [someFinding("Leaked from the old project")] }));
+    await flush();
+
+    const state = useAppStore.getState();
+    expect(state.findings).toEqual([]);
+    expect(state.versions).toEqual([]);
+    expect(state.findingsStatus).toBe("idle");
+  });
+
+  it("lets only the most recent findings refresh update what's shown, but still records a superseded Re-simulate's version", async () => {
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise));
+    useAppStore.setState({ model: degradedModel(), versions: [] });
+
+    useAppStore.getState().commitRework(fixedModel()); // request 1
+    useAppStore.getState().commitRework(degradedModel()); // request 2 — the latest
+    second.resolve(jsonResponse({ findings: [someFinding("newer")] }));
+    await vi.waitFor(() => expect(useAppStore.getState().findings).toEqual([someFinding("newer")]));
+
+    first.resolve(jsonResponse({ findings: [someFinding("older")] }));
+    await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(2)); // both snapshots kept
+    expect(useAppStore.getState().findings).toEqual([someFinding("newer")]); // but only the latest is shown
+  });
+
+  it("withholds a chat change when the model was edited while the AI was working, rather than overwriting the edit", async () => {
+    useAppStore.setState({ model: modelWithUsers(), chatMessages: [] });
+    const gate = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn(() => gate.promise));
+
+    const pending = useAppStore.getState().sendChatMessage("add another instance");
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    gate.resolve(jsonResponse({ isQuestion: false, reply: "Added.", model: fixedModel() }));
+    await pending;
+
+    const state = useAppStore.getState();
+    expect(state.model.workload.users?.tier).toBe(10_000);
+    expect(state.chatChangeSinceResimulate).toBe(false);
+    const last = state.chatMessages.at(-1)!;
+    expect(last.changed).toBe(false);
+    expect(last.text).toMatch(/Not applied/);
+  });
+});
+
+describe("change-source flags (what the 'Updates since last Re-simulate' box reports)", () => {
+  it("setWorkloadTier flags a parameter change, and only that", () => {
+    useAppStore.setState({ model: modelWithUsers() });
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    const state = useAppStore.getState();
+    expect(state.parametersChangedSinceResimulate).toBe(true);
+    expect(state.chatChangeSinceResimulate).toBe(false);
+  });
+
+  it("applyFix with no record (a chat change) flags a chat change; with a record it neither sets nor clears it", () => {
+    useAppStore.setState({ model: degradedModel() });
+    useAppStore.getState().applyFix(fixedModel());
+    expect(useAppStore.getState().chatChangeSinceResimulate).toBe(true);
+    expect(useAppStore.getState().parametersChangedSinceResimulate).toBe(false);
+
+    // A directly-applied fix while a chat change is already pending must not erase it…
+    useAppStore.getState().applyFix(degradedModel(), {
+      componentId: "svc",
+      findingTitle: "x",
+      fixLabel: "y",
+      appliedAt: 1,
+    });
+    expect(useAppStore.getState().chatChangeSinceResimulate).toBe(true);
+
+    // …and must not invent one when none was pending.
+    useAppStore.setState({ chatChangeSinceResimulate: false });
+    useAppStore.getState().applyFix(fixedModel(), { componentId: "svc", findingTitle: "x", fixLabel: "y", appliedAt: 2 });
+    expect(useAppStore.getState().chatChangeSinceResimulate).toBe(false);
+  });
+
+  it("both flags can be true at once, and both clear on commitRework, restoreVersion, and a fresh build", async () => {
+    const reset = () => {
+      const s = useAppStore.getState();
+      expect(s.parametersChangedSinceResimulate).toBe(false);
+      expect(s.chatChangeSinceResimulate).toBe(false);
+    };
+    const raiseBoth = () => {
+      useAppStore.setState({ model: modelWithUsers(), baselineModel: modelWithUsers() });
+      useAppStore.getState().setWorkloadTier("users", 10_000);
+      // A chat change carries the (already-moved) workload forward, as the
+      // real chatWithProject does — only the architecture differs.
+      useAppStore.getState().applyFix({ ...fixedModel(), workload: useAppStore.getState().model.workload });
+      const s = useAppStore.getState();
+      expect(s.parametersChangedSinceResimulate).toBe(true);
+      expect(s.chatChangeSinceResimulate).toBe(true);
+    };
+
+    raiseBoth();
+    useAppStore.getState().commitRework(fixedModel());
+    reset();
+
+    raiseBoth();
+    useAppStore.setState({ versions: [{ id: "v1", model: degradedModel(), findings: [], createdAt: 1 }] });
+    useAppStore.getState().restoreVersion("v1");
+    reset();
+
+    raiseBoth();
+    useAppStore.getState().setModel(degradedModel());
+    reset();
+    await flush();
+  });
+
+  it("are persisted with the session, and default to false for one saved before they existed", async () => {
+    useAppStore.setState({ model: modelWithUsers() });
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    useAppStore.getState().applyFix(fixedModel());
+    await useAppStore.getState().saveToStorage();
+
+    useAppStore.getState().startNewProject();
+    await useAppStore.getState().hydrateFromStorage();
+    // startNewProject cleared the pointer — reopen explicitly.
+    const id = [...fakeProjects.keys()][0]!;
+    await useAppStore.getState().openProject(id);
+    expect(useAppStore.getState().parametersChangedSinceResimulate).toBe(true);
+    expect(useAppStore.getState().chatChangeSinceResimulate).toBe(true);
+
+    // A row saved before these fields existed.
+    const row = fakeProjects.get(id)! as { data: Record<string, unknown> };
+    delete row.data.parametersChangedSinceResimulate;
+    delete row.data.chatChangeSinceResimulate;
+    await useAppStore.getState().openProject(id);
+    expect(useAppStore.getState().parametersChangedSinceResimulate).toBe(false);
+    expect(useAppStore.getState().chatChangeSinceResimulate).toBe(false);
+  });
+});
+
+describe("persisting what a findings refresh produced", () => {
+  it("bumps autosaveRevision when findings arrive, so they (and the version they record) actually get saved", async () => {
+    // The autosave in AutoSaveIndicator.tsx only fires on `autosaveRevision`.
+    // Build/Re-simulate bump it when they START, i.e. while findings are
+    // still loading — so without a bump on arrival, the row is saved with
+    // the OLD findings (and, after a Re-simulate, `findingsStale` still
+    // true) and never corrected. Reopening then shows "Based on the
+    // previous version…" for a project that was in fact just re-simulated.
+    const gate = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn(() => gate.promise));
+
+    useAppStore.getState().setModel(degradedModel());
+    const revisionWhileLoading = useAppStore.getState().autosaveRevision;
+    gate.resolve(jsonResponse({ findings: [someFinding("arrived")] }));
+    await vi.waitFor(() => expect(useAppStore.getState().findings).toHaveLength(1));
+
+    expect(useAppStore.getState().autosaveRevision).toBeGreaterThan(revisionWhileLoading);
+  });
+});
+
+describe("reverting a change clears what's pending (derived from the baseline, not latched)", () => {
+  /** A built project whose findings match its model — the state right after a Build/Re-simulate. */
+  function builtProject() {
+    const model = modelWithUsers();
+    useAppStore.setState({ model, baselineModel: model, canResimulate: false, findingsStale: false });
+    return model;
+  }
+  const pendingFlags = () => {
+    const s = useAppStore.getState();
+    return {
+      params: s.parametersChangedSinceResimulate,
+      chat: s.chatChangeSinceResimulate,
+      canResimulate: s.canResimulate,
+      stale: s.findingsStale,
+    };
+  };
+
+  it("moving a tier back to where it started clears the pending state entirely", () => {
+    builtProject();
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    expect(pendingFlags()).toEqual({ params: true, chat: false, canResimulate: true, stale: true });
+
+    useAppStore.getState().setWorkloadTier("users", 100);
+    expect(pendingFlags()).toEqual({ params: false, chat: false, canResimulate: false, stale: false });
+  });
+
+  it("Reset puts the controls back to the last simulation's values, clears the pending state, and calls no API", async () => {
+    builtProject();
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    useAppStore.getState().revertParameters();
+    await flush();
+
+    expect(useAppStore.getState().model.workload.users?.tier).toBe(100);
+    expect(pendingFlags()).toEqual({ params: false, chat: false, canResimulate: false, stale: false });
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls); // no findings refresh, no version
+    expect(useAppStore.getState().versions).toEqual([]);
+  });
+
+  it("Reset without a baseline (a legacy project with pending changes) does nothing", () => {
+    useAppStore.setState({ model: modelWithUsers(), baselineModel: null, autosaveRevision: 0 });
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    useAppStore.getState().revertParameters();
+    expect(useAppStore.getState().model.workload.users?.tier).toBe(10_000);
+    expect(useAppStore.getState().autosaveRevision).toBe(0);
+  });
+
+  it("moving a control persists (bumps autosave) only when it lands back on the baseline, not on the way out", () => {
+    builtProject();
+    const start = useAppStore.getState().autosaveRevision;
+    useAppStore.getState().setWorkloadTier("users", 10_000); // away: a parameter change is reviewed, not saved
+    expect(useAppStore.getState().autosaveRevision).toBe(start);
+    useAppStore.getState().setWorkloadTier("users", 100); // back: clear whatever a piggybacked save persisted
+    expect(useAppStore.getState().autosaveRevision).toBe(start + 1);
+  });
+
+  it("reverting a parameter keeps Re-simulate available if a fix is still queued — but the findings aren't stale", () => {
+    builtProject();
+    useAppStore.getState().queueFix(pendingFix());
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    useAppStore.getState().setWorkloadTier("users", 100);
+    expect(pendingFlags()).toEqual({ params: false, chat: false, canResimulate: true, stale: false });
+  });
+
+  it("removing the only queued fix disables Re-simulate, but not while something else is still pending", () => {
+    builtProject();
+    useAppStore.getState().queueFix(pendingFix());
+    useAppStore.getState().unqueueFix("svc", "Single instance");
+    expect(useAppStore.getState().canResimulate).toBe(false);
+
+    useAppStore.getState().queueFix(pendingFix());
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    useAppStore.getState().unqueueFix("svc", "Single instance");
+    expect(useAppStore.getState().canResimulate).toBe(true); // the tier change still warrants it
+  });
+
+  it("Reset reverts the controls only: a chat change and a queued fix made alongside stay pending", () => {
+    builtProject();
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    useAppStore.getState().applyFix({ ...fixedModel(), workload: useAppStore.getState().model.workload });
+    useAppStore.getState().queueFix(pendingFix());
+    expect(pendingFlags()).toMatchObject({ params: true, chat: true });
+
+    useAppStore.getState().revertParameters();
+
+    expect(pendingFlags()).toEqual({ params: false, chat: true, canResimulate: true, stale: true });
+    expect(useAppStore.getState().model.workload.users?.tier).toBe(100);
+    expect(useAppStore.getState().model.components).toEqual(fixedModel().components); // chat change kept
+    expect(useAppStore.getState().pendingFixes).toHaveLength(1);
+  });
+
+  it("re-baselines when findings land: a tier moved WHILE they were loading is still pending afterwards", async () => {
+    const gate = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn(() => gate.promise));
+    useAppStore.getState().setModel(modelWithUsers());
+
+    useAppStore.getState().setWorkloadTier("users", 10_000); // moved during the flight
+    gate.resolve(jsonResponse({ findings: [someFinding("for the model as built")] }));
+    await vi.waitFor(() => expect(useAppStore.getState().findings).toHaveLength(1));
+
+    // The findings describe the model AS BUILT, so the moved tier is pending.
+    // (Previously this blanket-cleared "stale", wrongly hiding the caption.)
+    expect(pendingFlags()).toEqual({ params: true, chat: false, canResimulate: true, stale: true });
+  });
+
+  it("the baseline is saved with the project, so reverting still works after a reload", async () => {
+    builtProject();
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    await useAppStore.getState().saveToStorage();
+    const id = useAppStore.getState().currentProjectId!;
+
+    useAppStore.getState().startNewProject();
+    await useAppStore.getState().openProject(id);
+    expect(pendingFlags()).toMatchObject({ params: true, canResimulate: true });
+
+    useAppStore.getState().setWorkloadTier("users", 100);
+    expect(pendingFlags()).toEqual({ params: false, chat: false, canResimulate: false, stale: false });
+  });
+
+  it("an older project saved without a baseline: clean ones adopt their model as the baseline; pending ones keep latching until re-simulated", async () => {
+    // Clean: nothing pending when saved → current model is the baseline.
+    useAppStore.setState({ model: modelWithUsers(), baselineModel: null });
+    await useAppStore.getState().saveToStorage();
+    const cleanId = useAppStore.getState().currentProjectId!;
+    (fakeProjects.get(cleanId) as { data: Record<string, unknown> }).data.baselineModel = undefined;
+    delete (fakeProjects.get(cleanId) as { data: Record<string, unknown> }).data.baselineModel;
+    await useAppStore.getState().openProject(cleanId);
+    expect(useAppStore.getState().baselineModel).toEqual(modelWithUsers());
+
+    // Pending: baseline unknowable → null, so a tier move latches on as before.
+    useAppStore.getState().startNewProject();
+    useAppStore.setState({ model: modelWithUsers(), baselineModel: null, canResimulate: true, findingsStale: true });
+    await useAppStore.getState().saveToStorage();
+    const pendingId = useAppStore.getState().currentProjectId!;
+    delete (fakeProjects.get(pendingId) as { data: Record<string, unknown> }).data.baselineModel;
+    await useAppStore.getState().openProject(pendingId);
+    expect(useAppStore.getState().baselineModel).toBeNull();
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+    expect(pendingFlags()).toMatchObject({ params: true, canResimulate: true });
+  });
+
+  // An older project saved with a latched "Parameters changed" but no baseline:
+  // Reset was disabled (nothing to revert to) while the notes still listed it.
+  // Its newest version IS the last simulation's model, so the baseline is
+  // recovered from that and the flags are re-derived from the data on load.
+  function saveLegacy(opts: { model: SystemModel; versionModel: SystemModel; keepNullBaseline?: boolean }) {
+    useAppStore.setState({
+      model: opts.model,
+      baselineModel: null,
+      canResimulate: true,
+      findingsStale: true,
+      parametersChangedSinceResimulate: true, // the latched flag an older save carries
+      versions: [{ id: "v1", model: opts.versionModel, findings: [], createdAt: 1 }],
+    });
+    return useAppStore.getState().saveToStorage().then(() => {
+      const id = useAppStore.getState().currentProjectId!;
+      // Either absent (saved before baselines existed) or an explicit null
+      // (saved by a build that had none, e.g. reopened-then-autosaved).
+      if (!opts.keepNullBaseline) delete (fakeProjects.get(id) as { data: Record<string, unknown> }).data.baselineModel;
+      useAppStore.getState().startNewProject();
+      return id;
+    });
+  }
+
+  it("a legacy project whose controls were already put back loads with nothing pending (recovered from its last version)", async () => {
+    const id = await saveLegacy({ model: modelWithUsers(), versionModel: modelWithUsers() });
+    await useAppStore.getState().openProject(id);
+
+    expect(useAppStore.getState().baselineModel).toEqual(modelWithUsers());
+    expect(pendingFlags()).toEqual({ params: false, chat: false, canResimulate: false, stale: false });
+  });
+
+  it("a project saved with an explicit null baseline recovers it the same way (it used to stay null forever)", async () => {
+    const id = await saveLegacy({ model: modelWithUsers(), versionModel: modelWithUsers(), keepNullBaseline: true });
+    expect((fakeProjects.get(id) as { data: Record<string, unknown> }).data.baselineModel).toBeNull();
+    await useAppStore.getState().openProject(id);
+
+    expect(useAppStore.getState().baselineModel).toEqual(modelWithUsers());
+    expect(pendingFlags()).toEqual({ params: false, chat: false, canResimulate: false, stale: false });
+  });
+
+  it("a legacy project whose tier really differs from its last simulation shows the change, and Reset can undo it", async () => {
+    const moved = modelWithUsers();
+    moved.workload = { users: { included: true, tier: 10_000, target: 1_000_000 } };
+    const id = await saveLegacy({ model: moved, versionModel: modelWithUsers() });
+    await useAppStore.getState().openProject(id);
+
+    expect(pendingFlags()).toMatchObject({ params: true, canResimulate: true });
+    useAppStore.getState().revertParameters();
+    expect(useAppStore.getState().model.workload.users?.tier).toBe(100);
+    expect(pendingFlags()).toEqual({ params: false, chat: false, canResimulate: false, stale: false });
   });
 });

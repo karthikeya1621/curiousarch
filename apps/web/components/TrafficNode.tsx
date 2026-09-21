@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useAppStore } from "../lib/store";
 import { formatTier } from "../lib/formatTier";
@@ -9,7 +10,7 @@ import { ActivityIcon } from "./icons";
  * traffic node, so there's nothing to badge. Shows whichever workload
  * dimension(s) are `included`, at whatever tier is currently set.
  */
-export function TrafficNode(_props: NodeProps) {
+export const TrafficNode = memo(function TrafficNode(_props: NodeProps) {
   const workload = useAppStore((s) => s.model.workload);
 
   const lines: string[] = [];
@@ -28,4 +29,4 @@ export function TrafficNode(_props: NodeProps) {
       ))}
     </div>
   );
-}
+});

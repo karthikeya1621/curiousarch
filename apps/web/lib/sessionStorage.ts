@@ -3,6 +3,27 @@ import { createClient } from "./supabase/client";
 
 const TABLE = "projects";
 
+/**
+ * The signed-in user's id, read from the LOCAL session — no network call.
+ * This used to be `auth.getUser()`, which round-trips to Supabase's Auth
+ * server on every call: each autosave paid for that request in series
+ * before its own write, and list/load/delete each paid it too.
+ *
+ * `getSession()` isn't server-verified, and that's fine HERE specifically:
+ * the id is only used to tag an insert and to narrow a select/update, and
+ * the `projects` table's row-level security (`auth.uid() = user_id`) is what
+ * actually enforces ownership server-side — a tampered local session can
+ * still only reach rows the real JWT is allowed to. (middleware.ts keeps
+ * using the verified `getUser()` for the page/API gate, where an unverified
+ * claim would not be acceptable.)
+ */
+async function currentUserId(supabase: ReturnType<typeof createClient>): Promise<string | null> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session?.user.id ?? null;
+}
+
 export interface ProjectSummary {
   id: string;
   name: string;
@@ -51,11 +72,16 @@ export interface Version {
 
 export interface SavedSession {
   model: SystemModel;
-  history: SystemModel[];
   findings: AiFinding[];
   findingsStatus: "idle" | "loading" | "done";
   findingsError: string | null;
   canResimulate: boolean;
+  /** See store.ts's own doc comment on `parametersChangedSinceResimulate` — persisted so reopening a project doesn't lose the "parameters changed" note while leaving `canResimulate` itself restored. */
+  parametersChangedSinceResimulate: boolean;
+  /** See store.ts's own doc comment on `chatChangeSinceResimulate` — same reasoning, persisted for the same reason. */
+  chatChangeSinceResimulate: boolean;
+  /** See store.ts's own doc comment on `baselineModel`. Optional: absent on a project saved before it existed. */
+  baselineModel?: SystemModel | null;
   /** True when the model changed (a raised tier) since `findings` was last actually computed for it. */
   findingsStale: boolean;
   chatMessages: ChatMessage[];
@@ -82,14 +108,12 @@ export async function saveProject(
   session: Omit<SavedSession, "savedAt">,
 ): Promise<{ id: string; savedAt: number } | null> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const userId = await currentUserId(supabase);
+  if (!userId) return null;
 
   const withTimestamp: SavedSession = { ...session, savedAt: Date.now() };
   const row = {
-    user_id: user.id,
+    user_id: userId,
     name: session.model.name,
     data: withTimestamp,
     updated_at: new Date().toISOString(),
@@ -101,7 +125,7 @@ export async function saveProject(
       if (error || !data) return null;
       return { id: data.id as string, savedAt: withTimestamp.savedAt };
     }
-    const { error } = await supabase.from(TABLE).update(row).eq("id", id).eq("user_id", user.id);
+    const { error } = await supabase.from(TABLE).update(row).eq("id", id).eq("user_id", userId);
     if (error) return null;
     return { id, savedAt: withTimestamp.savedAt };
   } catch {
@@ -111,17 +135,15 @@ export async function saveProject(
 
 export async function loadProject(id: string): Promise<SavedSession | null> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const userId = await currentUserId(supabase);
+  if (!userId) return null;
 
   try {
     const { data, error } = await supabase
       .from(TABLE)
       .select("data")
       .eq("id", id)
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .maybeSingle();
     if (error || !data) return null;
     return data.data as SavedSession;
@@ -132,16 +154,14 @@ export async function loadProject(id: string): Promise<SavedSession | null> {
 
 export async function listProjects(): Promise<ProjectSummary[] | null> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const userId = await currentUserId(supabase);
+  if (!userId) return null;
 
   try {
     const { data, error } = await supabase
       .from(TABLE)
       .select("id, name, updated_at")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .order("updated_at", { ascending: false });
     if (error || !data) return null;
     return data.map((row) => ({
@@ -156,13 +176,11 @@ export async function listProjects(): Promise<ProjectSummary[] | null> {
 
 export async function deleteProject(id: string): Promise<boolean> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return false;
+  const userId = await currentUserId(supabase);
+  if (!userId) return false;
 
   try {
-    const { error } = await supabase.from(TABLE).delete().eq("id", id).eq("user_id", user.id);
+    const { error } = await supabase.from(TABLE).delete().eq("id", id).eq("user_id", userId);
     return !error;
   } catch {
     return false;

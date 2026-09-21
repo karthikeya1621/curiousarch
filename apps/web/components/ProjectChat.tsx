@@ -1,9 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import type { Component } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
+import { Badge } from "./Badge";
 import { Card } from "./Card";
 import { SparklesIcon, WrenchIcon, XIcon } from "./icons";
+
+/**
+ * Matches a `/comp` token only when it's the thing currently being typed —
+ * anchored to the end of the string, and either at the very start or right
+ * after a whitespace, so "/comp" appearing earlier in an already-finished
+ * sentence never re-triggers the picker. Group 1 is the leading boundary
+ * (empty string or the whitespace char itself, needed to compute where
+ * "/comp" itself starts); group 2 is whatever's been typed since as a
+ * filter query.
+ */
+const SLASH_COMP_PATTERN = /(^|\s)\/comp(\S*)$/i;
+const MAX_SUGGESTIONS = 8;
 
 /**
  * The chat panel for an EXISTING project — distinct from ProseInput,
@@ -11,7 +25,7 @@ import { SparklesIcon, WrenchIcon, XIcon } from "./icons";
  * Project"). This never resets or replaces the model on its own; the AI
  * decides per-message whether it's answering a question or making an
  * actual change (see chatWithProject.ts), and a change is committed the
- * same way applying a fix is (undo history, Re-simulate re-enabled,
+ * same way applying a fix is (Re-simulate re-enabled,
  * findings refreshed). Reads the current model from the store itself
  * (via `sendChatMessage`), not a prop — there's nothing else here that
  * needs it.
@@ -25,7 +39,42 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
   const chatStatus = useAppStore((s) => s.chatStatus);
   const chatError = useAppStore((s) => s.chatError);
   const sendChatMessage = useAppStore((s) => s.sendChatMessage);
+  const components = useAppStore((s) => s.model.components);
   const [draft, setDraft] = useState("");
+  // Typing more after "/comp" re-narrows the list; Escape dismisses it
+  // for the rest of this token without touching the typed text. Both
+  // reset on the next keystroke, same as a real combobox.
+  const [dismissed, setDismissed] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const slashMatch = draft.match(SLASH_COMP_PATTERN);
+  const query = slashMatch?.[2]?.toLowerCase() ?? "";
+  const suggestions =
+    slashMatch && !dismissed
+      ? components
+          .filter((c) => c.label.toLowerCase().includes(query) || c.id.toLowerCase().includes(query))
+          .slice(0, MAX_SUGGESTIONS)
+      : [];
+  const suggestionsOpen = suggestions.length > 0;
+
+  function insertComponent(component: Component) {
+    if (!slashMatch) return;
+    // slashMatch.index is where group 1 (the leading boundary) starts,
+    // not where "/comp" itself does — offset past it, so a leading space
+    // before "/comp" is kept rather than eaten.
+    const slashStart = slashMatch.index! + slashMatch[1].length;
+    const next = `${draft.slice(0, slashStart)}${component.label} (${component.id}) `;
+    setDraft(next);
+    setDismissed(false);
+    setActiveIndex(0);
+    // The input's value updates on this render; the caret only follows on
+    // the NEXT one, so this has to wait a frame rather than run inline.
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(next.length, next.length);
+    });
+  }
 
   function submit() {
     const message = draft.trim();
@@ -84,16 +133,83 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
       )}
 
       <div className="mt-3 flex items-center gap-2">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-          }}
-          placeholder="Ask about this system…"
-          aria-label="Ask a question or request a change"
-          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-slate-500 dark:focus:bg-slate-800"
-        />
+        <div className="relative min-w-0 flex-1">
+          {suggestionsOpen && (
+            <div
+              role="listbox"
+              aria-label="Matching components"
+              className="absolute bottom-full left-0 z-20 mb-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800"
+            >
+              {suggestions.map((c, i) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="option"
+                  aria-selected={i === activeIndex}
+                  // Fires before the input's blur, and preventDefault here
+                  // stops that blur from happening at all — without this,
+                  // the input loses focus first and the click can land on
+                  // the wrong (re-rendered) suggestion, or feel like it
+                  // didn't register.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => insertComponent(c)}
+                  onMouseEnter={() => setActiveIndex(i)}
+                  className={
+                    "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm " +
+                    (i === activeIndex ? "bg-slate-100 dark:bg-slate-700" : "")
+                  }
+                >
+                  <span className="truncate text-slate-900 dark:text-slate-100">{c.label}</span>
+                  <Badge tone="neutral">{c.kind}</Badge>
+                </button>
+              ))}
+            </div>
+          )}
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setDismissed(false);
+              setActiveIndex(0);
+            }}
+            onKeyDown={(e) => {
+              if (suggestionsOpen) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setActiveIndex((i) => Math.min(i + 1, suggestions.length - 1));
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setActiveIndex((i) => Math.max(i - 1, 0));
+                  return;
+                }
+                if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  // Defensive, not expected in practice: `activeIndex` is
+                  // clamped against `suggestions.length` on every arrow
+                  // key already, but the model (and so `components`,
+                  // and so `suggestions`) could in principle change out
+                  // from under an open dropdown from an outside source
+                  // (another tab on the same project) between renders.
+                  const selected = suggestions[activeIndex];
+                  if (selected) insertComponent(selected);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setDismissed(true);
+                  return;
+                }
+              }
+              if (e.key === "Enter") submit();
+            }}
+            placeholder="Ask about this system… (try /comp)"
+            aria-label="Ask a question or request a change"
+            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-slate-500 dark:focus:bg-slate-800"
+          />
+        </div>
         <button
           onClick={submit}
           disabled={!draft.trim() || chatStatus === "loading"}

@@ -6,7 +6,8 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { checkout } from "@archsim/engine";
+import { checkout, MAX_TOTAL_COMPONENTS } from "@archsim/engine";
+import { MAX_CHAT_MESSAGE_LENGTH, MAX_REQUEST_BYTES } from "../lib/limits";
 
 const chatWithProjectMock = vi.fn();
 vi.mock("@archsim/engine/server", () => ({
@@ -113,6 +114,35 @@ describe("POST /api/chat", () => {
   it("rejects a non-JSON body with 400", async () => {
     const res = await POST(new Request("http://localhost/api/chat", { method: "POST", body: "not json" }));
     expect(res.status).toBe(400);
+  });
+
+  it("rejects a request whose content-length exceeds MAX_REQUEST_BYTES with 413, without parsing the body", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": String(MAX_REQUEST_BYTES + 1) },
+        body: JSON.stringify({ model: checkout, message: "hi" }),
+      }),
+    );
+    expect(res.status).toBe(413);
+    expect(chatWithProjectMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a model with more components than MAX_TOTAL_COMPONENTS with 400 — a hand-crafted payload bypassing the AI's own generation caps", async () => {
+    const oversized = {
+      ...checkout,
+      components: Array.from({ length: MAX_TOTAL_COMPONENTS + 1 }, (_, i) => ({ ...checkout.components[0], id: `c${i}` })),
+    };
+
+    const res = await POST(jsonRequest({ model: oversized, message: "hi" }));
+    expect(res.status).toBe(400);
+    expect(chatWithProjectMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a message longer than MAX_CHAT_MESSAGE_LENGTH with 400", async () => {
+    const res = await POST(jsonRequest({ model: checkout, message: "a".repeat(MAX_CHAT_MESSAGE_LENGTH + 1) }));
+    expect(res.status).toBe(400);
+    expect(chatWithProjectMock).not.toHaveBeenCalled();
   });
 
   it("surfaces a chatWithProject failure as a 502 with its message", async () => {

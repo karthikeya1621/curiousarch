@@ -7,6 +7,12 @@
  * there's no fallback to compute — the caller just shows nothing extra,
  * since this was never load-bearing.
  *
+ * Goes through `structuredCall.ts`'s `runStructuredCall` like every other
+ * inference module, so it gets the same validation, one repair retry, and
+ * prompt caching — it used to make its own bare `messages.create` call
+ * (single attempt, a raw ZodError on a malformed answer) and accept
+ * placeholder rationales the other calls reject.
+ *
  * Signature is plain strings (`componentId`/`fixLabel`/`findingCode`),
  * not tied to the `AiFinding`/`AiFix` shape it's actually always called
  * with today — kept loose enough that it never needs to know about a
@@ -16,24 +22,23 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { UTILITY_MODEL } from "./structuredCall.ts";
+import { rationaleSchema } from "./schema.ts";
+import { runStructuredCall, UTILITY_MODEL, type StructuredCallOptions } from "./structuredCall.ts";
 import type { SystemModel } from "../types.ts";
 
 // A fresh, single-use z.object() (not a shared singleton) - same reason
 // schema.ts's traitSchema() is a function: no reused object identity in
 // this schema, so no definitions-hoisting is needed.
 const FixRationaleSchema = z.object({
-  rationale: z
-    .string()
-    .min(1, "One short sentence: why this fix fits this specific system."),
+  rationale: rationaleSchema(),
 });
 
 export type FixRationale = z.infer<typeof FixRationaleSchema>;
 
 const TOOL_NAME = "explain_fix";
-// A one-sentence narrative rationale doesn't need Sonnet's full reasoning
-// budget — see structuredCall.ts's own comment on UTILITY_MODEL.
-const DEFAULT_MODEL = UTILITY_MODEL;
+// Tighter than the shared 90s default: nothing here is load-bearing enough
+// to be worth waiting on. (The model choice — UTILITY_MODEL, not the
+// reasoning model — is at the call site below.)
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 const EXPLAIN_FIX_PROMPT = `You are an experienced architect. A real, computed risk was found in this system on one component, and a specific, already-decided fix is about to be applied to it - the fix itself is fixed and hand-chosen; you are not choosing it or evaluating whether it's right.
@@ -60,62 +65,32 @@ function buildTool(): Anthropic.Tool {
   };
 }
 
-export interface ExplainFixOptions {
-  apiKey?: string;
-  model?: string;
-  timeoutMs?: number;
-  client?: Anthropic;
-}
+export type { StructuredCallOptions as ExplainFixOptions };
 
-/** Single attempt, no repair retry — see this file's own top comment. */
 export async function explainFix(
   model: SystemModel,
   componentId: string,
   fixLabel: string,
   findingCode: string,
-  options: ExplainFixOptions = {},
+  options: StructuredCallOptions = {},
 ): Promise<FixRationale> {
-  const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (!options.client && !apiKey) {
-    throw new Error(
-      "explainFix requires an Anthropic API key. Set ANTHROPIC_API_KEY or pass { apiKey }.",
-    );
-  }
-
   const component = model.components.find((c) => c.id === componentId);
   if (!component) {
     throw new Error(`explainFix: "${componentId}" is not a component in this model.`);
   }
 
-  const client =
-    options.client ?? new Anthropic({ apiKey, timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
-  const modelName = options.model ?? DEFAULT_MODEL;
-
-  const response = await client.messages.create({
-    model: modelName,
-    max_tokens: 512,
-    // Cached: every "Ask AI" click within a session reuses this exact
-    // system prompt and tool schema (see structuredCall.ts's own comment).
-    system: [{ type: "text", text: EXPLAIN_FIX_PROMPT, cache_control: { type: "ephemeral" } }],
-    tools: [{ ...buildTool(), cache_control: { type: "ephemeral" } }],
-    tool_choice: { type: "tool", name: TOOL_NAME },
-    messages: [
-      {
-        role: "user",
-        content:
-          `Component with the risk: "${componentId}" (${component.label}). ` +
-          `Risk: ${findingCode}. Fix being applied: "${fixLabel}". Full system:\n\n` +
-          `${JSON.stringify(model, null, 2)}`,
-      },
-    ],
-  });
-
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
+  const result = await runStructuredCall(
+    EXPLAIN_FIX_PROMPT,
+    `Component with the risk: "${componentId}" (${component.label}). ` +
+      `Risk: ${findingCode}. Fix being applied: "${fixLabel}". Full system:\n\n` +
+      `${JSON.stringify(model)}`,
+    FixRationaleSchema,
+    buildTool(),
+    // A one-sentence narration doesn't need the reasoning model, and is
+    // bounded tighter than the shared 90s default — nothing here is
+    // load-bearing enough to wait on. An explicit caller option wins.
+    { model: UTILITY_MODEL, timeoutMs: DEFAULT_TIMEOUT_MS, ...options },
+    "explainFix",
   );
-  if (!toolUse) {
-    throw new Error("explainFix: the model responded without calling the tool.");
-  }
-
-  return FixRationaleSchema.parse(toolUse.input);
+  return result.data;
 }

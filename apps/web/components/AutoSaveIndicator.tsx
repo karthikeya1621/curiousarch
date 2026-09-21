@@ -16,7 +16,7 @@ const AUTO_SAVE_DEBOUNCE_MS = 1500;
  *
  * Watches `autosaveRevision` specifically, not `model`/`chatMessages`/etc.
  * directly — that counter is bumped only by actions the store itself
- * considers save-worthy (a build, a chat reply, queueing a fix, Undo,
+ * considers save-worthy (a build, a chat reply, queueing a fix, a Reset,
  * restoring a version, a completed Re-simulate), and deliberately NOT by
  * `setWorkloadTier` (moving the tier slider is a parameter change to
  * review, not to persist on its own — see AppState's own doc comment on
