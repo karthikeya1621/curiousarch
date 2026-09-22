@@ -33,6 +33,83 @@ export interface StructuredCallOptions {
    * sets it, so this is a no-op for them.
    */
   history?: Anthropic.MessageParam[];
+  /**
+   * Called once per API request (including repair retries and failed
+   * requests) — see `AiCallRecord`. Purely observational: it can't change
+   * the call, and if it throws the error is swallowed, so a broken logger
+   * can never fail an AI call. Every inference function forwards `options`
+   * to each `runStructuredCall` it makes, so setting this once on a public
+   * entry point (`reworkModel`, `fromProse`, ...) observes all of its calls.
+   */
+  onCall?: (record: AiCallRecord) => void;
+  /**
+   * An extra check run AFTER `schema` itself validates, for an invariant
+   * Zod can't express because it needs something Zod never sees: the input
+   * this call is REVISING, not just the proposed output in isolation (e.g.
+   * reworkModel.ts's own "did this drop an edge between two components it
+   * kept" check, which needs the ORIGINAL model to answer). Return a
+   * description of the problem to treat it exactly like a Zod validation
+   * failure — a real, billed repair-retry, the description fed back to the
+   * model the same way a Zod error would be; return null/undefined when the
+   * result is fine.
+   *
+   * Exists because a schema-valid result can still be substantively wrong
+   * in a way schema.ts's own superRefine has no way to catch — confirmed
+   * live: a repair-retry once satisfied every Zod rule by patching a
+   * catastrophically degenerate first attempt (a single component, one
+   * edge) just enough to pass, rather than regenerating a real answer,
+   * silently discarding almost the entire input model. That result was
+   * schema-valid and shipped as "success."
+   *
+   * Typed `unknown`, not the call's own generic result type — this
+   * interface isn't itself generic (every caller across the codebase
+   * shares this one type), so `runStructuredCall<T>` calls it with its own
+   * already-validated `T` and the one caller that sets this (reworkModel.ts)
+   * narrows it back with a cast it can make safely, since it's the one that
+   * knows which schema this options object is actually paired with.
+   */
+  validateResult?: (data: unknown) => string | null | undefined;
+}
+
+/**
+ * One API request made by `runStructuredCall` — a repair retry is its own
+ * record, since it is its own billed request. Handed to
+ * `StructuredCallOptions.onCall` so a caller can log usage without this
+ * package knowing anything about where (a database, a file) or for whom.
+ */
+export interface AiCallRecord {
+  /** Which inference step made the call (`fromProse`, `reworkModel`, `chatWithProject:route`, ...). */
+  label: string;
+  /** 0 for the first request, 1+ for a repair retry. */
+  attempt: number;
+  model: string;
+  maxTokens: number;
+  systemPrompt: string;
+  /** The messages exactly as sent on this attempt (a repair attempt includes the failed turn). */
+  messages: Anthropic.MessageParam[];
+  toolName: string;
+  /**
+   * ok: the tool output validated. invalid: it came back but failed schema
+   * validation (a retry may follow). no-tool: the model never called the
+   * tool. error: the request itself failed (network, timeout, API error) —
+   * no usage is known for these.
+   */
+  outcome: "ok" | "invalid" | "no-tool" | "error";
+  /** The validation failure, or the request error message. */
+  error?: string;
+  /** The tool arguments (ok/invalid), or the raw response content (no-tool). */
+  output?: unknown;
+  stopReason: string | null;
+  /** Anthropic's request id, for support — absent on a client-injected fake. */
+  requestId?: string | null;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheCreationInputTokens: number;
+    cacheReadInputTokens: number;
+  };
+  startedAt: number;
+  durationMs: number;
 }
 
 export interface StructuredCallResult<T> {
@@ -79,6 +156,13 @@ const DEFAULT_TIMEOUT_MS = 90_000;
  * thrown error) and the `STRUCTURED_CALL_DEBUG` env var checked for
  * verbose logging.
  */
+/**
+ * Shared by every structured call. Recorded on each `AiCallRecord` too, so
+ * "did this call hit the ceiling" is answerable from a stored row alone.
+ * See the comment on the request below for why it's this high.
+ */
+const MAX_OUTPUT_TOKENS = 8192;
+
 export async function runStructuredCall<T>(
   systemPrompt: string,
   userContent: string,
@@ -166,24 +250,70 @@ export async function runStructuredCall<T>(
       }
     }
 
-    const response = await client.messages.create({
-      model,
-      // Found live, once the 7 extended component kinds made genuinely
-      // large systems (15-20+ components, each with several trait
-      // objects and rationale strings) reachable: 4096 truncated the
-      // response mid-generation on a large `reworkModel` call, which
-      // then failed validation with "edges: Required; workload:
-      // Required" — not a bad answer, an incomplete one. Raised with
-      // headroom rather than tuned to the exact case that broke, since
-      // the whole point of adding more kinds is more components per
-      // system, and every structured call in this file shares this one
-      // constant.
-      max_tokens: 8192,
-      system: cachedSystem,
-      tools: [cachedTool],
-      tool_choice: { type: "tool", name: tool.name },
-      messages,
-    });
+    const startedAt = Date.now();
+    const emit = (partial: Pick<AiCallRecord, "outcome"> & Partial<AiCallRecord>) => {
+      if (!options.onCall) return;
+      try {
+        options.onCall({
+          label,
+          attempt,
+          model,
+          maxTokens: MAX_OUTPUT_TOKENS,
+          systemPrompt,
+          // A copy: `messages` grows on the next attempt's repair turn.
+          messages: [...messages],
+          toolName: tool.name,
+          stopReason: null,
+          startedAt,
+          durationMs: Date.now() - startedAt,
+          ...partial,
+        });
+      } catch {
+        // Observational only — never let a logger fail the call.
+      }
+    };
+
+    let response: Anthropic.Message;
+    try {
+      response = await client.messages.create({
+        model,
+        // Found live, once the 7 extended component kinds made genuinely
+        // large systems (15-20+ components, each with several trait
+        // objects and rationale strings) reachable: 4096 truncated the
+        // response mid-generation on a large `reworkModel` call, which
+        // then failed validation with "edges: Required; workload:
+        // Required" — not a bad answer, an incomplete one. Raised with
+        // headroom rather than tuned to the exact case that broke, since
+        // the whole point of adding more kinds is more components per
+        // system, and every structured call in this file shares this one
+        // constant.
+        max_tokens: MAX_OUTPUT_TOKENS,
+        system: cachedSystem,
+        tools: [cachedTool],
+        tool_choice: { type: "tool", name: tool.name },
+        messages,
+      });
+    } catch (err) {
+      emit({
+        outcome: "error",
+        error: err instanceof Error ? err.message : String(err),
+        requestId: (err as { requestID?: string | null } | undefined)?.requestID ?? null,
+      });
+      throw err;
+    }
+    const usage = response.usage
+      ? {
+          inputTokens: response.usage.input_tokens ?? 0,
+          outputTokens: response.usage.output_tokens ?? 0,
+          cacheCreationInputTokens: response.usage.cache_creation_input_tokens ?? 0,
+          cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0,
+        }
+      : undefined;
+    const responseMeta = {
+      stopReason: response.stop_reason ?? null,
+      requestId: (response as { _request_id?: string | null })._request_id ?? null,
+      usage,
+    };
 
     const toolUse = response.content.find(
       (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
@@ -191,6 +321,7 @@ export async function runStructuredCall<T>(
 
     if (!toolUse) {
       lastError = "The model responded without calling the tool.";
+      emit({ outcome: "no-tool", error: lastError, output: response.content, ...responseMeta });
       lastRaw = response.content;
       lastToolUseId = undefined;
       if (process.env.STRUCTURED_CALL_DEBUG) {
@@ -205,7 +336,19 @@ export async function runStructuredCall<T>(
 
     const parsed = schema.safeParse(toolUse.input);
     if (parsed.success) {
-      return { data: parsed.data, raw: toolUse.input, repaired: attempt > 0 };
+      const resultProblem = options.validateResult?.(parsed.data);
+      if (!resultProblem) {
+        emit({ outcome: "ok", output: toolUse.input, ...responseMeta });
+        return { data: parsed.data, raw: toolUse.input, repaired: attempt > 0 };
+      }
+      // Schema-valid, but validateResult says it's still wrong — billed and
+      // repaired exactly like a Zod failure below (same emit, same
+      // tool_use/tool_result echo next iteration), not a separate path.
+      lastRaw = toolUse.input;
+      lastToolUseId = toolUse.id;
+      lastError = resultProblem;
+      emit({ outcome: "invalid", error: lastError, output: toolUse.input, ...responseMeta });
+      continue;
     }
 
     lastRaw = toolUse.input;
@@ -213,6 +356,7 @@ export async function runStructuredCall<T>(
     lastError = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
       .join("; ");
+    emit({ outcome: "invalid", error: lastError, output: toolUse.input, ...responseMeta });
   }
 
   const rawSnippet = JSON.stringify(lastRaw)?.slice(0, 500);

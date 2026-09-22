@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import type { SystemModel } from "@archsim/engine";
-import { useAppStore } from "../lib/store";
+import { useAppStore, usageProjectId } from "../lib/store";
+import { newActionId } from "../lib/usageClient";
 import { MAX_DESCRIPTION_LENGTH } from "../lib/limits";
 import { Card } from "./Card";
 import { SparklesIcon } from "./icons";
@@ -19,14 +20,17 @@ export function ProseInput() {
     setLoading(true);
     setError(null);
     try {
+      // One id for the whole build — this call, and the findings refresh
+      // `setModel` starts — so its cost and the version it produces join up.
+      const actionId = newActionId();
       const res = await fetch("/api/infer", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ description }),
+        body: JSON.stringify({ description, actionId, projectId: usageProjectId() }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Inference failed.");
-      setModel(body.model as SystemModel);
+      setModel(body.model as SystemModel, actionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Inference failed.");
     } finally {

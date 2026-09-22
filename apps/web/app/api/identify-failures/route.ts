@@ -3,6 +3,8 @@ import { identifyFailures } from "@archsim/engine/server";
 import type { SystemModel } from "@archsim/engine";
 import { isValidModelShape } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
+import { startUsage } from "../../../lib/usage/server";
+import { describeModel } from "../../../lib/usage/context";
 
 /**
  * Server-only, same reason as api/infer/route.ts. Backs the primary
@@ -24,7 +26,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const findings = await identifyFailures(model as SystemModel);
+    const usage = await startUsage(body, { action: "findings", context: describeModel(model as SystemModel) });
+    const findings = await identifyFailures(model as SystemModel, usage);
     return NextResponse.json({ findings });
   } catch (err) {
     return upstreamError(err, "Failed to identify failures.");

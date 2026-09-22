@@ -88,6 +88,12 @@ export interface Version {
   model: SystemModel;
   findings: AiFinding[];
   createdAt: number;
+  /**
+   * The user action (a build or a Re-simulate) that produced this version —
+   * the join key from a version to its AI calls and cost (`ai_calls.action_id`).
+   * Absent on a version recorded before usage tracking.
+   */
+  actionId?: string;
 }
 
 export interface SavedSession {
@@ -128,6 +134,10 @@ export interface SavedSession {
 export async function saveProject(
   id: string | null,
   session: Omit<SavedSession, "savedAt">,
+  // The id to give a project on its FIRST insert (`id` null) instead of a
+  // database-generated one — see store.ts's `draftProjectId`: AI usage was
+  // already filed under it before the project existed.
+  newId?: string,
 ): Promise<{ id: string; savedAt: number } | null> {
   const supabase = createClient();
   const userId = await currentUserId(supabase);
@@ -143,7 +153,11 @@ export async function saveProject(
 
   try {
     if (id === null) {
-      const { data, error } = await supabase.from(TABLE).insert(row).select("id").single();
+      const { data, error } = await supabase
+        .from(TABLE)
+        .insert((newId ? { id: newId, ...row } : row) as Record<string, unknown>)
+        .select("id")
+        .single();
       if (error || !data) return null;
       return { id: data.id as string, savedAt: withTimestamp.savedAt };
     }

@@ -3,6 +3,8 @@ import { explainFix } from "@archsim/engine/server";
 import type { SystemModel } from "@archsim/engine";
 import { isValidModelShape } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
+import { startUsage } from "../../../lib/usage/server";
+import { describeModel } from "../../../lib/usage/context";
 
 /**
  * Server-only, same reason as api/infer/route.ts. Backs the "Ask AI"
@@ -34,7 +36,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { rationale } = await explainFix(model as SystemModel, componentId, fixLabel, findingCode);
+    const usage = await startUsage(body, {
+      action: "explain-fix",
+      context: { ...describeModel(model as SystemModel), findingCode },
+    });
+    const { rationale } = await explainFix(model as SystemModel, componentId, fixLabel, findingCode, usage);
     return NextResponse.json({ rationale });
   } catch (err) {
     return upstreamError(err, "Failed to explain fix.");

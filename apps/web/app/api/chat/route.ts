@@ -4,6 +4,8 @@ import type { PendingFixInput } from "@archsim/engine/server";
 import type { AiFinding, SystemModel } from "@archsim/engine";
 import { MAX_CHAT_MESSAGE_LENGTH, isValidModelShape, parsePendingChanges } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
+import { startUsage } from "../../../lib/usage/server";
+import { describeModel } from "../../../lib/usage/context";
 
 /**
  * Server-only, same reason as api/infer/route.ts. Backs the sidebar chat
@@ -60,6 +62,17 @@ export async function POST(request: Request) {
   const currentPendingFixes = Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]) : [];
 
   try {
+    const usage = await startUsage(body, {
+      action: "chat",
+      context: {
+        ...describeModel(model as SystemModel),
+        messageChars: message.length,
+        historyTurns: chatHistory.length,
+        findings: currentFindings.length,
+        pendingFixes: currentPendingFixes.length,
+        pendingChanges: queuedChanges.length,
+      },
+    });
     const result = await chatWithProject(
       model as SystemModel,
       message,
@@ -67,6 +80,7 @@ export async function POST(request: Request) {
       currentFindings,
       currentPendingFixes,
       queuedChanges,
+      usage,
     );
     return NextResponse.json({
       isQuestion: result.isQuestion,

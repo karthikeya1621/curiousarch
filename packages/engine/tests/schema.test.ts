@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { SystemModelSchema } from "../src/inference/schema.js";
+import { STRUCTURAL_SELF_CHECK, SystemModelSchema } from "../src/inference/schema.js";
 import { MAX_BASE_COMPONENTS } from "../src/types.js";
 
 /** Same topology as models/reference.ts's checkout system, as raw JSON. */
@@ -170,6 +170,30 @@ describe("SystemModelSchema", () => {
     }
   });
 
+  it("rejects a placeholder rationale without echoing the banned word back as the category label", () => {
+    // Regression test: the validation message used to read `"placeholder"
+    // is a placeholder, not a reason` — which, fed back to the model as
+    // repair-retry feedback, doubled the exact banned word right before
+    // asking it to fix the field. Confirmed live: the model then reproduced
+    // the identical word on the very next attempt for the same field. The
+    // model's own bad value may still be quoted (useful for debugging), but
+    // the word describing the CATEGORY of "wrong" must never be the same
+    // banned word — that's the specific thing that backfired.
+    const bad = {
+      ...fixture,
+      components: fixture.components.map((c) =>
+        c.id === "gw" ? { ...c, hasRateLimiting: { ...c.hasRateLimiting, rationale: "placeholder" } } : c,
+      ),
+    };
+    const result = SystemModelSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = result.error.issues.map((i) => i.message).join(" ");
+      expect(message).toContain('"placeholder"'); // the bad value itself, quoted — fine
+      expect(message.toLowerCase()).not.toMatch(/is a placeholder/); // NOT as the category label
+    }
+  });
+
   it("still accepts a short but genuine rationale", () => {
     const ok = {
       ...fixture,
@@ -178,5 +202,38 @@ describe("SystemModelSchema", () => {
       ),
     };
     expect(SystemModelSchema.safeParse(ok).success).toBe(true);
+  });
+});
+
+describe("STRUCTURAL_SELF_CHECK", () => {
+  // Not a golden-text snapshot of the exact wording — that would just make
+  // this test brittle to phrasing tweaks. What has to hold is narrower: it
+  // names each of the four failure classes above that strict mode's JSON
+  // Schema literally cannot express and only this file's own superRefine
+  // catches, since those are exactly the ones a repair-retry can't be
+  // prevented for any other way (see reworkModel.ts's own comment on why
+  // this is interpolated into its prompt).
+  it("names all four superRefine-only failure classes: duplicate ids, dangling edges, cycles, placeholder rationale", () => {
+    expect(STRUCTURAL_SELF_CHECK).toMatch(/id/i);
+    expect(STRUCTURAL_SELF_CHECK).toMatch(/edge/i);
+    expect(STRUCTURAL_SELF_CHECK).toMatch(/cycle/i);
+    expect(STRUCTURAL_SELF_CHECK).toMatch(/rationale/i);
+  });
+
+  // Confirmed live: naming the exact banned word ("placeholder") as the
+  // example of a bad rationale measurably backfires — the model reached for
+  // that literal word, including reproducing it on a retry immediately
+  // after a repair message that also named it (see this constant's own doc
+  // comment). Any of PLACEHOLDER_RATIONALES appearing here would silently
+  // reintroduce that bug — this is the regression test for it, not a
+  // stylistic preference.
+  it("never spells out any of the banned rationale words as an example — only describes the category, to avoid priming the model to reproduce one", () => {
+    const text = STRUCTURAL_SELF_CHECK.toLowerCase();
+    // Only the distinctive ones — "none"/"unknown"/"test"/"example" are also
+    // in PLACEHOLDER_RATIONALES but are ordinary English words too common to
+    // ban as a substring of arbitrary prompt prose without false positives.
+    for (const word of ["placeholder", "lorem ipsum", "tbd", "n/a"]) {
+      expect(text).not.toContain(word);
+    }
   });
 });

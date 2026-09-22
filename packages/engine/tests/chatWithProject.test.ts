@@ -74,6 +74,24 @@ describe("chatWithProject", () => {
     expect(result.instruction).toBeUndefined();
   });
 
+  // Found live: an answer came back as a multi-paragraph, markdown-formatted
+  // essay (bold headers, a numbered list) — the chat bubble has no markdown
+  // renderer at all, so it showed up as literal asterisks and "1./2./3."
+  // text, and was long enough to need its own scroll fix in the UI. This is
+  // the prompt-level half of that fix.
+  it("tells the model its reply is a spoken chat bubble with no markdown support, kept short", async () => {
+    let systemPrompt = "";
+    const client = fakeClient([toolUseResponse("route_chat_message", questionRoute)], (params) => {
+      systemPrompt = systemText(params);
+    });
+
+    await chatWithProject(checkout, "why?", [], noFindings, noPendingFixes, noPendingChanges, { client });
+
+    expect(systemPrompt).toMatch(/no markdown/i);
+    expect(systemPrompt).toMatch(/numbered or bulleted list/i);
+    expect(systemPrompt.toLowerCase()).toContain("2-4 sentences");
+  });
+
   it("turns a change request into a queueable instruction — in ONE call, without rewriting the model", async () => {
     let calls = 0;
     const client = fakeClient([toolUseResponse("route_chat_message", changeRoute)], () => calls++);

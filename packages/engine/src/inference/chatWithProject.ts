@@ -66,7 +66,7 @@ const RouteSchema = z.object({
     .string()
     .min(
       1,
-      "A plain-language answer (if a question), or a short one-sentence restatement of the change being queued (if a change request).",
+      "A short, plain-spoken answer (if a question) written as running prose, never markdown or a list — or a one-sentence restatement of the change being queued (if a change request).",
     ),
   instruction: z
     .string()
@@ -116,8 +116,10 @@ You may be continuing an earlier conversation - use any prior turns for context 
 
 The model below is the system as of the last simulation. Fixes and changes the user has already queued (if any are listed after it) are DECIDED but are NOT in that model yet - they are applied together the next time the user clicks Re-simulate. Treat queued items as part of the plan: mention them where relevant, build on them, and never contradict or duplicate one.
 
+"reply" is read aloud in a chat bubble, not rendered as a document - it has no markdown support at all, so any "**bold**", heading, or "1. / 2. / 3." list shows up as literal asterisks and numbers, not formatting. Write it the way you'd actually say it out loud to someone sitting next to you: plain sentences, no markdown, no headings, no numbered or bulleted lists - if you have several points, fold them into one or two short paragraphs instead of itemizing them. Keep it tight, usually 2-4 sentences; go longer only when the question genuinely can't be answered honestly in less. If you're tempted to write more than a short paragraph, that's a sign to pick the single most useful thing to say and say only that, not to organize everything you could say into a structured list.
+
 Decide, for the latest message:
-- Is this a QUESTION about the architecture (asking "why", "what would happen if", "how does X work", or similar, without asking for an actual change)? If so, set isQuestion to true, put a clear, plain-language ANSWER in "reply", grounded in specifics from the actual model (real component names, real traits) rather than generic textbook language, and set "instruction" to an empty string.
+- Is this a QUESTION about the architecture (asking "why", "what would happen if", "how does X work", or similar, without asking for an actual change)? If so, set isQuestion to true, put a clear, plain-spoken ANSWER in "reply" per the style rule above, grounded in specifics from the actual model (real component names, real traits) rather than generic textbook language, and set "instruction" to an empty string.
 - Or is this a REQUEST TO CHANGE the architecture (asking to add, remove, replace, or reconfigure something)? If so, set isQuestion to false and:
   - put a short, one-sentence restatement of the change in "reply", in the future tense since it is applied on Re-simulate (e.g. "Adding a CDN in front of the API Gateway to absorb static asset traffic.");
   - put ONE complete, self-contained instruction in "instruction": what to change, on which components (use their real ids from the model, or from a queued change if the request builds on one), and any detail the user gave. It must make sense to someone who never saw this conversation - replace "it", "that", "the new one" and similar with what they refer to. If the request cancels or reverses a queued change, say so explicitly.

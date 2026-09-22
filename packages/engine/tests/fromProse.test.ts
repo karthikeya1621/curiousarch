@@ -20,6 +20,7 @@
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
 import { fromProse } from "../src/inference/fromProse.js";
+import { SYSTEM_PROMPT } from "../src/inference/prompt.js";
 
 const validModelInput = {
   id: "toy",
@@ -216,5 +217,20 @@ describe("fromProse", () => {
     expect(repairContent[0]!.tool_use_id).toBe("call_1");
     expect(repairContent[0]!.is_error).toBe(true);
     expect(String(repairContent[0]!.content)).toMatch(/did not validate/i);
+  });
+});
+
+describe("SYSTEM_PROMPT", () => {
+  // Regression test for a confirmed-live bug, not a style preference: naming
+  // the exact banned rationale word ("placeholder") as the negative example
+  // measurably primes the model to reproduce that literal word when it has
+  // nothing specific to say (see schema.ts's STRUCTURAL_SELF_CHECK doc
+  // comment). Only checking the distinctive ones — "none"/"unknown" are also
+  // banned but too common as ordinary English to substring-check safely.
+  it("never spells out a banned rationale word as an example", () => {
+    const text = SYSTEM_PROMPT.toLowerCase();
+    for (const word of ["placeholder", "lorem ipsum", "tbd", "n/a"]) {
+      expect(text).not.toContain(word);
+    }
   });
 });

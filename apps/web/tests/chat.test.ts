@@ -14,8 +14,20 @@ vi.mock("@archsim/engine/server", () => ({
   chatWithProject: (...args: unknown[]) => chatWithProjectMock(...args),
 }));
 
+// Usage tracking is its own concern (lib/usage/, tested there): here it's a
+// stub that hands the engine call a recognizable options object, so each
+// test can assert the route both started tracking and passed it on.
+const usage = vi.hoisted(() => ({ options: { onCall: () => {} }, start: vi.fn() }));
+vi.mock("../lib/usage/server", () => ({
+  startUsage: (...args: unknown[]) => {
+    usage.start(...args);
+    return Promise.resolve(usage.options);
+  },
+}));
+
 beforeEach(() => {
   chatWithProjectMock.mockReset();
+  usage.start.mockReset();
 });
 
 const { POST } = await import("../app/api/chat/route.ts");
@@ -29,6 +41,27 @@ function jsonRequest(body: unknown): Request {
 }
 
 describe("POST /api/chat", () => {
+  it("tracks the call as chat, recording what was queued and how long the conversation was", async () => {
+    chatWithProjectMock.mockResolvedValueOnce({ isQuestion: true, reply: "ok", repaired: false });
+
+    await POST(
+      jsonRequest({
+        model: checkout,
+        message: "hello",
+        history: [{ role: "user", content: "a" }],
+        pendingChanges: [{ request: "a", instruction: "b" }],
+      }),
+    );
+
+    expect(usage.start).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "chat",
+        context: expect.objectContaining({ messageChars: 5, historyTurns: 1, pendingChanges: 1 }),
+      }),
+    );
+  });
+
   it("returns a plain answer for a question, with nothing to queue", async () => {
     chatWithProjectMock.mockResolvedValueOnce({
       isQuestion: true,
@@ -44,7 +77,7 @@ describe("POST /api/chat", () => {
     expect(body.instruction).toBeUndefined();
     // No `history`/`findings`/`pendingFixes`/`pendingChanges` sent — each
     // defaults to an empty array, not undefined.
-    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is the cache short-lived?", [], [], [], []);
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is the cache short-lived?", [], [], [], [], usage.options);
   });
 
   it("forwards a provided history array to chatWithProject", async () => {
@@ -56,7 +89,7 @@ describe("POST /api/chat", () => {
 
     await POST(jsonRequest({ model: checkout, message: "what about the database?", history }));
 
-    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "what about the database?", history, [], [], []);
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "what about the database?", history, [], [], [], usage.options);
   });
 
   it("forwards provided findings and pendingFixes to chatWithProject", async () => {
@@ -77,7 +110,7 @@ describe("POST /api/chat", () => {
 
     await POST(jsonRequest({ model: checkout, message: "why is this risky?", findings, pendingFixes }));
 
-    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is this risky?", [], findings, pendingFixes, []);
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "why is this risky?", [], findings, pendingFixes, [], usage.options);
   });
 
   it("returns the instruction to queue for a change request — and no model", async () => {
@@ -102,7 +135,7 @@ describe("POST /api/chat", () => {
 
     await POST(jsonRequest({ model: checkout, message: "and a cache behind it?", pendingChanges }));
 
-    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "and a cache behind it?", [], [], [], pendingChanges);
+    expect(chatWithProjectMock).toHaveBeenCalledWith(checkout, "and a cache behind it?", [], [], [], pendingChanges, usage.options);
   });
 
   it.each([

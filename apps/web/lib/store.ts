@@ -14,6 +14,7 @@ import {
   type Version,
 } from "./sessionStorage";
 import { MAX_PENDING_CHANGES } from "./limits";
+import { newActionId, reportOutcome } from "./usageClient";
 
 export type { AppliedFixRecord, PendingFix, ProjectSummary, Version };
 
@@ -186,6 +187,15 @@ interface AppState {
    * without needing to inspect what actually changed.
    */
   autosaveRevision: number;
+  /**
+   * The id a project that hasn't been saved yet WILL have once it is —
+   * minted up front (and again on every `startNewProject`) so AI usage from
+   * its very first Build can already be labelled with it, and used as the
+   * row's id on first insert. Without this, a project's most expensive
+   * action would have no project to attribute its cost to. Never sent
+   * anywhere as an authority — see lib/usage/ids.ts.
+   */
+  draftProjectId: string;
   /** Which saved project (if any) Save/Re-simulate write to. `null` = unsaved — the next Save inserts a new row instead of updating one. */
   currentProjectId: string | null;
   /** The logged-in user's saved projects, for ProjectsDropdown — not kept in sync automatically; refreshProjectList() re-fetches it. */
@@ -255,7 +265,8 @@ interface AppState {
   versions: Version[];
   /** Which version (if any) is being browsed read-only. `null` = viewing the live model. */
   previewVersionId: string | null;
-  setModel: (model: SystemModel) => void;
+  /** `actionId` groups this build's AI calls (see lib/usageClient.ts); supplied when the caller already spent calls on it (the infer request), minted otherwise. */
+  setModel: (model: SystemModel, actionId?: string) => void;
   setWorkloadTier: (dimension: "users" | "requests", tier: number) => void;
   applyFix: (newModel: SystemModel, appliedFix?: AppliedFixRecord) => void;
   /** Queues a fix for the next Re-simulate — no AI call, no model change yet. Replaces any existing queued fix for the same finding. */
@@ -264,7 +275,8 @@ interface AppState {
   unqueueFix: (componentId: string, findingTitle: string) => void;
   /** Takes a queued chat change back out before Re-simulate runs; its chat message shows it as removed. */
   unqueueChatChange: (id: string) => void;
-  commitRework: (newModel: SystemModel) => void;
+  /** `actionId` is the Re-simulate's (see setModel), so the version it records is joined to what the rework cost. */
+  commitRework: (newModel: SystemModel, actionId?: string) => void;
   /**
    * Puts the workload controls back to the values the last simulation used
    * (`baselineModel.workload`). Purely local — no API call, no version, no
@@ -435,9 +447,19 @@ function emptySession() {
   } satisfies Partial<AppState>;
 }
 
+/** The id AI usage is filed under for the project on screen — saved id if it has one, else the one it will be saved with. */
+export function usageProjectId(): string {
+  const { currentProjectId, draftProjectId } = useAppStore.getState();
+  return currentProjectId ?? draftProjectId;
+}
+
 async function refreshFindings(
   set: (partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)) => void,
   get: () => AppState,
+  // The user action this refresh belongs to — a build's or a Re-simulate's,
+  // so its calls and the version it records join to the rest of that
+  // action's cost. Standalone (a bare refresh) gets its own.
+  actionId: string = newActionId(),
 ): Promise<void> {
   // Claimed before anything else (including the empty-model early return)
   // so a still-in-flight older call can never overwrite this one's state.
@@ -453,15 +475,21 @@ async function refreshFindings(
     const res = await fetch("/api/identify-failures", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model }),
+      body: JSON.stringify({ model, actionId, projectId: usageProjectId() }),
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? "Failed to identify failures.");
     const findings = body.findings as AiFinding[];
     // The open project/build was replaced while this was in flight — its
-    // findings (and version snapshot) belong to a session that's gone.
-    if (epoch !== sessionEpoch) return;
+    // findings (and version snapshot) belong to a session that's gone. The
+    // call was still billed, so say so (usage tracking's "wasted spend").
+    if (epoch !== sessionEpoch) {
+      reportOutcome(actionId, "project-switched");
+      return;
+    }
     const isLatest = seq === findingsSeq;
+    // Billed and recorded as a version, but never shown.
+    if (!isLatest) reportOutcome(actionId, "superseded");
     set((state) => ({
       // Only the most recent call updates what's on screen; a superseded
       // one still records its version below (that snapshot is valid for
@@ -480,7 +508,7 @@ async function refreshFindings(
         : {}),
       // `model` — the value fetched against, captured before the `await`
       // above — not `state.model`, which may have moved on since.
-      versions: [...state.versions, { id: crypto.randomUUID(), model, findings, createdAt: Date.now() }],
+      versions: [...state.versions, { id: crypto.randomUUID(), model, findings, createdAt: Date.now(), actionId }],
       // Findings (and a recorded version) are part of what gets saved, but
       // Build/Re-simulate bump the counter when they START — while these
       // are still loading — so the debounced save captured the OLD
@@ -507,10 +535,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   hydrated: false,
   autosaveRevision: 0,
   currentProjectId: null,
+  draftProjectId: crypto.randomUUID(),
   projects: [],
   projectsStatus: "idle",
 
-  setModel: (model) => {
+  setModel: (model, actionId) => {
     sessionEpoch++;
     set({
       ...emptySession(),
@@ -518,7 +547,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       baselineModel: model,
       autosaveRevision: get().autosaveRevision + 1,
     });
-    void refreshFindings(set, get);
+    void refreshFindings(set, get, actionId);
   },
 
   setWorkloadTier: (dimension, tier) => {
@@ -624,7 +653,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  commitRework: (newModel) => {
+  commitRework: (newModel, actionId) => {
     const { appliedFixes, pendingFixes, chatMessages } = get();
     const nowApplied: AppliedFixRecord[] = pendingFixes.map((p) => ({
       componentId: p.componentId,
@@ -656,7 +685,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       appliedFixes: [...appliedFixes, ...nowApplied],
       autosaveRevision: get().autosaveRevision + 1,
     });
-    void refreshFindings(set, get);
+    void refreshFindings(set, get, actionId);
   },
 
   revertParameters: () => {
@@ -747,6 +776,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   saveToStorage: async () => {
     const {
       currentProjectId,
+      draftProjectId,
       model,
       findings,
       findingsStatus,
@@ -777,7 +807,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingFixes,
       pendingChanges,
       versions,
-    });
+    }, draftProjectId);
     if (saved) {
       set({ lastSavedAt: saved.savedAt, currentProjectId: saved.id });
       setLastProjectId(saved.id);
@@ -796,6 +826,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...emptySession(),
       model: EMPTY_MODEL,
       currentProjectId: null,
+      draftProjectId: crypto.randomUUID(),
     });
   },
 
@@ -830,6 +861,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sendChatMessage: async (message) => {
     const { model, chatMessages, findings, pendingFixes, pendingChanges } = get();
     const epoch = sessionEpoch;
+    const actionId = newActionId();
     // Bounded window, not the full transcript — see this file's own
     // comment on CHAT_HISTORY_WINDOW: unbounded history is exactly the
     // kind of cost creep this project has been actively cutting elsewhere.
@@ -854,14 +886,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, message, history, findings, pendingFixes, pendingChanges }),
+        body: JSON.stringify({ model, message, history, findings, pendingFixes, pendingChanges, actionId, projectId: usageProjectId() }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Chat failed.");
       // The project was switched or reset while this was in flight — the
       // reply belongs to a session that's no longer open. (The switch
-      // itself already reset chat status.)
-      if (epoch !== sessionEpoch) return;
+      // itself already reset chat status.) It was still billed.
+      if (epoch !== sessionEpoch) {
+        reportOutcome(actionId, "project-switched");
+        return;
+      }
 
       const reply = body.reply as string;
       const instruction = body.instruction as string | undefined;

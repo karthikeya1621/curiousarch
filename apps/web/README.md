@@ -31,6 +31,52 @@ Create `apps/web/.env.local` (gitignored, no example file checked in) with:
 
 The app is gated by `middleware.ts`; without these, login won't work.
 
+### AI usage tracking (optional)
+
+Every AI call is recorded — user, project, the action that caused it (build,
+Re-simulate, chat…), model, tokens (incl. cache reads/writes), cost, latency,
+outcome, retries, and optionally the full prompt and response — so cost per
+user/project/version can be answered from SQL. To turn it on:
+
+1. Run [`db/ai-usage.sql`](db/ai-usage.sql) once in the Supabase SQL editor
+   (idempotent). It creates `ai_calls`, `ai_call_payloads`,
+   `ai_action_outcomes`, two rollup views (`ai_action_usage`,
+   `ai_label_stats`) and a payload-purge function.
+2. Add `SUPABASE_SERVICE_ROLE_KEY` to `.env.local` (server-only — no
+   `NEXT_PUBLIC_` prefix; it bypasses RLS, which is what lets only the server
+   write usage rows). Without it tracking silently turns itself off and the
+   AI calls are unaffected.
+3. Optional: `AI_MODEL_PRICES` — JSON `{"<model id>": {"inputPerMTok": 3,
+   "outputPerMTok": 15}}` (USD per million tokens), to override a default or
+   add a model. The two default tiers (`AI_REASONING_MODEL`/`AI_UTILITY_MODEL`
+   unset — Sonnet 5 and Haiku 4.5) are priced out of the box; a model this
+   doesn't know the price of stores its tokens but a `null` cost rather than
+   a guess (`cost_complete` is false in `ai_action_usage`).
+4. Optional: `AI_USAGE_LOG_PAYLOADS=false` to keep metrics only. By default
+   full prompts/responses are stored in `ai_call_payloads` (they contain
+   users' architecture descriptions) — schedule
+   `purge_ai_call_payloads()` (default 30 days) with pg_cron.
+
+**Admin cost dashboard** — `/admin/usage`, for you only. Set
+`ADMIN_EMAILS=you@example.com` (comma-separated) in `.env.local`. It's an
+allow-list with no default: unset means nobody gets in, and anyone else (or an
+unconfirmed email) sees a 404 before any data is read. It needs the same
+service-role key and reads everything through one SQL function
+(`ai_admin_dashboard`, in `db/ai-usage.sql` — re-run the file if you set this
+up before the dashboard existed). Shows, for the last 24h / 7 / 30 / 90 days:
+total cost, cost per action and per user, cache savings, retry / failed /
+truncated rates, spend that was paid for but never shown, cost per day, cost by
+action and by step × model, top users and projects, the most expensive actions
+(with the `action_id` that joins to a version), and recent failures.
+
+Joining a version to its cost: each version stores the `actionId` of the
+build/Re-simulate that produced it — `select * from ai_action_usage where
+action_id = '<version.actionId>'`. The client also reports responses that were
+paid for but never shown (project switched, superseded, withheld) into
+`ai_action_outcomes` (`discarded_reasons` in the view). Code: `lib/usage/`,
+`lib/usageClient.ts`, `app/admin/usage/`, and the `onCall` hook in the engine's
+`runStructuredCall`.
+
 ## Run
 
 ```bash

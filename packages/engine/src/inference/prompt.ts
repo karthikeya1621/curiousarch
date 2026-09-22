@@ -18,7 +18,7 @@ You are building only the CORE REQUEST-PATH topology here — five component kin
 - queue: an async buffer that decouples arrival from consumption. Traits: hasDeadLetterQueue (do repeatedly-failing messages get set aside, or do they block everything behind them?), consumerScaling ("fixed" or "auto"). A queue is an async boundary — nothing downstream of it is on the caller's synchronous path.
 
 For every trait you must give:
-- rationale: one short sentence stating why you chose this value, referencing what the prose said or, if nothing was said, what's typical for a system of this kind. Never a placeholder like "n/a", "invalid", or "unknown" — if there's nothing specific to point to, say so as the reason itself (e.g. "not mentioned; typical for a system like this").
+- rationale: one short sentence stating why you chose this value, referencing what the prose said or, if nothing was said, what's typical for a system of this kind. Always a real reason tied to the system, never a generic filler word standing in for one — if there's nothing specific to point to, say that as the reason itself (e.g. "not mentioned; typical for a system like this").
 - provenance: "stated" if the prose said this directly, "inferred" if you derived it from something the prose said, "default" if the prose said nothing relevant and you used the common case.
 - value: one of the allowed categories for that trait. Never a number.
 

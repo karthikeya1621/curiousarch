@@ -11,6 +11,21 @@
  * called again after every rework, exactly as it's called after every
  * other model change.
  *
+ * A validation failure here is expensive twice over — it costs a full
+ * extra billed attempt (structuredCall.ts's repair-retry loop re-sends the
+ * entire invalid model as input), and this call's own `maxRetries` is 2, not
+ * 1, so a bad prompt here compounds harder than anywhere else in the
+ * engine. Strict mode already guarantees the JSON *shape* is valid; the
+ * only failures actually reachable are the ones only Zod's `superRefine`
+ * can catch (schema.ts's `STRUCTURAL_SELF_CHECK`, interpolated into the
+ * prompt below) — and rework, which edits an existing graph rather than
+ * building one from nothing, is exactly where those show up (a removed
+ * component's edge left dangling; a reused id). Prompted against
+ * specifically after a user-reported retry cost concern; apps/web's usage
+ * tracking (`ai_calls.attempt`/`ai_label_stats.retry_pct`) is what actually
+ * measures whether this reduced the real rate — check it before tightening
+ * further.
+ *
  * Unlike `fromProse`, there's no separate workload-parameters call here.
  * The user sets a new tier by moving a control, not by describing one —
  * Re-simulate's job is reworking the ARCHITECTURE for a tier that's
@@ -50,7 +65,7 @@
  * rewire their edges correctly.
  */
 
-import { SystemModelSchema } from "./schema.ts";
+import { STRUCTURAL_SELF_CHECK, SystemModelSchema } from "./schema.ts";
 import { buildTool } from "./fromProse.ts";
 import { EXTENDED_KINDS, isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
@@ -71,6 +86,8 @@ Rules, same as always:
 - At most ${MAX_BASE_COMPONENTS} components in your own output. If the holistic review would call for more, that's a sign to fold or reconsider something already there before adding, not to grow past the limit.
 - Every trait still needs a rationale and a provenance. "stated" means the input model already had this value and you're keeping it because it's still correct - never mark something "stated" that you are choosing or changing yourself; that's "inferred" (derived from something else in the system) or "default" (your own reasonable choice, nothing in the system dictates it).
 - The model must remain a DAG - never create an edge back into a component that is upstream of it.
+
+${STRUCTURAL_SELF_CHECK}
 
 Output only the structured model. Do not add findings, recommendations, or commentary - a separate step decides what's wrong with the model you produce, not you.`;
 
@@ -115,6 +132,56 @@ export function formatPendingFixes(pendingFixes: PendingFixInput[]): string {
   return `\n\nThe user has specifically chosen to apply these fixes — implement each one precisely, in addition to your normal holistic review:\n${lines}`;
 }
 
+/**
+ * Enforces, in code, the one continuity rule REWORK_PROMPT already states
+ * but the model isn't guaranteed to follow: "preserve every existing edge
+ * between two components you're both keeping." Zod's own superRefine
+ * (schema.ts) can't check this — it only ever sees the proposed output in
+ * isolation, never the model being revised — so a repair-retry that patches
+ * a badly degenerate first attempt just enough to satisfy every Zod rule,
+ * without regenerating an actually complete answer, sails through as a
+ * schema-valid "success" while silently discarding most of the input.
+ * Confirmed live: exactly this happened on a real Re-simulate — a
+ * catastrophically malformed first attempt got "repaired" into a
+ * schema-valid model with a single edge total, missing almost the whole
+ * previous architecture.
+ *
+ * Only BASE-kind components/edges are ever in scope: `result` (the base
+ * call's own output) never contains an extended-kind component by design —
+ * a real omission it OMITTED on purpose, not one it dropped — and an edge
+ * to one is the revise step's to own, never this call's, so it's correctly
+ * excluded from `baseIds` and therefore never flagged here.
+ *
+ * A component the result legitimately removed is exempt — "you're both
+ * keeping" is false for it, so there's nothing to preserve, and choosing to
+ * remove something is a real (if rare) holistic-review outcome, not this
+ * bug. What's never legitimate is dropping the CONNECTION between two
+ * components that are both still present under the same id.
+ *
+ * Exported for direct, fast unit tests — the full integration (that a
+ * violation actually triggers a real repair-retry through
+ * `runStructuredCall`) has its own separate test.
+ */
+export function checkNoDroppedEdges(input: SystemModel, result: SystemModel): string | null {
+  const baseIds = new Set(input.components.filter((c) => !isExtendedComponent(c)).map((c) => c.id));
+  const resultIds = new Set(result.components.map((c) => c.id));
+  const kept = (id: string) => baseIds.has(id) && resultIds.has(id);
+
+  const dropped = input.edges.filter(
+    (e) => kept(e.from) && kept(e.to) && !result.edges.some((r) => r.from === e.from && r.to === e.to),
+  );
+  if (dropped.length === 0) return null;
+
+  const list = dropped.map((e) => `"${e.from}" -> "${e.to}"`).join(", ");
+  const noun = dropped.length === 1 ? "edge" : "edges";
+  const them = dropped.length === 1 ? "it" : "them";
+  return (
+    `You dropped ${dropped.length} ${noun} between components you're keeping, without being asked to: ${list}. ` +
+    `Every edge between two components you both kept must still be present exactly as it was — restore ${them}, ` +
+    `unless the request specifically required removing ${them}.`
+  );
+}
+
 export async function reworkModel(
   model: SystemModel,
   pendingFixes: PendingFixInput[] = [],
@@ -127,7 +194,7 @@ export async function reworkModel(
     `Here is the current model:\n\n${JSON.stringify(model)}${pendingContext}`,
     SystemModelSchema,
     buildTool(),
-    { maxRetries: 2, ...options },
+    { maxRetries: 2, ...options, validateResult: (data) => checkNoDroppedEdges(model, data as SystemModel) },
     "reworkModel",
   );
 

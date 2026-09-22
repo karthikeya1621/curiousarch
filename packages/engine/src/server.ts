@@ -29,3 +29,4 @@ export {
 export type { ExtendedComponentsResponse } from "./inference/extendedComponents.ts";
 export { chatWithProject } from "./inference/chatWithProject.ts";
 export type { ChatWithProjectResult } from "./inference/chatWithProject.ts";
+export type { AiCallRecord, StructuredCallOptions } from "./inference/structuredCall.ts";

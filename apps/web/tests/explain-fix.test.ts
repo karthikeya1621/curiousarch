@@ -14,8 +14,20 @@ vi.mock("@archsim/engine/server", () => ({
   explainFix: (...args: unknown[]) => explainFixMock(...args),
 }));
 
+// Usage tracking is its own concern (lib/usage/, tested there): here it's a
+// stub that hands the engine call a recognizable options object, so each
+// test can assert the route both started tracking and passed it on.
+const usage = vi.hoisted(() => ({ options: { onCall: () => {} }, start: vi.fn() }));
+vi.mock("../lib/usage/server", () => ({
+  startUsage: (...args: unknown[]) => {
+    usage.start(...args);
+    return Promise.resolve(usage.options);
+  },
+}));
+
 beforeEach(() => {
   explainFixMock.mockReset();
+  usage.start.mockReset();
 });
 
 const { POST } = await import("../app/api/explain-fix/route.ts");
@@ -36,6 +48,20 @@ const validBody = {
 };
 
 describe("POST /api/explain-fix", () => {
+  it("tracks the call as explain-fix, with the model's shape as context", async () => {
+    explainFixMock.mockResolvedValueOnce({ rationale: "because" });
+
+    await POST(jsonRequest({ model: checkout, componentId: "svc", fixLabel: "Add a second instance", findingCode: "X" }));
+
+    expect(usage.start).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "explain-fix",
+        context: expect.objectContaining({ components: checkout.components.length, findingCode: "X" }),
+      }),
+    );
+  });
+
   it("returns the rationale on success", async () => {
     explainFixMock.mockResolvedValueOnce({ rationale: "This fits because...", repaired: false });
 
@@ -43,7 +69,7 @@ describe("POST /api/explain-fix", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.rationale).toMatch(/This fits/);
-    expect(explainFixMock).toHaveBeenCalledWith(checkout, "svc", "Add a second instance", "SINGLE_POINT_OF_FAILURE");
+    expect(explainFixMock).toHaveBeenCalledWith(checkout, "svc", "Add a second instance", "SINGLE_POINT_OF_FAILURE", usage.options);
   });
 
   it("rejects a missing model with 400", async () => {

@@ -122,8 +122,14 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Card padding="sm" className="flex flex-col gap-1">
-      <div className="flex items-center justify-between gap-2">
+    // `flex-1 min-h-0` (not `h-full`, which can't resolve against a
+    // max-height-only ancestor): fills whatever room ChatWidget's popup
+    // actually has, and — critically — lets THIS box, not the message
+    // list's own now-removed fixed cap, be the thing the message list
+    // scrolls within. `overflow-hidden` so nothing here can still spill
+    // past this card's own edge; only the message list scrolls internally.
+    <Card padding="sm" className="flex min-h-0 flex-1 flex-col gap-1 overflow-hidden">
+      <div className="flex shrink-0 items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
           <SparklesIcon className="h-4 w-4 text-slate-400" />
           Ask or change this system
@@ -136,14 +142,20 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
           <XIcon className="h-3.5 w-3.5" />
         </button>
       </div>
-      <p className="text-xs text-slate-500 dark:text-slate-400">
+      <p className="shrink-0 text-xs text-slate-500 dark:text-slate-400">
         Ask a question about this architecture, or ask for a change — e.g. &quot;why is
         the cache short-TTL?&quot; or &quot;add a CDN in front of the gateway&quot;.
         Changes are queued and applied when you Re-simulate.
       </p>
 
       {chatMessages.length > 0 && (
-        <div className="mt-2 flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
+        // `flex-1 min-h-0`, not the old fixed `max-h-96` — a fixed pixel cap
+        // could still add up, with the header/description/input around it,
+        // to more than ChatWidget's own popup height, which is exactly what
+        // put a long reply out of reach with no way to scroll to it. This
+        // way the list only ever gets what's actually left over after
+        // everything else in the card, on any viewport.
+        <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
           {chatMessages.map((m, i) => (
             <div
               key={i}
@@ -173,7 +185,7 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex shrink-0 items-center gap-2">
         <div className="relative min-w-0 flex-1">
           {suggestionsOpen && (
             <div
@@ -259,7 +271,7 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
           Send
         </button>
       </div>
-      {chatError && <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{chatError}</p>}
+      {chatError && <p className="mt-2 shrink-0 text-xs text-rose-600 dark:text-rose-400">{chatError}</p>}
     </Card>
   );
 }

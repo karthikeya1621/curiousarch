@@ -15,8 +15,20 @@ vi.mock("@archsim/engine/server", () => ({
   identifyFailures: (...args: unknown[]) => identifyFailuresMock(...args),
 }));
 
+// Usage tracking is its own concern (lib/usage/, tested there): here it's a
+// stub that hands the engine call a recognizable options object, so each
+// test can assert the route both started tracking and passed it on.
+const usage = vi.hoisted(() => ({ options: { onCall: () => {} }, start: vi.fn() }));
+vi.mock("../lib/usage/server", () => ({
+  startUsage: (...args: unknown[]) => {
+    usage.start(...args);
+    return Promise.resolve(usage.options);
+  },
+}));
+
 beforeEach(() => {
   identifyFailuresMock.mockReset();
+  usage.start.mockReset();
 });
 
 const { POST } = await import("../app/api/identify-failures/route.ts");
@@ -30,6 +42,20 @@ function jsonRequest(body: unknown): Request {
 }
 
 describe("POST /api/identify-failures", () => {
+  it("tracks the call as findings, with the model's shape as context", async () => {
+    identifyFailuresMock.mockResolvedValueOnce([]);
+
+    await POST(jsonRequest({ model: checkout }));
+
+    expect(usage.start).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "findings",
+        context: expect.objectContaining({ components: checkout.components.length, edges: checkout.edges.length }),
+      }),
+    );
+  });
+
   it("returns findings on success", async () => {
     identifyFailuresMock.mockResolvedValueOnce([
       { code: "SINGLE_POINT_OF_FAILURE", severity: "critical", componentId: "svc", title: "Single instance", explanation: "...", fixes: [] },
@@ -39,7 +65,7 @@ describe("POST /api/identify-failures", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.findings).toHaveLength(1);
-    expect(identifyFailuresMock).toHaveBeenCalledWith(checkout);
+    expect(identifyFailuresMock).toHaveBeenCalledWith(checkout, usage.options);
   });
 
   it("rejects a missing model with 400", async () => {

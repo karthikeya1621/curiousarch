@@ -12,6 +12,8 @@ import {
   reviseExtendedComponents,
   isExtendedComponent,
   EXTENDED_KINDS,
+  PROPOSE_PROMPT,
+  REVISE_PROMPT,
 } from "../src/inference/extendedComponents.js";
 import { MAX_EXTENDED_COMPONENTS, MAX_TOTAL_COMPONENTS } from "../src/types.js";
 
@@ -207,5 +209,25 @@ describe("isExtendedComponent / EXTENDED_KINDS", () => {
       expect(isExtendedComponent({ kind } as never)).toBe(true);
     }
     expect(isExtendedComponent({ kind: "gateway" } as never)).toBe(false);
+  });
+});
+
+describe("PROPOSE_PROMPT / REVISE_PROMPT", () => {
+  // Regression test for a confirmed-live bug: REVISE_PROMPT used to say
+  // 'never a placeholder like "n/a" or "invalid"', and a real Re-simulate
+  // produced literally the word "placeholder" as a component's rationale —
+  // reproducing it again, unchanged, on the very next repair attempt for
+  // the same field. Naming the exact banned word as the negative example
+  // primes the model toward it; see schema.ts's STRUCTURAL_SELF_CHECK doc
+  // comment for the full account. Only checking the distinctive words —
+  // "none"/"invalid" are also banned but too common as ordinary English to
+  // substring-check safely across a whole prompt.
+  it("never spells out a banned rationale word as an example, in either prompt", () => {
+    for (const prompt of [PROPOSE_PROMPT, REVISE_PROMPT]) {
+      const text = prompt.toLowerCase();
+      for (const word of ["placeholder", "lorem ipsum", "tbd", "n/a"]) {
+        expect(text).not.toContain(word);
+      }
+    }
   });
 });

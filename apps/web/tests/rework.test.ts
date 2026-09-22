@@ -14,8 +14,20 @@ vi.mock("@archsim/engine/server", () => ({
   reworkModel: (...args: unknown[]) => reworkModelMock(...args),
 }));
 
+// Usage tracking is its own concern (lib/usage/, tested there): here it's a
+// stub that hands the engine call a recognizable options object, so each
+// test can assert the route both started tracking and passed it on.
+const usage = vi.hoisted(() => ({ options: { onCall: () => {} }, start: vi.fn() }));
+vi.mock("../lib/usage/server", () => ({
+  startUsage: (...args: unknown[]) => {
+    usage.start(...args);
+    return Promise.resolve(usage.options);
+  },
+}));
+
 beforeEach(() => {
   reworkModelMock.mockReset();
+  usage.start.mockReset();
 });
 
 const { POST } = await import("../app/api/rework/route.ts");
@@ -29,6 +41,26 @@ function jsonRequest(body: unknown): Request {
 }
 
 describe("POST /api/rework", () => {
+  it("tracks the call as a rework, recording how much was queued", async () => {
+    reworkModelMock.mockResolvedValueOnce({ model: checkout, raw: {}, repaired: false });
+
+    await POST(
+      jsonRequest({
+        model: checkout,
+        pendingFixes: [{ componentId: "svc", findingTitle: "t", fixLabel: "l", fixTradeoff: "x" }],
+        pendingChanges: [{ request: "a", instruction: "b" }],
+      }),
+    );
+
+    expect(usage.start).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "rework",
+        context: expect.objectContaining({ pendingFixes: 1, pendingChanges: 1 }),
+      }),
+    );
+  });
+
   it("returns the reworked model on success", async () => {
     reworkModelMock.mockResolvedValueOnce({ model: checkout, raw: {}, repaired: false });
 
@@ -36,7 +68,7 @@ describe("POST /api/rework", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.model.id).toBe(checkout.id);
-    expect(reworkModelMock).toHaveBeenCalledWith(checkout, [], []);
+    expect(reworkModelMock).toHaveBeenCalledWith(checkout, [], [], usage.options);
   });
 
   it("forwards a provided pendingFixes array to reworkModel", async () => {
@@ -47,7 +79,7 @@ describe("POST /api/rework", () => {
 
     await POST(jsonRequest({ model: checkout, pendingFixes }));
 
-    expect(reworkModelMock).toHaveBeenCalledWith(checkout, pendingFixes, []);
+    expect(reworkModelMock).toHaveBeenCalledWith(checkout, pendingFixes, [], usage.options);
   });
 
   it("forwards queued chat changes to reworkModel", async () => {
@@ -56,7 +88,7 @@ describe("POST /api/rework", () => {
 
     await POST(jsonRequest({ model: checkout, pendingChanges }));
 
-    expect(reworkModelMock).toHaveBeenCalledWith(checkout, [], pendingChanges);
+    expect(reworkModelMock).toHaveBeenCalledWith(checkout, [], pendingChanges, usage.options);
   });
 
   it("rejects an oversized or malformed pendingChanges with 400", async () => {

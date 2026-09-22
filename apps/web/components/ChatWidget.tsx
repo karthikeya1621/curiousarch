@@ -52,8 +52,18 @@ export function ChatWidget() {
 
       <div
         inert={!open}
+        // `overflow-hidden` is the actual fix for a long reply pushing the
+        // panel off-screen with no way to scroll to it: without it, if
+        // ProjectChat's own content (header + description + however much
+        // the message list needs) ever added up to more than this
+        // max-height, the excess just rendered past this box's edge
+        // uncontrolled — not clipped, not scrollable, since nothing here
+        // was cropping it. `overflow-hidden` here is only the backstop;
+        // the real fix is ProjectChat's own root filling this box via
+        // `flex-1 min-h-0` and confining ALL of its own overflow to just
+        // the message list (see that file's own comment).
         className={
-          "fixed bottom-5 right-5 z-40 flex max-h-[min(70vh,640px)] w-96 max-w-[calc(100vw-2.5rem)] origin-bottom-right flex-col transition-all duration-200 ease-out " +
+          "fixed bottom-5 right-5 z-40 flex max-h-[min(70vh,640px)] w-96 max-w-[calc(100vw-2.5rem)] origin-bottom-right flex-col overflow-hidden transition-all duration-200 ease-out " +
           (open ? "scale-100 opacity-100" : "pointer-events-none scale-90 opacity-0")
         }
       >

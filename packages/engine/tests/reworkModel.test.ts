@@ -9,7 +9,8 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { reworkModel } from "../src/inference/reworkModel.js";
+import { checkNoDroppedEdges, reworkModel } from "../src/inference/reworkModel.js";
+import { STRUCTURAL_SELF_CHECK } from "../src/inference/schema.js";
 import { checkout } from "../models/reference.js";
 import type { SystemModel } from "../src/types.js";
 
@@ -222,6 +223,18 @@ describe("reworkModel", () => {
     expect(seenUserContent).not.toContain("specifically chosen to apply");
   });
 
+  it("carries the superRefine-only self-check into the prompt — the failure classes a repair-retry costs a full extra billed call for", async () => {
+    let seenSystem: unknown;
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      if ((params.tools?.[0] as { name?: string } | undefined)?.name === "emit_system_model") seenSystem = params.system;
+    });
+
+    await reworkModel(checkout, [], [], { client });
+
+    const system = Array.isArray(seenSystem) ? seenSystem.map((s) => s.text).join("") : (seenSystem as string);
+    expect(system).toContain(STRUCTURAL_SELF_CHECK);
+  });
+
   it("hands every queued chat change to BOTH calls — the user's words and the self-contained instruction, oldest first", async () => {
     const userContents: { tool: string; content: string }[] = [];
     const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
@@ -260,5 +273,96 @@ describe("reworkModel", () => {
     await reworkModel(checkout, [], [{ request: "add a CDN", instruction: "Add a CDN." }], { client });
 
     expect(JSON.stringify(seenSystem)).not.toContain("Add a CDN.");
+  });
+});
+
+describe("checkNoDroppedEdges", () => {
+  // checkout: gw --> svc --> db. Minimal objects below deliberately omit
+  // trait fields the function never reads (only .id/.kind matter to it).
+  const cdn = { id: "cdn1", kind: "cdn", label: "CDN" } as unknown as SystemModel["components"][number];
+
+  it("is fine when nothing changed", () => {
+    expect(checkNoDroppedEdges(checkout, checkout)).toBeNull();
+  });
+
+  it("is fine when the result only ADDS components/edges on top of the original", () => {
+    const grown: SystemModel = {
+      ...checkout,
+      components: [...checkout.components, { id: "cache1", kind: "cache", label: "Cache" } as never],
+      edges: [...checkout.edges, { from: "svc", to: "cache1" }],
+    };
+    expect(checkNoDroppedEdges(checkout, grown)).toBeNull();
+  });
+
+  it("flags an edge dropped between two components the result still keeps", () => {
+    const broken: SystemModel = { ...checkout, edges: [{ from: "gw", to: "svc" }] }; // svc -> db missing
+    const problem = checkNoDroppedEdges(checkout, broken);
+    expect(problem).toMatch(/"svc" -> "db"/);
+    expect(problem).toMatch(/dropped 1 edge/i);
+  });
+
+  it("lists and correctly pluralizes multiple dropped edges", () => {
+    const broken: SystemModel = { ...checkout, edges: [] }; // both edges gone
+    const problem = checkNoDroppedEdges(checkout, broken);
+    expect(problem).toMatch(/dropped 2 edges/i);
+    expect(problem).toMatch(/"gw" -> "svc"/);
+    expect(problem).toMatch(/"svc" -> "db"/);
+    expect(problem).toMatch(/restore them/i);
+  });
+
+  it("does NOT flag an edge whose component the result legitimately removed — nothing to preserve once it's gone", () => {
+    const withoutDb: SystemModel = {
+      ...checkout,
+      components: checkout.components.filter((c) => c.id !== "db"),
+      edges: [{ from: "gw", to: "svc" }], // svc -> db correctly absent, since db itself is gone
+    };
+    expect(checkNoDroppedEdges(checkout, withoutDb)).toBeNull();
+  });
+
+  it("does NOT flag an edge to an extended-kind component — never this call's to keep in the first place", () => {
+    const withExtended: SystemModel = {
+      ...checkout,
+      components: [...checkout.components, cdn],
+      edges: [...checkout.edges, { from: "svc", to: "cdn1" }],
+    };
+    // The base call's own output correctly omits both the extended component
+    // AND the edge to it — by design (see REWORK_PROMPT), not a drop.
+    const baseOutput: SystemModel = checkout;
+    expect(checkNoDroppedEdges(withExtended, baseOutput)).toBeNull();
+  });
+});
+
+describe("reworkModel: rejecting a schema-valid but substantively empty repair", () => {
+  // Reproduces, structurally, what was found live on a real Re-simulate: the
+  // first attempt is a badly degenerate model (schema-invalid on its own,
+  // for an unrelated reason), and instead of regenerating a real answer, the
+  // "repaired" second attempt patches just enough to pass Zod while still
+  // dropping an edge between two components it kept. validateResult must
+  // catch that and force a THIRD attempt, rather than accepting attempt 2.
+  const degenerate = { ...invalidReworkInput }; // fails schema validation on its own (existing fixture)
+  const patchedButStillBroken = { ...validReworkInput, edges: [{ from: "gw", to: "svc" }] }; // drops svc -> db
+  const trulyFixed = validReworkInput; // preserves every original edge
+
+  it("forces a further retry when a schema-valid result still drops a kept edge, and accepts the next attempt that doesn't", async () => {
+    const client = fakeClient([
+      toolUseResponse(degenerate),
+      toolUseResponse(patchedButStillBroken),
+      toolUseResponse(trulyFixed),
+      emptyExtendedResponse(),
+    ]);
+
+    const result = await reworkModel(checkout, [], [], { client });
+
+    expect(result.repaired).toBe(true);
+    expect(result.model.edges.some((e) => e.from === "svc" && e.to === "db")).toBe(true);
+  });
+
+  it("still throws once maxRetries is exhausted by continuity failures alone, schema failures aside", async () => {
+    const client = fakeClient([
+      toolUseResponse(patchedButStillBroken),
+      toolUseResponse(patchedButStillBroken),
+    ]);
+
+    await expect(reworkModel(checkout, [], [], { client, maxRetries: 1 })).rejects.toThrow(/dropped 1 edge/i);
   });
 });

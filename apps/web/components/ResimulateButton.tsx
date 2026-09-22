@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { MAX_TOTAL_COMPONENTS } from "@archsim/engine";
 import type { SystemModel } from "@archsim/engine";
-import { useAppStore } from "../lib/store";
+import { useAppStore, usageProjectId } from "../lib/store";
+import { newActionId, reportOutcome } from "../lib/usageClient";
 
 // Warn a couple of components before the actual cap, not exactly at it —
 // by the time the count reads the hard limit itself, the next Re-simulate
@@ -46,10 +47,13 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
     setLoading(true);
     setError(null);
     try {
+      // Shared with the findings refresh `commitRework` starts, so the
+      // rework's cost and the version it produces are one action.
+      const actionId = newActionId();
       const res = await fetch("/api/rework", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, pendingFixes, pendingChanges }),
+        body: JSON.stringify({ model, pendingFixes, pendingChanges, actionId, projectId: usageProjectId() }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Rework failed.");
@@ -63,9 +67,10 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       const live = useAppStore.getState();
       if (live.model !== model || live.pendingFixes !== pendingFixes || live.pendingChanges !== pendingChanges) {
         setError("The system changed while Re-simulate was running — run it again to include those changes.");
+        reportOutcome(actionId, "withheld"); // billed, but its result was thrown away
         return;
       }
-      commitRework(body.model as SystemModel);
+      commitRework(body.model as SystemModel, actionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Rework failed.");
     } finally {

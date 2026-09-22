@@ -51,7 +51,8 @@ function makeQuery() {
     const matches = (row: Record<string, unknown>) => filters.every(([k, v]) => row[k] === v);
 
     if (op === "insert") {
-      const id = `project-${nextId.current++}`;
+      // Honors a caller-supplied id (a project's first save uses its draft id).
+      const id = (payload?.id as string | undefined) ?? `project-${nextId.current++}`;
       const row = { id, ...payload };
       fakeProjects.set(id, row);
       return { data: row, error: null };
@@ -1380,5 +1381,119 @@ describe("queued chat changes", () => {
     await useAppStore.getState().openProject(id);
 
     expect(useAppStore.getState().pendingChanges).toEqual([]);
+  });
+});
+
+describe("AI usage tracking (client side)", () => {
+  const ACTION = "6f1c9d7e-2b1a-4c1e-9a55-0d3f5b7a1e21";
+  const OTHER = "0a9f0d7e-2b1a-4c1e-9a55-0d3f5b7a1e99";
+  const bodyOf = (call: unknown[]) => JSON.parse((call[1] as RequestInit).body as string);
+
+  /** Routes by URL: findings/chat go to the given handlers, the outcome report always succeeds. */
+  function stubRoutes(handlers: { findings?: () => Promise<Response>; chat?: () => Promise<Response> }) {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === "/api/usage/outcome") return Promise.resolve(new Response(null, { status: 204 }));
+      if (url === "/api/identify-failures") return (handlers.findings ?? (() => Promise.resolve(jsonResponse({ findings: [] }))))();
+      if (url === "/api/chat") return (handlers.chat ?? (() => Promise.resolve(jsonResponse({ isQuestion: true, reply: "ok" }))))();
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+  const outcomes = (fetchMock: ReturnType<typeof vi.fn>) =>
+    fetchMock.mock.calls.filter((c) => c[0] === "/api/usage/outcome").map((c) => bodyOf(c));
+
+  it("labels the findings call with the build's action id and the project id it will be saved under, and stamps the version with that action", async () => {
+    const fetchMock = stubRoutes({});
+    const draft = useAppStore.getState().draftProjectId;
+
+    useAppStore.getState().setModel(degradedModel(), ACTION);
+    await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
+
+    const sent = bodyOf(fetchMock.mock.calls[0]!);
+    expect(sent).toMatchObject({ actionId: ACTION, projectId: draft });
+    expect(useAppStore.getState().versions[0]!.actionId).toBe(ACTION);
+    expect(outcomes(fetchMock)).toEqual([]); // nothing was wasted
+  });
+
+  it("mints an action id when the caller has none, so a bare refresh is still tracked", async () => {
+    const fetchMock = stubRoutes({});
+    useAppStore.getState().setModel(degradedModel());
+    await vi.waitFor(() => expect(useAppStore.getState().versions).toHaveLength(1));
+    expect(bodyOf(fetchMock.mock.calls[0]!).actionId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("a project's first save uses the draft id it was already tracked under, and every later call uses that same id", async () => {
+    const draft = useAppStore.getState().draftProjectId;
+    useAppStore.setState({ model: modelWithUsers(), baselineModel: modelWithUsers() });
+
+    await useAppStore.getState().saveToStorage();
+
+    expect(useAppStore.getState().currentProjectId).toBe(draft);
+    expect(fakeProjects.has(draft)).toBe(true);
+    const fetchMock = stubRoutes({});
+    useAppStore.getState().commitRework(fixedModel(), OTHER);
+    await flush();
+    expect(bodyOf(fetchMock.mock.calls[0]!).projectId).toBe(draft);
+  });
+
+  it("starting a new project mints a fresh draft id, so its usage isn't filed under the old one", () => {
+    const before = useAppStore.getState().draftProjectId;
+    useAppStore.getState().startNewProject();
+    expect(useAppStore.getState().draftProjectId).not.toBe(before);
+  });
+
+  it("reports a findings response that lands after the project was switched — billed, never shown", async () => {
+    const gate = deferred<Response>();
+    const fetchMock = stubRoutes({ findings: () => gate.promise });
+
+    useAppStore.getState().setModel(degradedModel(), ACTION);
+    useAppStore.getState().startNewProject();
+    gate.resolve(jsonResponse({ findings: [someFinding("leaked")] }));
+
+    await vi.waitFor(() => expect(outcomes(fetchMock)).toEqual([{ actionId: ACTION, reason: "project-switched" }]));
+  });
+
+  it("reports a superseded findings response — recorded as a version, but never displayed", async () => {
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    const handlers = [first, second];
+    const fetchMock = stubRoutes({ findings: () => handlers.shift()!.promise });
+    useAppStore.setState({ model: degradedModel(), versions: [] });
+
+    useAppStore.getState().commitRework(fixedModel(), ACTION); // request 1 — will be superseded
+    useAppStore.getState().commitRework(degradedModel(), OTHER); // request 2 — the latest
+    second.resolve(jsonResponse({ findings: [someFinding("newer")] }));
+    await vi.waitFor(() => expect(useAppStore.getState().findings).toHaveLength(1));
+    expect(outcomes(fetchMock)).toEqual([]); // the shown one is not waste
+
+    first.resolve(jsonResponse({ findings: [someFinding("older")] }));
+    await vi.waitFor(() => expect(outcomes(fetchMock)).toEqual([{ actionId: ACTION, reason: "superseded" }]));
+    expect(useAppStore.getState().versions.map((v) => v.actionId).sort()).toEqual([ACTION, OTHER].sort());
+  });
+
+  it("reports a chat reply that lands after the project was switched, under that message's own action id", async () => {
+    const gate = deferred<Response>();
+    const fetchMock = stubRoutes({ chat: () => gate.promise });
+    useAppStore.setState({ model: degradedModel(), chatMessages: [] });
+
+    const pending = useAppStore.getState().sendChatMessage("add another instance");
+    const chatActionId = bodyOf(fetchMock.mock.calls[0]!).actionId;
+    expect(chatActionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(bodyOf(fetchMock.mock.calls[0]!).projectId).toBe(useAppStore.getState().draftProjectId);
+    useAppStore.getState().startNewProject();
+    gate.resolve(jsonResponse({ isQuestion: false, reply: "Added.", instruction: "Add an instance." }));
+    await pending;
+
+    expect(outcomes(fetchMock)).toEqual([{ actionId: chatActionId, reason: "project-switched" }]);
+  });
+
+  it("a failing outcome report can't break anything — it's fire-and-forget", async () => {
+    const { reportOutcome } = await import("../lib/usageClient");
+    vi.stubGlobal("fetch", vi.fn(() => { throw new Error("offline"); }));
+    expect(() => reportOutcome(ACTION, "withheld")).not.toThrow();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("offline"))));
+    expect(() => reportOutcome(ACTION, "withheld")).not.toThrow();
+    await flush(); // no unhandled rejection
   });
 });

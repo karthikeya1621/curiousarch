@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { fromProse } from "@archsim/engine/server";
 import { MAX_DESCRIPTION_LENGTH } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
+import { startUsage } from "../../../lib/usage/server";
 
 /**
  * Server-only: pulls in @anthropic-ai/sdk and reads ANTHROPIC_API_KEY via
@@ -31,7 +32,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await fromProse(description);
+    const usage = await startUsage(body, { action: "build", context: { descriptionChars: description.length } });
+    const result = await fromProse(description, usage);
     return NextResponse.json({ model: result.model });
   } catch (err) {
     return upstreamError(err, "Inference failed.");

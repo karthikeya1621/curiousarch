@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import type { AiFinding, AiFix, SystemModel } from "@archsim/engine";
-import { useAppStore } from "../lib/store";
+import { useAppStore, usageProjectId } from "../lib/store";
+import { newActionId } from "../lib/usageClient";
 import { getFixStatus } from "../lib/getFixStatus";
 import { Badge } from "./Badge";
 import { SparklesIcon, XIcon, WrenchIcon } from "./icons";
@@ -49,6 +50,8 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
           componentId: finding.componentId,
           fixLabel: fix.label,
           findingCode: finding.code,
+          actionId: newActionId(),
+          projectId: usageProjectId(),
         }),
       });
       const body = await res.json();

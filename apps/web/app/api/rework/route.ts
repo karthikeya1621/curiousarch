@@ -4,6 +4,8 @@ import type { PendingFixInput } from "@archsim/engine/server";
 import type { SystemModel } from "@archsim/engine";
 import { isValidModelShape, parsePendingChanges } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
+import { startUsage } from "../../../lib/usage/server";
+import { describeModel } from "../../../lib/usage/context";
 
 /**
  * Server-only, same reason as api/infer/route.ts. Backs the "Re-simulate"
@@ -31,12 +33,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "pendingChanges must be a short list of { request, instruction } strings." }, { status: 400 });
   }
 
+  const fixes = Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]) : [];
   try {
-    const result = await reworkModel(
-      model as SystemModel,
-      Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]) : [],
-      queuedChanges,
-    );
+    const usage = await startUsage(body, {
+      action: "rework",
+      context: { ...describeModel(model as SystemModel), pendingFixes: fixes.length, pendingChanges: queuedChanges.length },
+    });
+    const result = await reworkModel(model as SystemModel, fixes, queuedChanges, usage);
     return NextResponse.json({ model: result.model });
   } catch (err) {
     return upstreamError(err, "Rework failed.");

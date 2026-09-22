@@ -173,11 +173,15 @@ const KIND_GUIDE = `You may ONLY use these ${EXTENDED_KINDS.length} extended kin
 - "scheduled-job": a cron-style background processor, outside any request path. Traits: hasLocking, isIdempotent.
 - "config-store": feature flags / secrets manager / remote config, a control-plane dependency requests may need. Trait: hasLocalFallback.
 
-Most systems need zero or one of these — only include a kind the description (or the existing system) genuinely calls for. Do not add one just to have used it, and never more than ${MAX_EXTENDED_COMPONENTS} in total. Every trait needs "rationale" (one line — never a placeholder like "n/a" or "invalid"; if there's nothing specific to point to, say so as the reason itself) and "provenance" ("stated" the description said so, "inferred" you derived it from something else, or "default" your own reasonable choice).`;
+Most systems need zero or one of these — only include a kind the description (or the existing system) genuinely calls for. Do not add one just to have used it, and never more than ${MAX_EXTENDED_COMPONENTS} in total. Every trait needs "rationale" (one real line tied to something specific, never a generic filler word standing in for one; if there's nothing specific to point to, say that as the reason itself) and "provenance" ("stated" the description said so, "inferred" you derived it from something else, or "default" your own reasonable choice).`;
 
 const EDGE_REQUIREMENT = `Every component you emit MUST have at least one edge connecting it to something — either an id from the base topology you were given, or the id of another component you're emitting here. A component with no edge at all is a floating box on the diagram and is never correct: figure out which existing component would realistically call or depend on it (usually the service whose job description implies the connection), and wire it in. Never reference an id that doesn't exist in either set.`;
 
-const PROPOSE_PROMPT = `You are reviewing a system's architecture to decide whether it needs any components from a small EXTENDED set, beyond its already-built base topology (gateway/service/cache/database/queue components, given to you as context).
+// Exported for tests/extendedComponents.test.ts's regression coverage on
+// the "never spell out a banned rationale word" fix (see schema.ts's
+// STRUCTURAL_SELF_CHECK doc comment for why that's a real, confirmed bug
+// class and not a style preference).
+export const PROPOSE_PROMPT = `You are reviewing a system's architecture to decide whether it needs any components from a small EXTENDED set, beyond its already-built base topology (gateway/service/cache/database/queue components, given to you as context).
 
 ${KIND_GUIDE}
 
@@ -187,7 +191,7 @@ This is a LEARNING TOOL: the system's workload starts at its lowest tier regardl
 
 Output only the structured components and edges. Do not add commentary.`;
 
-const REVISE_PROMPT = `You are reconsidering a system's EXTENDED components — the small additional set beyond its base topology (gateway/service/cache/database/queue) — as part of a broader rework of the whole system.
+export const REVISE_PROMPT = `You are reconsidering a system's EXTENDED components — the small additional set beyond its base topology (gateway/service/cache/database/queue) — as part of a broader rework of the whole system.
 
 ${KIND_GUIDE}
 

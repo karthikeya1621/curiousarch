@@ -75,15 +75,61 @@ export function rationaleSchema() {
       // launch gateway typically lacks it") is never this short — raised
       // from `.min(1)` specifically to force out the single-word
       // placeholders above, not to demand a longer style of writing.
-      .min(10, "Needs an actual one-line reason, not a one-word placeholder.")
+      .min(10, "Too short to be a real reason — write one full sentence explaining why.")
       .refine(
         (r) => !PLACEHOLDER_RATIONALES.has(r.trim().toLowerCase()),
+        // Deliberately never uses the word "placeholder" (or any other
+        // PLACEHOLDER_RATIONALES entry) to describe the problem, even though
+        // `${r}` — the model's own bad value — is quoted for debuggability.
+        // Found live: this message used to say `"${r}" is a placeholder, not
+        // a reason`, which for the exact case `r === "placeholder"` put that
+        // word in the model's face TWICE right before asking it to retry —
+        // and the retry then reproduced the identical word on the identical
+        // field. Classic priming: naming the exact banned token as the
+        // category label makes the model more likely to reach for it,
+        // especially when it has nothing specific to say. Say what it's NOT
+        // without repeating the culprit word as the description of "wrong."
         (r) => ({
-          message: `"${r}" is a placeholder, not a reason — state why, referencing what the prose said or what's specific to this system.`,
+          message: `The rationale "${r}" doesn't say anything specific — write one real sentence giving the actual reason, referencing what the prose said or what's specific to this system.`,
         }),
       )
   );
 }
+
+/**
+ * The failure modes that make it past strict mode's constrained decoding
+ * (which already guarantees the JSON *shape* matches the schema) and can
+ * only be caught by SystemModelSchema's own `superRefine` below — a
+ * duplicate id, an edge to an id that doesn't exist, a cycle, or a
+ * placeholder rationale (`PLACEHOLDER_RATIONALES` above) are all things
+ * strict mode's compiled grammar cannot express, so the only lever against
+ * them is asking for them not to happen. Interpolated into every prompt
+ * that emits a `SystemModelSchema` — found live that `reworkModel.ts`'s own
+ * prompt warned about cycles and the component count but not the other two,
+ * and rework (editing an existing graph, not building one from nothing) is
+ * exactly where a removed component's edge is most likely to survive by
+ * accident. A caught validation failure means a full extra billed call (see
+ * structuredCall.ts's repair-retry loop) re-sending the entire invalid
+ * output as input, so avoiding the failure in the first place is strictly
+ * cheaper than repairing it after the fact.
+ *
+ * Deliberately never spells out a PLACEHOLDER_RATIONALES word (or any past
+ * tense of "that's a placeholder") as the example of what a bad rationale
+ * looks like — same reasoning as the `.refine()` message above: confirmed
+ * live that this backfires. Two real Re-simulates produced literally the
+ * word "placeholder" as a component's actual rationale text — including one
+ * that reproduced the EXACT SAME literal word on the retry immediately
+ * after the repair message itself said `"placeholder" is a placeholder, not
+ * a reason`. Naming the exact banned token, especially right next to the
+ * word describing the category of "wrong," measurably primes the model to
+ * reach for it when it has nothing specific to say. State the rule in
+ * purely affirmative terms instead.
+ */
+export const STRUCTURAL_SELF_CHECK = `Before finishing, check your own output against these — each one is a real validation failure, not a style preference:
+- No two components share an id, including ones you just added.
+- Every edge's "from" and "to" is an id that exists in your OWN component list. If you remove or rename a component, remove or rewire every edge that touched it — a leftover edge to a component you dropped is a common mistake.
+- No cycle: never an edge back into a component that is upstream of it.
+- Every rationale is a real one-line reason tied to something specific about this system or request, never a single generic filler word standing in for one — if there's nothing specific to point to, say that as the reason itself.`;
 
 // Exported so other structured-output schemas can build a trait shape
 // without duplicating rationale/provenance/value (see extendedComponents.ts).
