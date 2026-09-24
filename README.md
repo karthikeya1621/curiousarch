@@ -22,7 +22,7 @@ workspace package (`@archsim/engine`).
 
 ```bash
 npm install
-npm test          # runs both workspaces' test suites (332 tests)
+npm test          # runs both workspaces' test suites (360 tests)
 npm run typecheck
 npm run dev        # serves apps/web
 ```

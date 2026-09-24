@@ -14,6 +14,7 @@ import {
   EXTENDED_KINDS,
   PROPOSE_PROMPT,
   REVISE_PROMPT,
+  checkNoDroppedExtendedEdges,
 } from "../src/inference/extendedComponents.js";
 import { MAX_EXTENDED_COMPONENTS, MAX_TOTAL_COMPONENTS } from "../src/types.js";
 
@@ -229,5 +230,137 @@ describe("PROPOSE_PROMPT / REVISE_PROMPT", () => {
         expect(text).not.toContain(word);
       }
     }
+  });
+});
+
+describe("checkNoDroppedExtendedEdges", () => {
+  // The real YouTube Re-simulate that motivated this: the revise step was
+  // never shown the existing wiring, dropped two edges and reversed one.
+  const previous = [
+    { from: "video-service", to: "object-storage" },
+    { from: "object-storage", to: "cdn" },
+    { from: "cdn", to: "video-service" },
+    { from: "video-service", to: "transcode-job" },
+  ];
+  const baseIds = new Set(["gateway", "video-service"]);
+  const ext = (...ids: string[]) => ids.map((id) => ({ id }));
+  const all = ext("object-storage", "cdn", "transcode-job");
+
+  it("is fine when every existing edge is kept exactly", () => {
+    expect(checkNoDroppedExtendedEdges(previous, baseIds, { components: all, edges: [...previous] })).toBeNull();
+  });
+
+  it("is fine with extra edges added on top", () => {
+    expect(
+      checkNoDroppedExtendedEdges(previous, baseIds, {
+        components: all,
+        edges: [...previous, { from: "transcode-job", to: "primary-db" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("flags a dropped edge", () => {
+    const edges = previous.filter((e) => !(e.from === "video-service" && e.to === "transcode-job"));
+    const problem = checkNoDroppedExtendedEdges(previous, baseIds, { components: all, edges });
+    expect(problem).toMatch(/"video-service" -> "transcode-job"/);
+    expect(problem).toMatch(/dropped or reversed 1 existing edge /);
+  });
+
+  it("flags a REVERSED edge — the original direction is missing even though a reverse exists", () => {
+    const edges = previous.map((e) => (e.from === "video-service" && e.to === "object-storage" ? { from: e.to, to: e.from } : e));
+    const problem = checkNoDroppedExtendedEdges(previous, baseIds, { components: all, edges });
+    expect(problem).toMatch(/"video-service" -> "object-storage"/);
+  });
+
+  it("lists several at once and pluralizes", () => {
+    const problem = checkNoDroppedExtendedEdges(previous, baseIds, { components: all, edges: [] });
+    expect(problem).toMatch(/dropped or reversed 4 existing edges/);
+    expect(problem).toMatch(/restore them/);
+  });
+
+  it("exempts edges whose extended end was legitimately removed", () => {
+    const remaining = ext("object-storage", "cdn"); // transcode-job removed on purpose
+    const edges = previous.filter((e) => e.from !== "transcode-job" && e.to !== "transcode-job");
+    expect(checkNoDroppedExtendedEdges(previous, baseIds, { components: remaining, edges })).toBeNull();
+  });
+
+  it("exempts edges whose base end no longer exists (the rework replaced that component)", () => {
+    const edges = previous.filter((e) => e.from !== "video-service" && e.to !== "video-service");
+    const problem = checkNoDroppedExtendedEdges(previous, new Set(["gateway"]), { components: all, edges });
+    expect(problem).toBeNull();
+  });
+
+  it("has nothing to check on a first proposal", () => {
+    expect(checkNoDroppedExtendedEdges([], baseIds, { components: all, edges: [] })).toBeNull();
+  });
+});
+
+describe("reviseExtendedComponents keeps the existing wiring", () => {
+  const previousEdges = [
+    { from: "checkout-svc", to: "stripe-api" },
+    { from: "gw", to: "stripe-api" },
+  ];
+  const keepAll = { components: [stripeComponent], edges: previousEdges };
+  const dropOne = { components: [stripeComponent], edges: [previousEdges[0]!] };
+
+  function capture(responses: Anthropic.Message[]) {
+    const contents: string[] = [];
+    const requests: { role: string; content: unknown }[][] = [];
+    const inner = fakeClient(responses);
+    const client = {
+      messages: {
+        create: async (params: unknown) => {
+          const messages = (params as { messages: { role: string; content: unknown }[] }).messages;
+          requests.push([...messages]);
+          contents.push(JSON.stringify(messages[0]!.content));
+          return (inner as unknown as { messages: { create: (p: unknown) => unknown } }).messages.create(params);
+        },
+      },
+    } as unknown as Anthropic;
+    return { client, contents, requests };
+  }
+
+  it("shows the model the existing edges, with their direction", async () => {
+    const { client, contents } = capture([toolUseResponse(keepAll)]);
+    await reviseExtendedComponents([stripeComponent as never], baseModel, { client }, undefined, previousEdges);
+
+    expect(contents[0]).toContain("Existing edges touching them");
+    expect(contents[0]).toContain('\\"from\\":\\"checkout-svc\\",\\"to\\":\\"stripe-api\\"');
+  });
+
+  it("omits that section when there are no existing edges", async () => {
+    const { client, contents } = capture([toolUseResponse(keepAll)]);
+    await reviseExtendedComponents([stripeComponent as never], baseModel, { client });
+    expect(contents[0]).not.toContain("Existing edges touching them");
+  });
+
+  it("rejects a result that drops an existing edge and retries — telling the model which one", async () => {
+    const { client, requests } = capture([toolUseResponse(dropOne), toolUseResponse(keepAll)]);
+    const result = await reviseExtendedComponents([stripeComponent as never], baseModel, { client }, undefined, previousEdges);
+
+    expect(result.edges).toEqual(previousEdges);
+    expect(requests).toHaveLength(2);
+    // The second request is the repair, and its tool_result carries the complaint.
+    const repairTurn = JSON.stringify(requests[1]![2]!.content);
+    expect(repairTurn).toContain("is_error");
+    expect(repairTurn).toContain('\\"gw\\" -> \\"stripe-api\\"');
+  });
+
+  it("throws once retries are exhausted by dropped edges alone", async () => {
+    const { client } = capture([toolUseResponse(dropOne), toolUseResponse(dropOne), toolUseResponse(dropOne)]);
+    await expect(
+      reviseExtendedComponents([stripeComponent as never], baseModel, { client }, undefined, previousEdges),
+    ).rejects.toThrow(/dropped or reversed 1 existing edge/);
+  });
+
+  it("does not demand edges on a first-time call with nothing to keep", async () => {
+    const { client } = capture([toolUseResponse({ components: [stripeComponent], edges: [] })]);
+    const result = await reviseExtendedComponents([], baseModel, { client });
+    expect(result.components).toHaveLength(1);
+  });
+
+  it("the prompt says direction is meaning and to keep every edge", () => {
+    expect(REVISE_PROMPT).toMatch(/SAME DIRECTION/);
+    expect(REVISE_PROMPT).toMatch(/never reverse one/i);
   });
 });

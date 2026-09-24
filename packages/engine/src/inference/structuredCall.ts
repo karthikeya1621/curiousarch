@@ -69,6 +69,20 @@ export interface StructuredCallOptions {
    * knows which schema this options object is actually paired with.
    */
   validateResult?: (data: unknown) => string | null | undefined;
+  /**
+   * Rewrites the tool arguments BEFORE schema validation — for a mistake the
+   * caller can undo deterministically, so it doesn't cost a billed repair
+   * retry. reworkModel.ts uses it to drop edges that point at components it
+   * was told it isn't allowed to reference: exactly what the prompt asks the
+   * model to leave out, done in code instead of re-asked for.
+   *
+   * What's validated, echoed back on a repair retry, and returned as `raw` is
+   * the NORMALIZED value, so every validation error's path (`edges.3.to`)
+   * indexes into what the model is shown; `AiCallRecord.output` keeps the
+   * model's original, since that's what it actually said. If it throws, the
+   * original is used unchanged — a buggy normalizer must not fail a call.
+   */
+  normalizeOutput?: (input: unknown) => unknown;
 }
 
 /**
@@ -334,24 +348,32 @@ export async function runStructuredCall<T>(
       console.error(`[${label}] attempt ${attempt}: raw tool input:`, JSON.stringify(toolUse.input));
     }
 
-    const parsed = schema.safeParse(toolUse.input);
+    let candidate: unknown = toolUse.input;
+    if (options.normalizeOutput) {
+      try {
+        candidate = options.normalizeOutput(toolUse.input);
+      } catch {
+        candidate = toolUse.input;
+      }
+    }
+    const parsed = schema.safeParse(candidate);
     if (parsed.success) {
       const resultProblem = options.validateResult?.(parsed.data);
       if (!resultProblem) {
         emit({ outcome: "ok", output: toolUse.input, ...responseMeta });
-        return { data: parsed.data, raw: toolUse.input, repaired: attempt > 0 };
+        return { data: parsed.data, raw: candidate, repaired: attempt > 0 };
       }
       // Schema-valid, but validateResult says it's still wrong — billed and
       // repaired exactly like a Zod failure below (same emit, same
       // tool_use/tool_result echo next iteration), not a separate path.
-      lastRaw = toolUse.input;
+      lastRaw = candidate;
       lastToolUseId = toolUse.id;
       lastError = resultProblem;
       emit({ outcome: "invalid", error: lastError, output: toolUse.input, ...responseMeta });
       continue;
     }
 
-    lastRaw = toolUse.input;
+    lastRaw = candidate;
     lastToolUseId = toolUse.id;
     lastError = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)

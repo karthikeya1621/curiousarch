@@ -59,10 +59,15 @@
  * dependency, load balancer, ...) this system has. Same "no compiled-
  * grammar room" reason those kinds aren't part of `SystemModelSchema` at
  * all — the base call above literally cannot represent them in its own
- * output, so it's told to treat them as context-only and never emit one
- * or an edge touching one; this second call is what actually keeps them
- * up to date, using the base call's freshly reworked component ids to
- * rewire their edges correctly.
+ * output. It is therefore not shown them at all (`baseView` takes them, and
+ * every edge touching one, out of its input; a short note names them by kind
+ * and label, never id), and any reference to one that still slips in via the
+ * user's own queued text is stripped in code (`stripExtendedReferences`)
+ * rather than costing a retry. This second call is what actually keeps them
+ * up to date: it's given the ORIGINAL edges touching them so the wiring and
+ * its direction survive (`checkNoDroppedExtendedEdges` enforces that), and
+ * the base call's freshly reworked component ids to re-point any edge whose
+ * base end was replaced.
  */
 
 import { STRUCTURAL_SELF_CHECK, SystemModelSchema } from "./schema.ts";
@@ -75,14 +80,14 @@ const REWORK_PROMPT = `You are reconsidering an EXISTING rough architectural mod
 
 If specific fixes or requested changes are listed, implement each of them precisely first - they are already-decided choices, not suggestions to evaluate. Requested changes are listed oldest first; where a later one conflicts with (or cancels) an earlier one, the later one wins. If a requested change is about one of the EXTENDED kinds described below, do not attempt it yourself - the separate step that owns those kinds implements it, so your own output simply doesn't change on account of that part of the request; only make a base-kind change for a request that genuinely calls for one. Then reconsider the ARCHITECTURE holistically on top of that, the way an architect revisiting a system does: given where this system stands now (including its current scale), does it call for anything more - additional scaling on a component, a new service, a new connection, a component that should be split or added, a trait that's clearly wrong given the rest of the system? You may leave everything else exactly as it is if nothing more is warranted - do not change something just to have changed it. You are not deciding the workload parameters themselves - only the architecture that serves them.
 
-Some components in the model may be of an EXTENDED kind (${EXTENDED_KINDS.join(", ")}) - these are shown to you for context only and are reworked by a separate step, never by you. Your own output must never include one of these kinds, and their ids are OFF LIMITS to you entirely - never reuse one of their ids for a component of your own, even a base-kind one that seems related; that id is already taken by something the separate step owns. The ONLY edges you omit are ones whose "from" or "to" references one of THEIR ids specifically - every other edge from the input, between components you're keeping, must still be present in your output exactly as it was unless the architecture genuinely no longer calls for that specific connection. Dropping an edge between two components you both kept, for any reason other than a deliberate architectural change, is a mistake - when in doubt, keep it.
+Some parts of a system are of an EXTENDED kind (${EXTENDED_KINDS.join(", ")}). Those belong to a separate step: you are NOT shown them in the model JSON (at most a short note after it says they exist), so never output a component of one of those kinds, never reuse a name that sounds like one as a component id, and never reference one in an edge - every edge you output must connect two components that are in YOUR output. That separate step re-wires them into your result afterwards, so nothing about them is lost by your leaving them out. Every edge between two components you both keep must still be present in your output exactly as it was unless the architecture genuinely no longer calls for that specific connection. Dropping one for any other reason is a mistake - when in doubt, keep it.
 
 Rules, same as always:
 - Every trait is a rough category (a boolean or a small set of choices), never a number.
 - Beyond the extended kinds mentioned above (which you never emit yourself), you may only use the five base component kinds (gateway, service, cache, database, queue) - don't invent another new one.
 - For anything that still conceptually exists from the input, reuse its EXACT same component id - this is how the interface keeps track of what's the same thing across a rework, not a new one. Only mint a new id for a component that's genuinely new.
 - Keep the same top-level "id" and "name" - you are reworking this system, not renaming it.
-- Preserve every existing edge between two components you're both keeping unless you have a specific architectural reason to remove it (the extended-kind carve-out above is the one narrow exception) - a rework that silently drops real connections produces a diagram that no longer reflects the actual system.
+- Preserve every existing edge between two components you're both keeping unless you have a specific architectural reason to remove it - a rework that silently drops real connections produces a diagram that no longer reflects the actual system.
 - At most ${MAX_BASE_COMPONENTS} components in your own output. If the holistic review would call for more, that's a sign to fold or reconsider something already there before adding, not to grow past the limit.
 - Every trait still needs a rationale and a provenance. "stated" means the input model already had this value and you're keeping it because it's still correct - never mark something "stated" that you are choosing or changing yourself; that's "inferred" (derived from something else in the system) or "default" (your own reasonable choice, nothing in the system dictates it).
 - The model must remain a DAG - never create an edge back into a component that is upstream of it.
@@ -182,6 +187,58 @@ export function checkNoDroppedEdges(input: SystemModel, result: SystemModel): st
   );
 }
 
+/**
+ * What the base call is shown: the model with every extended-kind component,
+ * and every edge touching one, taken OUT. Found live, four Re-simulates out of
+ * four: shown those components (and told not to reference them), the model
+ * kept re-emitting them anyway — as fake base-kind stand-ins filled with
+ * placeholder text, or as edges to ids that weren't in its output — and each
+ * mistake cost a full billed retry that re-sent the whole model. The
+ * instructions conflicted ("preserve every edge" vs "leave these out"), and
+ * the model split the difference badly. Not showing them makes the mistake
+ * impossible instead of merely discouraged; the separate extended step
+ * re-wires them afterwards from the ORIGINAL model (see `reworkModel`).
+ */
+export function baseView(model: SystemModel): SystemModel {
+  const baseIds = new Set(model.components.filter((c) => !isExtendedComponent(c)).map((c) => c.id));
+  return {
+    ...model,
+    components: model.components.filter((c) => baseIds.has(c.id)),
+    edges: model.edges.filter((e) => baseIds.has(e.from) && baseIds.has(e.to)),
+  };
+}
+
+/** A sentence telling the base call the extended parts exist (by kind and name — never id), or "" if there are none. */
+function extendedNote(model: SystemModel): string {
+  const extended = model.components.filter(isExtendedComponent);
+  if (extended.length === 0) return "";
+  const list = extended.map((c) => `${c.kind.replace(/-/g, " ")} "${c.label}"`).join(", ");
+  return `\n\nThis system also includes these parts, which belong to a separate step you cannot see or change: ${list}. Do not add, remove or mention them, and do not reference them in any edge - that step keeps them wired in after you finish.`;
+}
+
+/**
+ * Belt and braces for the one way the base call can still name an extended
+ * component: the user's own queued text ("add a fallback on \"payments\"")
+ * legitimately mentions one. Drops a component that reuses an extended id and
+ * every edge touching an extended id — precisely what the prompt asks the
+ * model to leave out, done in code instead of costing a retry. Anything else
+ * unknown is still a real error and still fails validation.
+ */
+export function stripExtendedReferences(raw: unknown, extendedIds: ReadonlySet<string>): unknown {
+  if (extendedIds.size === 0 || typeof raw !== "object" || raw === null) return raw;
+  const out = { ...(raw as Record<string, unknown>) };
+  if (Array.isArray(out.components)) {
+    out.components = out.components.filter((c) => !extendedIds.has((c as { id?: string } | null)?.id ?? ""));
+  }
+  if (Array.isArray(out.edges)) {
+    out.edges = out.edges.filter((e) => {
+      const edge = e as { from?: string; to?: string } | null;
+      return !extendedIds.has(edge?.from ?? "") && !extendedIds.has(edge?.to ?? "");
+    });
+  }
+  return out;
+}
+
 export async function reworkModel(
   model: SystemModel,
   pendingFixes: PendingFixInput[] = [],
@@ -189,12 +246,18 @@ export async function reworkModel(
   options: StructuredCallOptions = {},
 ): Promise<ReworkModelResult> {
   const pendingContext = `${formatPendingFixes(pendingFixes)}${formatPendingChanges(pendingChanges)}`;
+  const extendedIds = new Set(model.components.filter(isExtendedComponent).map((c) => c.id));
   const result = await runStructuredCall(
     REWORK_PROMPT,
-    `Here is the current model:\n\n${JSON.stringify(model)}${pendingContext}`,
+    `Here is the current model:\n\n${JSON.stringify(baseView(model))}${extendedNote(model)}${pendingContext}`,
     SystemModelSchema,
     buildTool(),
-    { maxRetries: 2, ...options, validateResult: (data) => checkNoDroppedEdges(model, data as SystemModel) },
+    {
+      maxRetries: 2,
+      ...options,
+      normalizeOutput: (raw) => stripExtendedReferences(raw, extendedIds),
+      validateResult: (data) => checkNoDroppedEdges(model, data as SystemModel),
+    },
     "reworkModel",
   );
 
@@ -211,7 +274,11 @@ export async function reworkModel(
   // isn't silently ignored by a call that otherwise only sees "previous
   // extended components" + "current base topology". Empty when nothing is
   // queued, which is a no-op here exactly as it is on the base call.
-  const extended = await reviseExtendedComponents(previousExtended, result.data, options, pendingContext);
+  // The edges the revise step must keep: everything in the ORIGINAL model
+  // touching an extended component — including the ones the base call was
+  // never shown.
+  const previousEdges = model.edges.filter((e) => extendedIds.has(e.from) || extendedIds.has(e.to));
+  const extended = await reviseExtendedComponents(previousExtended, result.data, options, pendingContext, previousEdges);
 
   return {
     model: {

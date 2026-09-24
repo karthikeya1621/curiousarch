@@ -4,7 +4,7 @@ Headless architecture-modelling engine. No React, no DOM.
 
 ```bash
 npm install
-npm test          # 94 tests
+npm test          # 122 tests
 npm run typecheck
 ```
 

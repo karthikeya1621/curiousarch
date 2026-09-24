@@ -195,9 +195,11 @@ export const REVISE_PROMPT = `You are reconsidering a system's EXTENDED componen
 
 ${KIND_GUIDE}
 
-You will be given: the system's PREVIOUS extended components (if any), and its freshly-reworked base topology (its current component ids — the ones you may wire edges to).
+You will be given: the system's PREVIOUS extended components (if any), the EXISTING edges that touch them, and its freshly-reworked base topology (its current component ids — the ones you may wire edges to).
 
-The default action for every previous extended component is to KEEP it, with its EXACT same id, and RE-WIRE its edge(s) to whatever base component now serves the equivalent role (base component ids may have changed during the rework you're not shown the details of). Only drop one if the system described no longer has any plausible need for it at all - not because the base topology's ids changed, not because you're being cautious, and never as a default. This is the same "preserve by default" rule the base rework itself follows: silently losing something the user's system already had is a mistake, not a simplification. Only mint a new id for something genuinely new that didn't exist before.
+Keep every existing edge exactly as it was — the same two ends and the SAME DIRECTION — as long as both ends still exist. An edge's direction is meaning (which side calls or depends on which), so never reverse one, and never drop one unless the request specifically requires it. Only when a base end no longer exists (that component was replaced or removed in the rework) re-point the edge to the base component that now serves the equivalent role.
+
+The default action for every previous extended component is to KEEP it, with its EXACT same id, and keep its edge(s) as they were (see above) — re-pointing one to the equivalent base component only where its base end no longer exists (base component ids may have changed during the rework you're not shown the details of). Only drop one if the system described no longer has any plausible need for it at all - not because the base topology's ids changed, not because you're being cautious, and never as a default. This is the same "preserve by default" rule the base rework itself follows: silently losing something the user's system already had is a mistake, not a simplification. Only mint a new id for something genuinely new that didn't exist before.
 
 You may also be given additional context about a specific request already being applied elsewhere to this system right now - a chat-requested change, or a fix the user explicitly chose. If it calls for adding, modifying, or removing one of your own extended-kind components, implement that now; it takes priority over "preserve by default" above where the two genuinely conflict. If none is given, or it has nothing to do with your kinds, "preserve by default" is all that applies.
 
@@ -304,6 +306,45 @@ export async function proposeExtendedComponents(
   ) as { components: Component[]; edges: Edge[] };
 }
 
+/**
+ * Enforces, in code, the rule REVISE_PROMPT states: every existing edge
+ * touching an extended component survives (same ends, same direction) while
+ * both its ends still exist. Found live on a real Re-simulate: this step
+ * dropped `video-service -> transcode-job` and `cdn -> video-service` and
+ * reversed `video-service -> object-storage`, leaving a background job and a
+ * CDN with no incoming edge — which the canvas then draws as user traffic
+ * flowing straight into them. It had never been shown the existing edges, so
+ * it re-invented the wiring from component names alone; it now is (see
+ * `previousEdges`), and this is the backstop for when it still doesn't keep
+ * them. A reversed edge is caught too: the original is missing.
+ *
+ * An end that no longer exists (a component the rework removed, or an
+ * extended one this call chose to drop) exempts its edges — nothing to keep.
+ * Same reasoning as reworkModel.ts's `checkNoDroppedEdges`, which covers the
+ * base half of the graph.
+ */
+export function checkNoDroppedExtendedEdges(
+  previousEdges: Edge[],
+  reworkedBaseIds: ReadonlySet<string>,
+  result: { components: { id: string }[]; edges: Edge[] },
+): string | null {
+  const resultIds = new Set(result.components.map((c) => c.id));
+  const exists = (id: string) => reworkedBaseIds.has(id) || resultIds.has(id);
+  const dropped = previousEdges.filter(
+    (e) => exists(e.from) && exists(e.to) && !result.edges.some((r) => r.from === e.from && r.to === e.to),
+  );
+  if (dropped.length === 0) return null;
+
+  const list = dropped.map((e) => `"${e.from}" -> "${e.to}"`).join(", ");
+  const noun = dropped.length === 1 ? "edge" : "edges";
+  const them = dropped.length === 1 ? "it" : "them";
+  return (
+    `You dropped or reversed ${dropped.length} existing ${noun} whose ends both still exist: ${list}. ` +
+    `Every existing edge must still be present exactly as it was, in the same direction — restore ${them}, ` +
+    `unless the request specifically required removing ${them}.`
+  );
+}
+
 export async function reviseExtendedComponents(
   previousExtended: Component[],
   reworkedBaseModel: { components: BaseComponentRef[] },
@@ -318,14 +359,30 @@ export async function reviseExtendedComponents(
    * paragraph on how it's weighed against "preserve by default".
    */
   additionalContext?: string,
+  /**
+   * The edges of the model being revised that touch one of `previousExtended`
+   * (from -> to; direction is meaning). Shown to the AI so it keeps the
+   * existing wiring instead of re-deriving it from names, and enforced by
+   * `checkNoDroppedExtendedEdges`. Omitted (nothing to keep) on a first
+   * proposal.
+   */
+  previousEdges: Edge[] = [],
 ): Promise<{ components: Component[]; edges: Edge[] }> {
   const { remaining, text: budget } = budgetLine(reworkedBaseModel.components.length);
+  const baseIds = new Set(reworkedBaseModel.components.map((c) => c.id));
+  const existingEdges =
+    previousEdges.length > 0 ? `\n\nExisting edges touching them (from -> to):\n${JSON.stringify(previousEdges)}` : "";
   const result = await runStructuredCall(
     REVISE_PROMPT,
-    `Previous extended components:\n${JSON.stringify(previousExtended)}\n\nFreshly reworked base topology:\n${baseComponentContext(reworkedBaseModel)}\n\n${budget}${additionalContext ?? ""}`,
+    `Previous extended components:\n${JSON.stringify(previousExtended)}${existingEdges}\n\nFreshly reworked base topology:\n${baseComponentContext(reworkedBaseModel)}\n\n${budget}${additionalContext ?? ""}`,
     ExtendedComponentsResponseSchema,
     buildTool(),
-    { maxRetries: 2, ...options },
+    {
+      maxRetries: 2,
+      ...options,
+      validateResult: (data) =>
+        checkNoDroppedExtendedEdges(previousEdges, baseIds, data as ExtendedComponentsResponse),
+    },
     "reviseExtendedComponents",
   );
   return sanitizeExtendedResponse(

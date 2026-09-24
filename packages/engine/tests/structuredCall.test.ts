@@ -224,3 +224,71 @@ describe("runStructuredCall validateResult", () => {
     ).rejects.toThrow(/checker bug/);
   });
 });
+
+describe("runStructuredCall normalizeOutput", () => {
+  const call = (
+    steps: (Anthropic.Message | Error)[],
+    normalizeOutput: (input: unknown) => unknown,
+    onCall?: (r: AiCallRecord) => void,
+    onCreate?: (params: unknown) => void,
+  ) => {
+    const inner = fakeClient(steps);
+    const client = {
+      messages: {
+        create: async (params: unknown) => {
+          onCreate?.(params);
+          return (inner as unknown as { messages: { create: (p: unknown) => unknown } }).messages.create(params);
+        },
+      },
+    } as unknown as Anthropic;
+    return runStructuredCall("SYSTEM", "q", Schema, tool, { client, normalizeOutput, onCall, maxRetries: 1 }, "t");
+  };
+  const fixEmpty = (input: unknown) => {
+    const o = input as { answer: string };
+    return o.answer === "" ? { answer: "filled in" } : input;
+  };
+
+  it("fixes an otherwise-invalid output BEFORE validation, so it costs no repair retry", async () => {
+    let requests = 0;
+    const result = await call([toolResponse({ answer: "" })], fixEmpty, undefined, () => requests++);
+    expect(result.data.answer).toBe("filled in");
+    expect(result.repaired).toBe(false);
+    expect(requests).toBe(1);
+  });
+
+  it("records what the model ACTUALLY said, not the normalized value", async () => {
+    const records: AiCallRecord[] = [];
+    await call([toolResponse({ answer: "" })], fixEmpty, (r) => records.push(r));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ outcome: "ok", output: { answer: "" } });
+  });
+
+  it("echoes the NORMALIZED value on a repair retry, so error paths index into what the model is shown", async () => {
+    const seen: { messages: { role: string; content: unknown }[] }[] = [];
+    let n = 0;
+    // First attempt: the model said "original", the normalizer turns it into
+    // something invalid. Second attempt is left alone.
+    const result = await call(
+      [toolResponse({ answer: "original" }), toolResponse({ answer: "fixed" })],
+      (input) => (n++ === 0 ? { answer: "" } : input),
+      undefined,
+      (params) => seen.push(params as never),
+    );
+    expect(result.data.answer).toBe("fixed");
+    const echoed = JSON.stringify(seen[1]!.messages[1]!.content);
+    expect(echoed).toContain('"answer":""'); // what was validated — and what the error paths refer to
+    expect(echoed).not.toContain("original");
+  });
+
+  it("falls back to the model's original output if the normalizer throws — it must never fail a call", async () => {
+    const result = await call([toolResponse({ answer: "fine" })], () => {
+      throw new Error("normalizer bug");
+    });
+    expect(result.data.answer).toBe("fine");
+  });
+
+  it("does nothing when not given", async () => {
+    const result = await run([toolResponse({ answer: "plain" })]);
+    expect(result.data.answer).toBe("plain");
+  });
+});

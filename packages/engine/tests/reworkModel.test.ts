@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { checkNoDroppedEdges, reworkModel } from "../src/inference/reworkModel.js";
+import { baseView, checkNoDroppedEdges, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
 import { STRUCTURAL_SELF_CHECK } from "../src/inference/schema.js";
 import { checkout } from "../models/reference.js";
 import type { SystemModel } from "../src/types.js";
@@ -364,5 +364,105 @@ describe("reworkModel: rejecting a schema-valid but substantively empty repair",
     ]);
 
     await expect(reworkModel(checkout, [], [], { client, maxRetries: 1 })).rejects.toThrow(/dropped 1 edge/i);
+  });
+});
+
+describe("the base call never sees the extended components", () => {
+  // checkout + a CDN wired both ways (gw -> cdn1, cdn1 -> svc). Minimal
+  // objects: only id/kind/label matter to what's under test.
+  const cdn = { id: "cdn1", kind: "cdn", label: "Media CDN" } as unknown as SystemModel["components"][number];
+  const withCdn: SystemModel = {
+    ...checkout,
+    components: [...checkout.components, cdn],
+    edges: [...checkout.edges, { from: "gw", to: "cdn1" }, { from: "cdn1", to: "svc" }],
+  };
+
+  function baseCallContent(model: SystemModel, response: unknown = validReworkInput) {
+    const seen: Record<string, string> = {};
+    const client = fakeClient([toolUseResponse(response), emptyExtendedResponse()], (params) => {
+      const tool = (params.tools?.[0] as { name?: string } | undefined)?.name ?? "";
+      seen[tool] = JSON.stringify((params.messages[0] as { content: unknown }).content);
+    });
+    return { client, seen, run: () => reworkModel(model, [], [], { client }) };
+  }
+
+  it("baseView drops every extended component and every edge touching one, without mutating the model", () => {
+    const view = baseView(withCdn);
+    expect(view.components.map((c) => c.id)).toEqual(["gw", "svc", "db"]);
+    expect(view.edges).toEqual(checkout.edges);
+    expect(withCdn.components).toHaveLength(4); // untouched
+    expect(withCdn.edges).toHaveLength(4);
+  });
+
+  it("baseView of a model with no extended components is equal to it", () => {
+    expect(baseView(checkout)).toEqual(checkout);
+  });
+
+  it("sends the base call no extended id and no edge to one — only a note that they exist, by name, never id", async () => {
+    const { seen, run } = baseCallContent(withCdn);
+    await run();
+
+    const content = seen["emit_system_model"]!;
+    expect(content).not.toContain("cdn1");
+    expect(content).toContain('cdn \\"Media CDN\\"'); // kind and label, so it can reason about them
+    expect(content).toContain("separate step");
+    expect(content).toContain('\\"from\\":\\"svc\\",\\"to\\":\\"db\\"'); // base edges are still there
+  });
+
+  it("says nothing about extended parts when there are none", async () => {
+    const { seen, run } = baseCallContent(checkout);
+    await run();
+    expect(seen["emit_system_model"]).not.toContain("separate step you cannot see");
+  });
+
+  it("stripExtendedReferences drops a stand-in component using an extended id, and every edge touching one", () => {
+    const raw = {
+      id: "x",
+      components: [{ id: "gw" }, { id: "cdn1" }, { id: "svc" }],
+      edges: [
+        { from: "gw", to: "svc" },
+        { from: "svc", to: "cdn1" },
+        { from: "cdn1", to: "gw" },
+      ],
+    };
+    expect(stripExtendedReferences(raw, new Set(["cdn1"]))).toEqual({
+      id: "x",
+      components: [{ id: "gw" }, { id: "svc" }],
+      edges: [{ from: "gw", to: "svc" }],
+    });
+  });
+
+  it("stripExtendedReferences leaves an unknown id that ISN'T an extended one alone — that's a real error, not this fix's business", () => {
+    const raw = { components: [{ id: "gw" }], edges: [{ from: "gw", to: "ghost" }] };
+    expect(stripExtendedReferences(raw, new Set(["cdn1"]))).toEqual(raw);
+  });
+
+  it("stripExtendedReferences passes anything odd straight through", () => {
+    expect(stripExtendedReferences(null, new Set(["a"]))).toBeNull();
+    expect(stripExtendedReferences("nope", new Set(["a"]))).toBe("nope");
+    const raw = { components: [{ id: "cdn1" }] };
+    expect(stripExtendedReferences(raw, new Set())).toBe(raw); // nothing extended: untouched, same object
+  });
+
+  it("a base response that still names an extended id (from the user's own queued text) costs no retry — it's stripped, not rejected", async () => {
+    const leaky = { ...validReworkInput, edges: [...validReworkInput.edges, { from: "svc", to: "cdn1" }] };
+    const { run, seen } = baseCallContent(withCdn, leaky);
+
+    const result = await run();
+
+    expect(result.repaired).toBe(false);
+    expect(Object.keys(seen)).toEqual(["emit_system_model", "emit_extended_components"]); // one base call, one revise
+    expect(result.model.edges.some((e) => e.to === "cdn1" && e.from === "svc")).toBe(false);
+  });
+
+  it("hands the revise step the ORIGINAL edges that touch an extended component, in their original direction", async () => {
+    const { run, seen } = baseCallContent(withCdn);
+    await run();
+
+    const content = seen["emit_extended_components"]!;
+    expect(content).toContain("Existing edges touching them");
+    expect(content).toContain('\\"from\\":\\"gw\\",\\"to\\":\\"cdn1\\"');
+    expect(content).toContain('\\"from\\":\\"cdn1\\",\\"to\\":\\"svc\\"');
+    expect(content).not.toContain('\\"from\\":\\"svc\\",\\"to\\":\\"db\\"'); // base-to-base edges aren't its business
   });
 });
