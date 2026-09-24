@@ -30,6 +30,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastSavedAt: null,
   hydrated: false,
   autosaveRevision: 0,
+  savedRevision: 0,
   currentProjectId: null,
   draftProjectId: crypto.randomUUID(),
   projects: [],

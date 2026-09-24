@@ -214,6 +214,10 @@ describe("isExtendedComponent / EXTENDED_KINDS", () => {
 });
 
 describe("PROPOSE_PROMPT / REVISE_PROMPT", () => {
+  it("both ask for short rationales, via the shared kind guide", () => {
+    for (const prompt of [PROPOSE_PROMPT, REVISE_PROMPT]) expect(prompt).toMatch(/roughly 8 to 15 words/);
+  });
+
   // Regression test for a confirmed-live bug: REVISE_PROMPT used to say
   // 'never a placeholder like "n/a" or "invalid"', and a real Re-simulate
   // produced literally the word "placeholder" as a component's rationale —

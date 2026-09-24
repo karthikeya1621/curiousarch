@@ -56,12 +56,24 @@ describe("formatting", () => {
     expect(ratioPct(1, 0)).toBeNull();
   });
 
+  it("carries each day's wasted spend through the zero-fill — and treats a missing value (an older database function) as none", () => {
+    const filled = fillDays(
+      [
+        { day: "2026-09-21", cost_usd: 0.5, wasted_usd: 0.2, calls: 3 },
+        { day: "2026-09-22", cost_usd: 0.1, calls: 1 }, // predates the wasted column
+      ],
+      3,
+      new Date("2026-09-22T10:00:00Z"),
+    );
+    expect(filled.map((d) => d.wasted_usd)).toEqual([0, 0.2, 0]);
+  });
+
   it("zero-fills the chart so quiet days show as quiet, oldest first, ending today", () => {
     const filled = fillDays([{ day: "2026-09-21", cost_usd: 0.5, calls: 3 }], 3, new Date("2026-09-22T10:00:00Z"));
     expect(filled).toEqual([
-      { day: "2026-09-20", cost_usd: 0, calls: 0 },
-      { day: "2026-09-21", cost_usd: 0.5, calls: 3 },
-      { day: "2026-09-22", cost_usd: 0, calls: 0 },
+      { day: "2026-09-20", cost_usd: 0, wasted_usd: 0, calls: 0 },
+      { day: "2026-09-21", cost_usd: 0.5, wasted_usd: 0, calls: 3 },
+      { day: "2026-09-22", cost_usd: 0, wasted_usd: 0, calls: 0 },
     ]);
   });
 });

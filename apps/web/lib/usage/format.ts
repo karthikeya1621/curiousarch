@@ -35,20 +35,21 @@ export function ratioPct(part: number, whole: number): number | null {
  * One entry per calendar day (UTC) for the last `days` days, zero-filled —
  * the database only returns days that had calls, and a chart with gaps closed
  * up would misrepresent a quiet stretch as a busy one. Oldest first, ending
- * on `today`.
+ * on `today`. `wasted_usd` (spend on attempts that produced nothing usable)
+ * defaults to 0 for a database function that predates it.
  */
 export function fillDays(
-  rows: { day: string; cost_usd: number | null; calls: number }[],
+  rows: { day: string; cost_usd: number | null; wasted_usd?: number | null; calls: number }[],
   days: number,
   today: Date = new Date(),
-): { day: string; cost_usd: number; calls: number }[] {
+): { day: string; cost_usd: number; wasted_usd: number; calls: number }[] {
   const byDay = new Map(rows.map((r) => [r.day, r]));
-  const out: { day: string; cost_usd: number; calls: number }[] = [];
+  const out: { day: string; cost_usd: number; wasted_usd: number; calls: number }[] = [];
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
     const day = d.toISOString().slice(0, 10);
     const row = byDay.get(day);
-    out.push({ day, cost_usd: row?.cost_usd ?? 0, calls: row?.calls ?? 0 });
+    out.push({ day, cost_usd: row?.cost_usd ?? 0, wasted_usd: row?.wasted_usd ?? 0, calls: row?.calls ?? 0 });
   }
   return out;
 }

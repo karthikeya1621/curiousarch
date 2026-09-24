@@ -29,6 +29,14 @@ export interface ProjectState {
    */
   autosaveRevision: number;
   /**
+   * The `autosaveRevision` as of the last successful save or load — so "is
+   * there anything the database doesn't have yet" is `autosaveRevision !==
+   * savedRevision` (see `saveBeforeLeaving`). Advanced by the revision
+   * captured when a save STARTS, not when it finishes: a change made while the
+   * write was in flight leaves the two unequal, which is correct.
+   */
+  savedRevision: number;
+  /**
    * The id a project that hasn't been saved yet WILL have once it is —
    * minted up front (and again on every `startNewProject`) so AI usage from
    * its very first Build can already be labelled with it, and used as the
@@ -57,6 +65,17 @@ export interface ProjectActions {
   hydrateFromStorage: (projectId?: string) => Promise<OpenResult>;
   /** Saves the current session to `currentProjectId`, or inserts a new project if it's `null`. Resolves false (not logged in, RLS rejection, network error) so the caller can show that instead of a false "Saved". */
   saveToStorage: () => Promise<boolean>;
+  /**
+   * Call before leaving the open project (starting a new one, opening
+   * another): makes sure nothing is lost, without asking. Resolves true when
+   * it's safe to go — the canvas is blank, nothing changed since the last
+   * save, or a save just succeeded — and false only when a save was needed and
+   * FAILED (offline, signed out), which is the one case worth telling the user
+   * about. Autosave is debounced (1.5s), so there's a real window after a
+   * change where leaving would otherwise drop it; this closes it, and also
+   * saves a tier change, which deliberately doesn't trigger autosave itself.
+   */
+  saveBeforeLeaving: () => Promise<boolean>;
   /**
    * Discards the current session in memory and starts a blank one — the
    * only intentional way to abandon a project without saving it.
@@ -103,11 +122,32 @@ export function createProjectActions(set: StoreSet, get: StoreGet): ProjectActio
       }
       sequence.epoch++;
       if (explicit) setLastProjectId(targetId);
-      set({ ...sessionToState(session), currentProjectId: targetId, hydrated: true });
+      set({
+        ...sessionToState(session),
+        currentProjectId: targetId,
+        hydrated: true,
+        savedRevision: get().autosaveRevision, // what was just loaded IS what's saved
+      });
       return "opened";
     },
 
+    saveBeforeLeaving: async () => {
+      const s = get();
+      if (s.model.components.length === 0) return true; // nothing to lose
+      const unsaved =
+        s.currentProjectId === null || // built but never saved
+        s.autosaveRevision !== s.savedRevision ||
+        // A moved tier isn't autosaved on its own (see `autosaveRevision`), but
+        // it is part of what a save writes — and of what leaving would lose.
+        s.parametersChangedSinceResimulate;
+      if (!unsaved) return true;
+      return s.saveToStorage();
+    },
+
     saveToStorage: async () => {
+      // The revision this save captures — anything bumped while it's in
+      // flight is NOT covered by it (see `savedRevision`).
+      const revisionAtSave = get().autosaveRevision;
       const {
         currentProjectId,
         draftProjectId,
@@ -147,7 +187,7 @@ export function createProjectActions(set: StoreSet, get: StoreGet): ProjectActio
         draftProjectId,
       );
       if (saved) {
-        set({ lastSavedAt: saved.savedAt, currentProjectId: saved.id });
+        set({ lastSavedAt: saved.savedAt, currentProjectId: saved.id, savedRevision: revisionAtSave });
         setLastProjectId(saved.id);
       }
       return saved !== null;
@@ -186,7 +226,7 @@ export function createProjectActions(set: StoreSet, get: StoreGet): ProjectActio
       // Bumped only now that the switch is actually happening — a failed
       // load must not orphan the current project's in-flight findings.
       sequence.epoch++;
-      set({ ...sessionToState(session), currentProjectId: id });
+      set({ ...sessionToState(session), currentProjectId: id, savedRevision: get().autosaveRevision });
       return "opened";
     },
 

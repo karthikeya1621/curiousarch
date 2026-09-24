@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "../lib/store";
 import { timeAgo } from "../lib/timeAgo";
 import { scrollTopToReveal } from "../lib/scrollTopToReveal";
+import { PROJECT_ROW_GAP_REM, PROJECT_ROW_REM, projectListMaxHeightRem } from "../lib/projectListLayout";
 import { Card } from "./Card";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { NewProjectButton } from "./NewProjectButton";
@@ -19,15 +20,18 @@ import { FolderIcon, TrashIcon, CheckCircleIcon } from "./icons";
  * AI cost involved.
  *
  * Rendered in two places (the blank home screen and the workspace's first
- * column) — this one component, so the list's height cap lives here once. The
- * list is capped and scrolls inside itself, and keeps the open project in view
- * (see the effect below) since with enough projects it can sit below the fold.
+ * column) — this one component, so the list's height lives here once: it shows
+ * three and a half rows (lib/projectListLayout.ts) and scrolls inside itself,
+ * the half row being the cue that there's more. It keeps the open project in
+ * view (see the effect below) since with enough projects it can sit below the
+ * fold.
  */
 export function ProjectsCard() {
   const projects = useAppStore((s) => s.projects);
   const projectsStatus = useAppStore((s) => s.projectsStatus);
   const refreshProjectList = useAppStore((s) => s.refreshProjectList);
   const openProject = useAppStore((s) => s.openProject);
+  const saveBeforeLeaving = useAppStore((s) => s.saveBeforeLeaving);
   const deleteProjectById = useAppStore((s) => s.deleteProjectById);
   const currentProjectId = useAppStore((s) => s.currentProjectId);
   const lastSavedAt = useAppStore((s) => s.lastSavedAt);
@@ -60,11 +64,12 @@ export function ProjectsCard() {
     // Keyed on `projects.length`, not `projects`: see above.
   }, [currentProjectId, projects.length]);
 
-  function handleRowClick(id: string) {
+  async function handleRowClick(id: string) {
     if (id === currentProjectId) return;
-    // Only worth confirming when there's something non-blank to lose —
-    // same guard NewProjectButton's own confirm applies.
-    if (!isBlank) {
+    // The project being left is saved first (see `saveBeforeLeaving`), so this
+    // doesn't ask — nothing is lost. Only a FAILED save is worth an
+    // interruption, and only then is the confirmation shown.
+    if (!isBlank && !(await saveBeforeLeaving())) {
       setPendingOpenId(id);
       return;
     }
@@ -82,11 +87,12 @@ export function ProjectsCard() {
 
       {/* `relative` so rows' offsetTop is measured from THIS box (the reveal
           effect above); `overscroll-contain` so reaching the end of the list
-          doesn't start scrolling the page; the height is capped by the
-          viewport too, so on a short window the card doesn't take the screen. */}
+          doesn't start scrolling the page. Every row is the same fixed height
+          and the cap is derived from it, so "3.5 rows" is exact. */}
       <div
         ref={listRef}
-        className="relative mt-3 flex max-h-[min(14rem,40vh)] min-h-0 flex-col gap-0.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-width:thin]"
+        style={{ maxHeight: `${projectListMaxHeightRem()}rem`, rowGap: `${PROJECT_ROW_GAP_REM}rem` }}
+        className="relative mt-3 flex min-h-0 flex-col overflow-y-auto overscroll-contain pr-1 [scrollbar-width:thin]"
       >
         {projectsStatus === "loading" && projects.length === 0 ? (
           <p className="px-1 py-1.5 text-xs text-slate-400">Loading…</p>
@@ -99,15 +105,16 @@ export function ProjectsCard() {
             <div
               key={p.id}
               data-project-id={p.id}
+              style={{ height: `${PROJECT_ROW_REM}rem` }}
               className={
-                "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm transition-colors " +
+                "flex shrink-0 items-center gap-1.5 rounded-md px-2 text-sm transition-colors " +
                 (p.id === currentProjectId
                   ? "bg-slate-50 dark:bg-slate-700"
                   : "hover:bg-slate-50 dark:hover:bg-slate-700")
               }
             >
               <button
-                onClick={() => handleRowClick(p.id)}
+                onClick={() => void handleRowClick(p.id)}
                 className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
               >
                 {p.id === currentProjectId ? (
@@ -143,10 +150,10 @@ export function ProjectsCard() {
 
       <ConfirmDialog
         open={pendingOpenId !== null}
-        title="Open this project?"
-        message="This clears the current one from view — save it first if you want to come back to it."
-        confirmLabel="Open project"
-        cancelLabel="Keep this project"
+        title="Couldn't save this project"
+        message="Opening another project now would discard your latest changes. Stay to try again, or discard them and continue."
+        confirmLabel="Discard and open"
+        cancelLabel="Stay here"
         onConfirm={() => {
           const id = pendingOpenId!;
           setPendingOpenId(null);

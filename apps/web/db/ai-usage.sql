@@ -199,14 +199,18 @@ as $$
         -- Actions with ANY outcome report, each counted once (`wasted` below splits by reason,
         -- so an action with two reasons appears in both rows).
         'wasted_actions',              (select count(*) from actions where action_id in (select action_id from reasons)),
-        'wasted_cost_usd',             (select coalesce(sum(cost_usd), 0) from actions where action_id in (select action_id from reasons))
+        'wasted_cost_usd',             (select coalesce(sum(cost_usd), 0) from actions where action_id in (select action_id from reasons)),
+        -- What the calls that did NOT produce a usable result cost: failed
+        -- validation, no tool call, request errors. This is the retry bill.
+        'failed_cost_usd',             coalesce(sum(cost_usd) filter (where outcome <> 'ok'), 0)
       ) from win
     ),
 
     'daily', (
-      select coalesce(jsonb_agg(jsonb_build_object('day', d.day, 'cost_usd', d.cost_usd, 'calls', d.calls) order by d.day), '[]'::jsonb)
+      select coalesce(jsonb_agg(jsonb_build_object('day', d.day, 'cost_usd', d.cost_usd, 'wasted_usd', d.wasted_usd, 'calls', d.calls) order by d.day), '[]'::jsonb)
       from (
-        select (created_at at time zone 'UTC')::date as day, coalesce(sum(cost_usd), 0) as cost_usd, count(*) as calls
+        select (created_at at time zone 'UTC')::date as day, coalesce(sum(cost_usd), 0) as cost_usd,
+               coalesce(sum(cost_usd) filter (where outcome <> 'ok'), 0) as wasted_usd, count(*) as calls
         from win group by 1
       ) d
     ),
@@ -225,12 +229,13 @@ as $$
 
     'by_label', (
       select coalesce(jsonb_agg(jsonb_build_object(
-        'label', l.label, 'model', l.model, 'calls', l.calls, 'cost_usd', l.cost_usd,
+        'label', l.label, 'model', l.model, 'calls', l.calls, 'cost_usd', l.cost_usd, 'wasted_usd', l.wasted_usd,
         'retry_pct', l.retry_pct, 'failed_pct', l.failed_pct, 'truncated_pct', l.truncated_pct,
         'cache_hit_pct', l.cache_hit_pct, 'avg_ms', l.avg_ms, 'avg_output_tokens', l.avg_output_tokens
       ) order by l.cost_usd desc nulls last, l.calls desc), '[]'::jsonb)
       from (
         select label, model, count(*) as calls, sum(cost_usd) as cost_usd,
+               coalesce(sum(cost_usd) filter (where outcome <> 'ok'), 0) as wasted_usd,
                round(100.0 * count(*) filter (where attempt > 0) / count(*), 1) as retry_pct,
                round(100.0 * count(*) filter (where outcome <> 'ok') / count(*), 1) as failed_pct,
                round(100.0 * count(*) filter (where stop_reason = 'max_tokens') / count(*), 1) as truncated_pct,

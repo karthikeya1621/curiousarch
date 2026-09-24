@@ -69,12 +69,13 @@ describe("/admin/usage page", () => {
         totals: {
           cost_usd: 0.0123, calls: 40, actions: 10, users: 2, input_tokens: 9000, output_tokens: 4000,
           cache_read_input_tokens: 3000, cache_creation_input_tokens: 1000, cache_savings_usd: 0.004, retry_calls: 8,
+          failed_cost_usd: 0.0041,
           failed_calls: 5, truncated_calls: 1, unpriced_calls: 12, avg_ms: 2400, wasted_actions: 2, wasted_cost_usd: 0.0031,
         },
-        daily: [{ day: new Date().toISOString().slice(0, 10), cost_usd: 0.0123, calls: 40 }],
+        daily: [{ day: new Date().toISOString().slice(0, 10), cost_usd: 0.0123, wasted_usd: 0.0041, calls: 40 }],
         by_action: [{ action: "rework", actions: 4, calls: 12, cost_usd: 0.01, avg_cost_usd: 0.0025, avg_ms: 9000, retries: 2 }],
         by_label: [
-          { label: "reworkModel", model: "claude-sonnet-5", calls: 12, cost_usd: null, retry_pct: 25, failed_pct: 8.3, truncated_pct: 0, cache_hit_pct: 60, avg_ms: 8000, avg_output_tokens: 900 },
+          { label: "reworkModel", model: "claude-sonnet-5", calls: 12, cost_usd: null, wasted_usd: 0.0041, retry_pct: 25, failed_pct: 8.3, truncated_pct: 0, cache_hit_pct: 60, avg_ms: 8000, avg_output_tokens: 900 },
         ],
         top_users: [{ user_id: "11111111-aaaa", actions: 6, calls: 30, cost_usd: 0.01 }],
         top_projects: [{ project_id: "22222222-bbbb", user_id: "11111111-aaaa", actions: 3, calls: 12, cost_usd: 0.008 }],
@@ -92,6 +93,14 @@ describe("/admin/usage page", () => {
 
     expect(html).toContain("$0.012"); // total cost
     expect(html).toContain("12 calls have no price configured");
+    // The retry bill: a KPI with its share of spend, a legend, and a per-step column.
+    expect(html).toContain("Wasted on failed attempts");
+    expect(html).toContain("$0.0041");
+    expect(html).toContain("33.3% of spend"); // 0.0041 / 0.0123
+    expect(html).toContain("5 of 40 attempts failed");
+    expect(html).toContain("wasted on failed attempts</span>"); // chart legend
+    expect(html).toMatch(/height:33\.3\d*%/); // the wasted segment: 0.0041 of that day's 0.0123, inside its bar
+    expect(html).toContain(">Wasted<"); // by-step column header
     expect(html).toContain("claude-sonnet-5");
     expect(html).toContain("someone@example.com"); // the name, not the id
     expect(html).toContain("Movie booking");

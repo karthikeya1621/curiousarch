@@ -90,7 +90,7 @@ Rules, same as always:
 - Keep the same top-level "id" and "name" - you are reworking this system, not renaming it.
 - Preserve every existing edge between two components you're both keeping unless you have a specific architectural reason to remove it - a rework that silently drops real connections produces a diagram that no longer reflects the actual system.
 - At most ${MAX_BASE_COMPONENTS} components in your own output. If the holistic review would call for more, that's a sign to fold or reconsider something already there before adding, not to grow past the limit.
-- Every trait still needs a rationale and a provenance. "stated" means the input model already had this value and you're keeping it because it's still correct - never mark something "stated" that you are choosing or changing yourself; that's "inferred" (derived from something else in the system) or "default" (your own reasonable choice, nothing in the system dictates it).
+- Every trait still needs a rationale and a provenance. "stated" means the input model already had this value and you're keeping it because it's still correct - never mark something "stated" that you are choosing or changing yourself; that's "inferred" (derived from something else in the system) or "default" (your own reasonable choice, nothing in the system dictates it). Keep every rationale to one short, specific sentence of roughly 8 to 15 words; for a trait you are leaving as it was, restate its reason more briefly rather than copying it at length.
 - The model must remain a DAG - never create an edge back into a component that is upstream of it.
 
 ${STRUCTURAL_SELF_CHECK}

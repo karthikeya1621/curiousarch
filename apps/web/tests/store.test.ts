@@ -684,6 +684,107 @@ describe("opening a project by id (the /project/<id> route)", () => {
   });
 });
 
+describe("saveBeforeLeaving (leaving a project without a confirmation)", () => {
+  // How many times the fake database has been written to — the thing a
+  // needless save would inflate (and would bump a project's "updated" time).
+  const writes = () => {
+    let count = 0;
+    for (const row of fakeProjects.values()) count += (row as { data?: { savedAt?: number } }).data?.savedAt ? 1 : 0;
+    return count;
+  };
+  const savedAtOf = (id: string) => ((fakeProjects.get(id) as { data: { savedAt: number } }).data.savedAt);
+
+  async function openSavedProject() {
+    useAppStore.setState({ model: modelWithUsers() });
+    await useAppStore.getState().saveToStorage();
+    const id = useAppStore.getState().currentProjectId!;
+    useAppStore.getState().startNewProject();
+    // Some activity in the session before this project is opened, so the
+    // revision counter isn't sitting at its initial 0 — a load must mark what
+    // it loaded as saved at THIS revision, not rely on both starting equal.
+    useAppStore.setState({ autosaveRevision: 7 });
+    await useAppStore.getState().openProject(id);
+    return id;
+  }
+
+  it("is a no-op on a blank canvas — there's nothing to lose", async () => {
+    expect(await useAppStore.getState().saveBeforeLeaving()).toBe(true);
+    expect(writes()).toBe(0);
+  });
+
+  it("doesn't save a project that's unchanged since it was loaded — so browsing doesn't bump its updated time", async () => {
+    const id = await openSavedProject();
+    const before = savedAtOf(id);
+    await new Promise((r) => setTimeout(r, 5)); // a save would produce a later timestamp
+
+    expect(await useAppStore.getState().saveBeforeLeaving()).toBe(true);
+
+    expect(savedAtOf(id)).toBe(before);
+  });
+
+  it("saves a change the debounced autosave hasn't written yet, then says it's safe to go", async () => {
+    const id = await openSavedProject();
+    const before = savedAtOf(id);
+    await new Promise((r) => setTimeout(r, 5));
+    useAppStore.getState().queueFix(pendingFix()); // bumps the revision; autosave hasn't fired
+
+    expect(await useAppStore.getState().saveBeforeLeaving()).toBe(true);
+
+    expect(savedAtOf(id)).toBeGreaterThan(before);
+    const row = fakeProjects.get(id) as { data: { pendingFixes: unknown[] } };
+    expect(row.data.pendingFixes).toHaveLength(1);
+  });
+
+  it("saves a moved tier too — autosave deliberately never does, but leaving would lose it", async () => {
+    const id = await openSavedProject();
+    useAppStore.setState({ baselineModel: modelWithUsers() });
+    useAppStore.getState().setWorkloadTier("users", 10_000);
+
+    expect(await useAppStore.getState().saveBeforeLeaving()).toBe(true);
+
+    const row = fakeProjects.get(id) as { data: { model: SystemModel } };
+    expect(row.data.model.workload.users?.tier).toBe(10_000);
+  });
+
+  it("saves a project that was built but never saved, giving it its id", async () => {
+    useAppStore.setState({ model: modelWithUsers(), autosaveRevision: 1 });
+    expect(useAppStore.getState().currentProjectId).toBeNull();
+
+    expect(await useAppStore.getState().saveBeforeLeaving()).toBe(true);
+
+    expect(useAppStore.getState().currentProjectId).not.toBeNull();
+    expect(writes()).toBe(1);
+  });
+
+  it("says NO — the one case worth interrupting for — when a needed save fails", async () => {
+    await openSavedProject();
+    useAppStore.getState().queueFix(pendingFix());
+    authState.dbError = true;
+
+    expect(await useAppStore.getState().saveBeforeLeaving()).toBe(false);
+  });
+
+  it("a successful save marks the project clean, so leaving twice saves once", async () => {
+    const id = await openSavedProject();
+    useAppStore.getState().queueFix(pendingFix());
+    await useAppStore.getState().saveBeforeLeaving();
+    const after = savedAtOf(id);
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(await useAppStore.getState().saveBeforeLeaving()).toBe(true);
+    expect(savedAtOf(id)).toBe(after);
+  });
+
+  it("a change made WHILE a save is in flight still counts as unsaved", async () => {
+    await openSavedProject();
+    const saving = useAppStore.getState().saveToStorage();
+    useAppStore.getState().queueFix(pendingFix()); // bumps the revision after the save captured its own
+    await saving;
+
+    expect(useAppStore.getState().autosaveRevision).not.toBe(useAppStore.getState().savedRevision);
+  });
+});
+
 describe("startNewProject", () => {
   it("resets the session to a blank canvas, chat/fixes/versions/modal included", () => {
     const component = degradedModel().components[0]!;

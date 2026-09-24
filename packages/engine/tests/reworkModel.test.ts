@@ -223,6 +223,20 @@ describe("reworkModel", () => {
     expect(seenUserContent).not.toContain("specifically chosen to apply");
   });
 
+  // Output tokens are ~60% of a clean Re-simulate's cost (measured from real
+  // usage data), and most of a rework's output is per-trait rationale prose.
+  it("asks for short rationales — and keeps the ask at 8+ words, so brevity can't trip the validator's 10-character minimum", async () => {
+    let system = "";
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      if ((params.tools?.[0] as { name?: string } | undefined)?.name === "emit_system_model") {
+        system = (params.system as { text: string }[]).map((b) => b.text).join("");
+      }
+    });
+    await reworkModel(checkout, [], [], { client });
+    expect(system).toMatch(/one short, specific sentence of roughly 8 to 15 words/);
+    expect(system).toMatch(/restate its reason more briefly/);
+  });
+
   it("carries the superRefine-only self-check into the prompt — the failure classes a repair-retry costs a full extra billed call for", async () => {
     let seenSystem: unknown;
     const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {

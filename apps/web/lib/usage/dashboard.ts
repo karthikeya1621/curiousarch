@@ -20,8 +20,10 @@ export interface DashboardRaw {
     avg_ms: number;
     wasted_actions: number;
     wasted_cost_usd: number;
+    /** Cost of the attempts that produced no usable result (the retry bill). Absent until db/ai-usage.sql is re-run after it was added. */
+    failed_cost_usd?: number;
   };
-  daily: { day: string; cost_usd: number | null; calls: number }[];
+  daily: { day: string; cost_usd: number | null; wasted_usd?: number | null; calls: number }[];
   by_action: {
     action: string;
     actions: number;
@@ -36,6 +38,7 @@ export interface DashboardRaw {
     model: string;
     calls: number;
     cost_usd: number | null;
+    wasted_usd?: number | null;
     retry_pct: number;
     failed_pct: number;
     truncated_pct: number;

@@ -221,6 +221,10 @@ describe("fromProse", () => {
 });
 
 describe("SYSTEM_PROMPT", () => {
+  it("asks for short rationales (output tokens are most of a build's cost)", () => {
+    expect(SYSTEM_PROMPT).toMatch(/one short sentence \(roughly 8 to 15 words\)/);
+  });
+
   // Regression test for a confirmed-live bug, not a style preference: naming
   // the exact banned rationale word ("placeholder") as the negative example
   // measurably primes the model to reproduce that literal word when it has

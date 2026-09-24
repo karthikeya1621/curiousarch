@@ -107,26 +107,53 @@ function DashboardView({ dashboard, days }: { dashboard: Dashboard; days: number
         <Kpi label="Active users" value={formatInt(t.users)} hint={`${formatUsd(t.users > 0 ? t.cost_usd / t.users : null)} each`} />
         <Kpi label="Cache savings" value={formatUsd(t.cache_savings_usd)} hint={`${formatPct(ratioPct(t.cache_read_input_tokens, t.input_tokens + t.cache_creation_input_tokens + t.cache_read_input_tokens), 0)} of input tokens from cache`} />
         <Kpi label="Retries" value={formatPct(ratioPct(t.retry_calls, t.calls))} hint={`${formatInt(t.retry_calls)} repair calls`} tone={t.retry_calls / Math.max(t.calls, 1) > 0.15 ? "warn" : undefined} />
-        <Kpi label="Failed attempts" value={formatPct(ratioPct(t.failed_calls, t.calls))} hint={`${formatInt(t.failed_calls)} of ${formatInt(t.calls)}`} tone={t.failed_calls > 0 ? "warn" : undefined} />
+        <Kpi
+          label="Wasted on failed attempts"
+          value={t.failed_cost_usd === undefined ? "—" : formatUsd(t.failed_cost_usd)}
+          hint={
+            t.failed_cost_usd === undefined
+              ? "re-run db/ai-usage.sql to enable"
+              : `${formatPct(ratioPct(t.failed_cost_usd, t.cost_usd))} of spend · ${formatInt(t.failed_calls)} of ${formatInt(t.calls)} attempts failed`
+          }
+          tone={t.failed_calls > 0 ? "warn" : undefined}
+        />
         <Kpi label="Truncated" value={formatInt(t.truncated_calls)} hint="hit the output-token ceiling" tone={t.truncated_calls > 0 ? "warn" : undefined} />
         <Kpi label="Paid, never shown" value={formatUsd(t.wasted_cost_usd)} hint={`${formatInt(t.wasted_actions)} actions`} tone={t.wasted_actions > 0 ? "warn" : undefined} />
       </section>
 
       <Card>
-        <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Cost per day</h2>
-        <div className="mt-3 flex h-36 items-end gap-px" role="img" aria-label="Daily cost">
-          {daily.map((d) => (
-            <div
-              key={d.day}
-              title={`${d.day}: ${formatUsd(d.cost_usd)} · ${formatInt(d.calls)} calls`}
-              className="flex h-full min-w-0 flex-1 items-end"
-            >
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Cost per day</h2>
+          <p className="flex items-center gap-3 text-[11px] text-slate-400">
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-sm bg-cyan-500 dark:bg-cyan-400" /> total
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-sm bg-amber-500" /> wasted on failed attempts
+            </span>
+          </p>
+        </div>
+        <div className="mt-3 flex h-36 items-end gap-px" role="img" aria-label="Daily cost, with the share wasted on failed attempts">
+          {daily.map((d) => {
+            const barPct = maxDaily > 0 ? Math.max((d.cost_usd / maxDaily) * 100, d.cost_usd > 0 ? 2 : 0) : 0;
+            // The wasted share sits INSIDE its day's bar (bottom-anchored), so
+            // a bar that's mostly amber reads at a glance as "mostly retries".
+            const wastedPct = d.cost_usd > 0 ? Math.min((d.wasted_usd / d.cost_usd) * 100, 100) : 0;
+            return (
               <div
-                className="w-full rounded-t-sm bg-cyan-500 dark:bg-cyan-400"
-                style={{ height: `${maxDaily > 0 ? Math.max((d.cost_usd / maxDaily) * 100, d.cost_usd > 0 ? 2 : 0) : 0}%` }}
-              />
-            </div>
-          ))}
+                key={d.day}
+                title={`${d.day}: ${formatUsd(d.cost_usd)} · ${formatUsd(d.wasted_usd)} wasted · ${formatInt(d.calls)} calls`}
+                className="flex h-full min-w-0 flex-1 items-end"
+              >
+                <div
+                  className="flex w-full flex-col justify-end overflow-hidden rounded-t-sm bg-cyan-500 dark:bg-cyan-400"
+                  style={{ height: `${barPct}%` }}
+                >
+                  {d.wasted_usd > 0 && <div className="w-full bg-amber-500" style={{ height: `${wastedPct}%` }} />}
+                </div>
+              </div>
+            );
+          })}
         </div>
         <div className="mt-1 flex justify-between text-[11px] text-slate-400">
           <span>{daily[0]?.day}</span>
@@ -173,6 +200,7 @@ function DashboardView({ dashboard, days }: { dashboard: Dashboard; days: number
             { header: "Model", cell: (r) => r.model },
             { header: "Calls", cell: (r) => formatInt(r.calls), num: true },
             { header: "Cost", cell: (r) => (r.cost_usd === null ? "unpriced" : formatUsd(r.cost_usd)), num: true },
+            { header: "Wasted", cell: (r) => formatUsd(r.wasted_usd ?? null), num: true, warn: (r) => (r.wasted_usd ?? 0) > 0 },
             { header: "Retry", cell: (r) => formatPct(r.retry_pct), num: true, warn: (r) => r.retry_pct > 15 },
             { header: "Failed", cell: (r) => formatPct(r.failed_pct), num: true, warn: (r) => r.failed_pct > 0 },
             { header: "Truncated", cell: (r) => formatPct(r.truncated_pct), num: true, warn: (r) => r.truncated_pct > 0 },
