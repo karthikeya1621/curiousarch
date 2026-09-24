@@ -150,7 +150,7 @@ matter how the schema was tuned.
 The app is a working, full-loop product, not a prototype: describe a system
 in prose, get a diagram with AI-identified findings and fixes, apply fixes
 or chat free-form to queue changes to it, Re-simulate to apply everything queued, save/reopen
-multiple projects across sessions. 384 tests passing (142 engine + 242 web),
+multiple projects across sessions. 390 tests passing (142 engine + 248 web),
 typecheck clean across both workspaces, pushed to `origin/main`.
 
 **Auth + persistence.** Magic-link email and Google login (client-side
