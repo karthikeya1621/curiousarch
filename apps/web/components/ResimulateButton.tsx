@@ -21,13 +21,11 @@ const NEAR_CAP_THRESHOLD = MAX_TOTAL_COMPONENTS - 2;
  *
  * Gated by `canResimulate`, not always-on: it only lights up once
  * something has actually changed since the last review (a raised tier or
- * a queued fix — see store.ts's own comment on why `setWorkloadTier`
- * doesn't refresh findings itself, leaving this button as the deliberate
- * next step). Commits through `commitRework`, not `applyFix` — a rework
- * has nothing new to reconsider immediately after (findings just got
- * refreshed for the model this produced), whereas `applyFix` sets
- * `canResimulate: true` because it's the kind of change that invites a
- * follow-up rework of the whole system, not a self-contained one.
+ * a queued fix or chat change — see lib/store/findings.ts's comment on why
+ * `setWorkloadTier` doesn't refresh findings itself, leaving this button as
+ * the deliberate next step). Commits through `commitRework`, which clears
+ * what was pending and refreshes findings for the model the rework produced
+ * — there's nothing new to reconsider immediately after.
  *
  * Sends `pendingFixes` and `pendingChanges` (chat requests) along with the
  * model — this is the one call that actually implements every queued item

@@ -5,7 +5,7 @@
  * (components/edges) via tool-use for structured output, Zod validation,
  * one repair retry if validation fails — per PLAN-0.2, via
  * `structuredCall.ts`'s shared retry core (also used by `reworkModel`/
- * `identifyFailures`/`applyAiFix`) — and, in parallel with it,
+ * `identifyFailures`) — and, in parallel with it,
  * `workloadParameters.ts`'s own small call for workload.users/
  * workload.requests, genuinely separate because the topology schema had
  * no compiled-grammar room left for workload parameters too (discovered

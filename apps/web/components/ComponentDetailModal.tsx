@@ -24,7 +24,7 @@ function componentTraits(component: Component): [string, Trait<unknown>][] {
  * Moved here from ControlPanel.tsx's always-visible left-column list —
  * that column was narrow enough to truncate rationale text; this has the
  * room to show it in full. Reads `viewingComponent` as the actual clicked
- * object (see store.ts's own comment), not a lookup by id, so this shows
+ * object (see `viewingComponent` in lib/store/slices/selectionSlice.ts), not a lookup by id, so this shows
  * the right data whether the diagram on screen is the live model or a
  * previewed past version.
  */

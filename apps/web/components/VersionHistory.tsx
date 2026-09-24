@@ -5,8 +5,8 @@ import { useAppStore } from "../lib/store";
 import { ClockIcon, ChevronDownIcon } from "./icons";
 
 /**
- * One checkpoint per initial build + completed Re-simulate (see store.ts's
- * own comment on `versions`) — renders nothing until there's more than
+ * One checkpoint per initial build + completed Re-simulate (see
+ * `versions` in lib/store/slices/versionsSlice.ts) — renders nothing until there's more than
  * one to navigate between. An anchored dropdown (same pattern as
  * AccountMenu/ProjectsDropdown) rather than the old row of "V1 V2" pills
  * — scales to many versions without wrapping, and has room to show each

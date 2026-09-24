@@ -9,7 +9,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
  * see page.tsx's preview/normal split. Restore asks first ONLY when there's
  * unsimulated work that would be lost (`canResimulate`: a moved control, a
  * chat change, a queued fix): the live model is replaced and not kept
- * anywhere (see store.ts's `restoreVersion`) — this used to be safe without
+ * anywhere (see `restoreVersion` in lib/store/slices/versionsSlice.ts) — this used to be safe without
  * a prompt only because the undo stack made it recoverable. With nothing pending, the
  * live model is already the last simulated one, i.e. already a version, so
  * there's nothing to lose and no reason to interrupt.

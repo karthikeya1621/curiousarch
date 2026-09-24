@@ -8,8 +8,8 @@ import { ConfirmDialog } from "./ConfirmDialog";
 /**
  * The only intentional way to abandon the current session and start a
  * fresh one — confirms first since it's a hard-to-reverse local action.
- * Never touches the database itself (see store.ts's own comment on
- * `startNewProject`): Save is the only thing that ever writes there, so
+ * Never touches the database itself (see `startNewProject` in
+ * lib/store/slices/projectSlice.ts): Save is the only thing that ever writes there, so
  * this can't silently destroy a project you already saved — it just
  * clears `currentProjectId` so the next Save creates a new one.
  *

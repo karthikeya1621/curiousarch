@@ -8,7 +8,7 @@ let cached: SupabaseClient | null | undefined;
  * user who could insert or edit their own usage rows could hide what they
  * spent. Server-only by construction (the key has no NEXT_PUBLIC_ prefix, so
  * Next never ships it to a client bundle) — never import this from a
- * component or from lib/store.ts.
+ * component or from anything under lib/store/.
  *
  * `null` when SUPABASE_SERVICE_ROLE_KEY isn't set: usage tracking then turns
  * itself off instead of failing the AI call it was only meant to observe.

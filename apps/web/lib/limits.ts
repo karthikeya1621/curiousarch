@@ -25,7 +25,7 @@ export const MAX_CHAT_MESSAGE_LENGTH = 1500;
  * Most chat-requested changes that can be waiting for a Re-simulate at once.
  * Every one is sent to the AI as explicit context on the next rework (and to
  * every chat message in between), so an unbounded queue is unbounded prompt
- * growth; the same cap is enforced client-side (store.ts refuses to queue
+ * growth; the same cap is enforced client-side (the chat slice refuses to queue
  * past it) and server-side (/api/chat and /api/rework reject a bigger queue).
  */
 export const MAX_PENDING_CHANGES = 10;

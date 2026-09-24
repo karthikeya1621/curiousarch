@@ -36,10 +36,10 @@
  *
  * `pendingFixes` (optional): fixes the user has explicitly chosen since
  * the last Re-simulate, queued rather than implemented immediately (see
- * apps/web/lib/store.ts's own comment on `pendingFixes` — this is the
- * cost-saving trade that used to mean a separate `applyAiFix` call per
- * fix). They're appended to the USER content, not REWORK_PROMPT itself,
- * so the static system prompt stays byte-identical (and therefore
+ * apps/web/lib/store/slices/queueSlice.ts's comment on `pendingFixes` — this is the
+ * cost-saving trade that replaced a separate AI call per fix). They're
+ * appended to the USER content, not REWORK_PROMPT itself, so the static
+ * system prompt stays byte-identical (and therefore
  * cacheable) across every rework call regardless of how many fixes are
  * queued this time.
  *

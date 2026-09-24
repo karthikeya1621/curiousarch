@@ -93,6 +93,14 @@ export function ActivityIcon({ className }: IconProps) {
   );
 }
 
+export function BarChartIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </svg>
+  );
+}
+
 export function SparklesIcon({ className }: IconProps) {
   return (
     <svg {...base} className={className}>

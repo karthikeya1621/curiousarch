@@ -11,7 +11,7 @@ const AUTO_SAVE_DEBOUNCE_MS = 1500;
  * Replaces the old manual Save button — the session now persists itself
  * automatically, debounced so a burst of changes (a chat exchange, a
  * couple of queued fixes) writes once, not on every intermediate state.
- * The actual write is still `saveToStorage` (lib/store.ts), unchanged
+ * The actual write is still `saveToStorage` (lib/store/slices/projectSlice.ts), unchanged
  * from when a click triggered it; this only decides *when* to call it.
  *
  * Watches `autosaveRevision` specifically, not `model`/`chatMessages`/etc.

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { safeNextPath } from "./lib/nextPath";
 
 /**
  * Gates every page AND every AI API route (chat, rework, infer,
@@ -44,8 +45,15 @@ export async function middleware(request: NextRequest) {
     request.nextUrl.pathname.startsWith("/auth");
 
   if (!user && !isAuthRoute) {
+    const target = request.nextUrl.pathname + request.nextUrl.search;
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    url.search = "";
+    // Remember where they were headed (a shared /project/<id> link) so login
+    // can send them back — validated, and left off for `/` since that's
+    // where login goes anyway.
+    const next = safeNextPath(target);
+    if (next && next !== "/") url.searchParams.set("next", next);
     return NextResponse.redirect(url);
   }
 

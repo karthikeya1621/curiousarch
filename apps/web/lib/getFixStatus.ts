@@ -7,7 +7,7 @@ export type FixStatus = "none" | "queued" | "fixed";
  * Matched by componentId + title, reliable specifically because
  * `findings` never changes between choosing a fix and the next
  * Re-simulate (that's the whole point of the stale-findings design, see
- * store.ts's own comment): the title recorded in `appliedFixes`/
+ * lib/store/findings.ts): the title recorded in `appliedFixes`/
  * `pendingFixes` at the time is the exact same string still shown here.
  *
  * "queued" wins over "fixed" if somehow both exist for the same finding

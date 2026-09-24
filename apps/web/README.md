@@ -57,7 +57,7 @@ user/project/version can be answered from SQL. To turn it on:
    users' architecture descriptions) — schedule
    `purge_ai_call_payloads()` (default 30 days) with pg_cron.
 
-**Admin cost dashboard** — `/admin/usage`, for you only. Set
+**Admin cost dashboard** — `/admin/usage`, for you only (admins also get a "Usage" link in the app header, drawn only after `/api/admin/status` confirms the caller is one). Set
 `ADMIN_EMAILS=you@example.com` (comma-separated) in `.env.local`. It's an
 allow-list with no default: unset means nobody gets in, and anyone else (or an
 unconfirmed email) sees a 404 before any data is read. It needs the same
@@ -90,7 +90,7 @@ npm test          # from the monorepo root — runs both workspaces' vitest suit
 npm run typecheck # both workspaces; this app's script runs `next typegen` first
 ```
 
-Tests here are unit-level only (the Zustand store in `lib/store.ts`, the
+Tests here are unit-level only (the Zustand store in `lib/store/`, the
 API routes under `app/api/`) — nothing drives the actual rendered app
 end-to-end yet. For UI verification, see `.claude/skills/run-web/` (a
 Playwright driver usable without a logged-in session) or exercise it
@@ -105,7 +105,9 @@ app/auth/callback/      Supabase auth callback handler
 middleware.ts           Gates every page behind a logged-in session
 components/             UI — see FlowDiagram.tsx (the canvas), ChatWidget.tsx,
                         ProjectsCard.tsx, AutoSaveIndicator.tsx, AccountMenu.tsx
-lib/store.ts            The Zustand store — model, findings, chat, versions, projects
+lib/store/               The Zustand store, split into domain slices (model, queue, chat, versions, project, selection) — index.ts composes them
+lib/projectRoute.ts      `/project/<id>` <-> open-project sync rule (pure, tested)
+components/Workspace.tsx The whole app UI, rendered from app/(app)/layout.tsx so `/` and `/project/<id>` share one instance
 lib/sessionStorage.ts   Supabase-backed project persistence (save/load/list/delete)
 lib/layout.ts           SystemModel -> React Flow nodes/edges via ELK.js
 lib/limits.ts           Client-side description-length cap, mirrored server-side

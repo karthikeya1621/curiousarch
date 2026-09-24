@@ -7,7 +7,7 @@
  *    what it cost. Versions live inside the project's JSON, not in a table,
  *    so this id is the only possible join key.
  *  - `projectId` — which project it was for. Minted client-side before the
- *    first save (see store.ts's `draftProjectId`), because a project's first
+ *    first save (see `draftProjectId` in lib/store/slices/projectSlice.ts), because a project's first
  *    Build — the most expensive action — happens before it exists in the DB.
  * Both are client-supplied, so they're only ever used as labels on the
  * caller's own rows, never to look anything up or authorize anything.

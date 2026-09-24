@@ -46,7 +46,7 @@ export interface ChatMessage {
 
 /**
  * A change the user asked for in chat, waiting for Re-simulate — see
- * store.ts's own comment on `pendingChanges`. `request` is their exact words
+ * lib/store/slices/queueSlice.ts's comment on `pendingChanges`. `request` is their exact words
  * and `instruction` the self-contained restatement written when they sent it
  * (see chatWithProject.ts): both go to the AI at Re-simulate time.
  */
@@ -57,7 +57,7 @@ export interface PendingChatChange {
   queuedAt: number;
 }
 
-/** A log entry, not a live-derived list — see store.ts's own comment on `appliedFixes`. */
+/** A log entry, not a live-derived list — see lib/store/slices/queueSlice.ts's comment on `appliedFixes`. */
 export interface AppliedFixRecord {
   componentId: string;
   findingTitle: string;
@@ -67,7 +67,7 @@ export interface AppliedFixRecord {
 
 /**
  * A fix the user has chosen but that hasn't been implemented yet — see
- * store.ts's own comment on `pendingFixes`. Carries enough of the
+ * lib/store/slices/queueSlice.ts's comment on `pendingFixes`. Carries enough of the
  * original finding/fix to describe it precisely to the AI at
  * Re-simulate time, since by then the finding that produced it may no
  * longer be in `findings` at all (findings only refresh on Re-simulate).
@@ -82,7 +82,7 @@ export interface PendingFix {
   queuedAt: number;
 }
 
-/** A checkpoint recorded on the initial build and every completed Re-simulate — see store.ts's own comment on `versions`. */
+/** A checkpoint recorded on the initial build and every completed Re-simulate — see lib/store/slices/versionsSlice.ts's comment on `versions`. */
 export interface Version {
   id: string;
   model: SystemModel;
@@ -102,11 +102,11 @@ export interface SavedSession {
   findingsStatus: "idle" | "loading" | "done";
   findingsError: string | null;
   canResimulate: boolean;
-  /** See store.ts's own doc comment on `parametersChangedSinceResimulate` — persisted so reopening a project doesn't lose the "parameters changed" note while leaving `canResimulate` itself restored. */
+  /** See lib/store/slices/modelSlice.ts's doc comment on `parametersChangedSinceResimulate` — persisted so reopening a project doesn't lose the "parameters changed" note while leaving `canResimulate` itself restored. */
   parametersChangedSinceResimulate: boolean;
-  /** See store.ts's own doc comment on `chatChangeSinceResimulate` — same reasoning, persisted for the same reason. */
+  /** See lib/store/slices/modelSlice.ts's doc comment on `chatChangeSinceResimulate` — same reasoning, persisted for the same reason. */
   chatChangeSinceResimulate: boolean;
-  /** See store.ts's own doc comment on `baselineModel`. Optional: absent on a project saved before it existed. */
+  /** See lib/store/slices/modelSlice.ts's doc comment on `baselineModel`. Optional: absent on a project saved before it existed. */
   baselineModel?: SystemModel | null;
   /** True when the model changed (a raised tier) since `findings` was last actually computed for it. */
   findingsStale: boolean;
@@ -135,7 +135,7 @@ export async function saveProject(
   id: string | null,
   session: Omit<SavedSession, "savedAt">,
   // The id to give a project on its FIRST insert (`id` null) instead of a
-  // database-generated one — see store.ts's `draftProjectId`: AI usage was
+  // database-generated one — see `draftProjectId` in lib/store/slices/projectSlice.ts: AI usage was
   // already filed under it before the project existed.
   newId?: string,
 ): Promise<{ id: string; savedAt: number } | null> {

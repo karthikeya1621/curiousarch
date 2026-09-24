@@ -21,7 +21,7 @@ import { ChevronDownIcon, XIcon } from "./icons";
  * undone with Reset in the Controls card, and the legacy row has no undo.
  *
  * Rows are independent — a tier moved AND a fix is queued AND a chat
- * change was made can all be true at once (see store.ts's own comment on
+ * change was made can all be true at once (see lib/store/slices/modelSlice.ts's comment on
  * `parametersChangedSinceResimulate` / `chatChangeSinceResimulate` for why
  * they aren't derived from one shared flag), so each renders on its own
  * condition, not as an either/or. The one shared call to action ("These

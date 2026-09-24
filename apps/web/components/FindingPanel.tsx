@@ -15,10 +15,10 @@ import { SparklesIcon, XIcon, WrenchIcon } from "./icons";
  * *this* system, never fired automatically on selection (see explainFix.ts).
  *
  * Picking a fix no longer calls the AI here — it QUEUES the choice
- * (store.ts's `queueFix`), synchronously, no network call. Re-simulate is
+ * (the store's `queueFix`), synchronously, no network call. Re-simulate is
  * what actually implements it (see ResimulateButton.tsx), alongside its
  * own holistic review — this is the cost-saving trade approved for this
- * flow, and chat-requested changes are queued the same way (see store.ts's `pendingChanges`).
+ * flow, and chat-requested changes are queued the same way (see `pendingChanges` in lib/store/slices/queueSlice.ts).
  */
 export function FindingPanel({ model, finding }: { model: SystemModel; finding: AiFinding }) {
   const selectedFixId = useAppStore((s) => s.selectedFixId);

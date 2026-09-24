@@ -1,11 +1,11 @@
 /**
  * The shared core behind every structured-output AI call in this package —
- * `fromProse`, `reworkModel`, `identifyFailures`, `applyAiFix`. One LLM
+ * `fromProse`, `reworkModel`, `identifyFailures`, `explainFix`, chat. One LLM
  * call using tool-use, Zod validation against whatever schema the caller
  * passes, one repair retry on validation failure.
  *
  * Schema/tool-agnostic (originally lived inside fromProse.ts, hardcoded to
- * `SystemModelSchema`, before `identifyFailures`/`applyAiFix` needed the
+ * `SystemModelSchema`, before `identifyFailures` and the rest needed the
  * exact same retry machinery for a different output shape). Extracted
  * rather than duplicated: this loop has already had multiple separate
  * live-discovered bugs fixed in it (the strict-mode JSON Schema gotchas
@@ -29,7 +29,7 @@ export interface StructuredCallOptions {
    * Prior conversation turns, prepended before the new user turn — the
    * only caller that sets this today is chatWithProject.ts, for genuine
    * multi-turn memory. Every other caller (fromProse, reworkModel,
-   * identifyFailures, applyAiFix) is a one-shot call and simply never
+   * identifyFailures, explainFix) is a one-shot call and simply never
    * sets it, so this is a no-op for them.
    */
   history?: Anthropic.MessageParam[];

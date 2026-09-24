@@ -46,7 +46,7 @@ function SegmentedToggle({
  * The only interactive control in this app — everything else evolves via
  * a fix or a fresh description. Raising the tier here is a passive
  * setting change (it enables Re-simulate but doesn't call the AI itself)
- * — see store.ts's own comment on why `setWorkloadTier` never triggers a
+ * — see lib/store/findings.ts on why `setWorkloadTier` never triggers a
  * findings refresh on its own.
  */
 function TierControl({

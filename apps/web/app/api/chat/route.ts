@@ -51,7 +51,7 @@ export async function POST(request: Request) {
   // Structurally compatible with Anthropic.MessageParam[] (plain string
   // content) without needing the SDK type here — the store is the one
   // place that builds this from `chatMessages`, already bounded to a
-  // short window (see store.ts's own comment).
+  // short window (see `CHAT_HISTORY_WINDOW` in lib/store/slices/chatSlice.ts).
   const chatHistory = Array.isArray(history)
     ? (history as { role: "user" | "assistant"; content: string }[])
     : [];

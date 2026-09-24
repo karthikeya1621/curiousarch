@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Script from "next/script";
 import { createClient } from "../../lib/supabase/client";
+import { nextCookieString, safeNextPath } from "../../lib/nextPath";
 import { Card } from "../../components/Card";
 import { ActivityIcon, MailIcon, AlertTriangleIcon, CheckCircleIcon } from "../../components/icons";
 
@@ -31,6 +32,11 @@ declare global {
   }
 }
 
+/** The validated `?next=` this page was redirected here with (see middleware.ts), if any. */
+function nextFromUrl(): string | null {
+  return safeNextPath(new URLSearchParams(window.location.search).get("next"));
+}
+
 /**
  * Google's button renders directly into this page's own origin — unlike
  * the old `supabase.auth.signInWithOAuth` redirect flow (which sent the
@@ -52,6 +58,10 @@ export default function LoginPage() {
     if (!email || status === "sending") return;
     setStatus("sending");
     setError(null);
+    // The magic link opens in a fresh navigation via /auth/callback, so
+    // remember where they were headed in a cookie it can read (see nextPath.ts).
+    const next = nextFromUrl();
+    if (next) document.cookie = nextCookieString(next, window.location.protocol === "https:");
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithOtp({
       email,
@@ -75,7 +85,7 @@ export default function LoginPage() {
       setError(error.message);
       return;
     }
-    router.push("/");
+    router.push(nextFromUrl() ?? "/");
     router.refresh();
   }
 
