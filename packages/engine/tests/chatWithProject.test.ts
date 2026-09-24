@@ -92,6 +92,29 @@ describe("chatWithProject", () => {
     expect(systemPrompt.toLowerCase()).toContain("2-4 sentences");
   });
 
+  // Found live: asked "analyze the flow" right after a chat-queued change
+  // had already been Re-simulated (but the rework silently failed to add
+  // what was requested — a real, separate bug), the model answered "I need
+  // to see the updated model first... can you re-simulate" — treating the
+  // model it was ALREADY given as not-yet-current, because an earlier turn
+  // in the same conversation had said something was being added that isn't
+  // actually there. It should trust the model it's given over anything said
+  // earlier, and never claim reviewing the CURRENT system needs Re-simulate
+  // (only a change does).
+  it("tells the model that reviewing the current system never needs Re-simulate, and to trust the given model over anything said earlier", async () => {
+    let systemPrompt = "";
+    const client = fakeClient([toolUseResponse("route_chat_message", questionRoute)], (params) => {
+      systemPrompt = systemText(params);
+    });
+
+    await chatWithProject(checkout, "analyze the flow for improvements", [], noFindings, noPendingFixes, noPendingChanges, {
+      client,
+    });
+
+    expect(systemPrompt).toMatch(/ever waiting on a Re-simulate/i);
+    expect(systemPrompt).toMatch(/trust the model below/i);
+  });
+
   it("turns a change request into a queueable instruction — in ONE call, without rewriting the model", async () => {
     let calls = 0;
     const client = fakeClient([toolUseResponse("route_chat_message", changeRoute)], () => calls++);
