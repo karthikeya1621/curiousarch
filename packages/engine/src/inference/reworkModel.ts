@@ -86,6 +86,7 @@ Rules, same as always:
 - Every trait is a rough category (a boolean or a small set of choices), never a number.
 - Beyond the extended kinds mentioned above (which you never emit yourself), you may only use the five base component kinds (gateway, service, cache, database, queue) - don't invent another new one.
 - For anything that still conceptually exists from the input, reuse its EXACT same component id - this is how the interface keeps track of what's the same thing across a rework, not a new one. Only mint a new id for a component that's genuinely new.
+- Instance counts are yours to keep right, automatically. At the system's CURRENT scale (its workload tiers, in the model), when a service needs more than one instance or a database needs replicas, set that instanceCount trait to the larger value yourself as part of this rework - nobody will separately ask you to. While the scale is small leave it at the smallest value; raise it only when the scale genuinely calls for it, with a rationale that names the scale and provenance "inferred".
 - Keep the same top-level "id" and "name" - you are reworking this system, not renaming it.
 - Preserve every existing edge between two components you're both keeping unless you have a specific architectural reason to remove it - a rework that silently drops real connections produces a diagram that no longer reflects the actual system.
 - At most ${MAX_BASE_COMPONENTS} components in your own output. If the holistic review would call for more, that's a sign to fold or reconsider something already there before adding, not to grow past the limit.
@@ -199,6 +200,19 @@ export function checkNoDroppedEdges(input: SystemModel, result: SystemModel): st
  * impossible instead of merely discouraged; the separate extended step
  * re-wires them afterwards from the ORIGINAL model (see `reworkModel`).
  */
+/**
+ * The system's current scale as a sentence, for a call that isn't shown the
+ * workload (the extended-components step): whether a component needs more
+ * than one instance depends entirely on it. "" when no dimension is in use.
+ */
+export function describeScale(workload: SystemModel["workload"]): string {
+  const fmt = (n: number) => n.toLocaleString("en-US");
+  const parts: string[] = [];
+  if (workload.users?.included) parts.push(`${fmt(workload.users.tier)} users`);
+  if (workload.requests?.included) parts.push(`${fmt(workload.requests.tier)} requests`);
+  return parts.length > 0 ? `\n\nThe system's current scale is ${parts.join(" and ")}.` : "";
+}
+
 export function baseView(model: SystemModel): SystemModel {
   const baseIds = new Set(model.components.filter((c) => !isExtendedComponent(c)).map((c) => c.id));
   return {
@@ -278,7 +292,13 @@ export async function reworkModel(
   // touching an extended component — including the ones the base call was
   // never shown.
   const previousEdges = model.edges.filter((e) => extendedIds.has(e.from) || extendedIds.has(e.to));
-  const extended = await reviseExtendedComponents(previousExtended, result.data, options, pendingContext, previousEdges);
+  const extended = await reviseExtendedComponents(
+    previousExtended,
+    result.data,
+    options,
+    `${pendingContext}${describeScale(model.workload)}`,
+    previousEdges,
+  );
 
   return {
     model: {

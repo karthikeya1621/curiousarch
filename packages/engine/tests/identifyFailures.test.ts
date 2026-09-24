@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { identifyFailures } from "../src/inference/identifyFailures.js";
+import { dropInstanceCountFindings, identifyFailures } from "../src/inference/identifyFailures.js";
 import { checkout } from "../models/reference.js";
 
 const validFindingsInput = {
@@ -99,5 +99,92 @@ describe("identifyFailures", () => {
     } finally {
       if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
     }
+  });
+});
+
+describe("instance counts are never findings", () => {
+  const finding = (over: Record<string, unknown>) => ({
+    code: "CASCADING_FAILURE_RISK",
+    severity: "warning" as const,
+    componentId: "svc",
+    title: "No circuit breaker",
+    explanation: "Calls pile up.",
+    fixes: [{ id: "f", label: "Do a thing", tradeoff: "Costs something." }],
+    ...over,
+  });
+  // svc: service, db: database, gw: gateway (from checkout) + an external dependency.
+  const model = {
+    components: [
+      ...checkout.components,
+      { id: "stripe", kind: "external-dependency", label: "Stripe" },
+    ],
+  } as never;
+  const drop = (...findings: ReturnType<typeof finding>[]) => dropInstanceCountFindings(findings as never, model);
+
+  it("keeps a finding about anything else", () => {
+    const keep = finding({});
+    expect(drop(keep)).toEqual([keep]);
+  });
+
+  it.each([
+    ["the classic code", { code: "SINGLE_POINT_OF_FAILURE", title: "Order service is a problem" }],
+    ["an invented instance code", { code: "SINGLE_INSTANCE_SERVICE", title: "Something" }],
+    ["a replica code", { code: "DATABASE_NO_REPLICAS", componentId: "db", title: "Database" }],
+    ["a title saying single instance", { code: "AVAILABILITY_RISK", title: "Single instance of the order service" }],
+    ["a title saying it needs more instances", { code: "CAPACITY_RISK", title: "Order service needs more instances" }],
+    ["a title saying no replicas", { code: "DATA_LOSS_RISK", componentId: "db", title: "Primary database has no replicas" }],
+    ["a title calling it a single point of failure", { code: "AVAILABILITY_RISK", title: "Order service is a single point of failure" }],
+  ])("drops %s", (_label, over) => {
+    expect(drop(finding(over))).toEqual([]);
+  });
+
+  it("matches on code and title only — an explanation that mentions instances in passing is a finding about something else", () => {
+    const keep = finding({ explanation: "With a single instance, one slow call blocks everything, so a circuit breaker matters." });
+    expect(drop(keep)).toEqual([keep]);
+  });
+
+  it("only applies to kinds that HAVE an instance count: a single point of failure on an external dependency is a different risk and stays", () => {
+    const keep = finding({
+      code: "SINGLE_POINT_OF_FAILURE",
+      componentId: "stripe",
+      title: "Payment provider is a single point of failure",
+    });
+    expect(drop(keep)).toEqual([keep]);
+  });
+
+  it("keeps everything else in a mixed list, in order", () => {
+    const a = finding({ title: "A" });
+    const b = finding({ code: "SINGLE_POINT_OF_FAILURE" });
+    const c = finding({ title: "C", componentId: "db" });
+    expect(drop(a, b, c)).toEqual([a, c]);
+  });
+
+  it("identifyFailures applies it: a model that reports one anyway gets it filtered out, at no extra cost", async () => {
+    const client = fakeClient([
+      toolUseResponse({
+        findings: [
+          finding({ code: "SINGLE_POINT_OF_FAILURE", title: "Single instance" }),
+          finding({ title: "No circuit breaker before the database", componentId: "db" }),
+        ],
+      }),
+    ]);
+    const findings = await identifyFailures(checkout, { client });
+    expect(findings.map((f) => f.title)).toEqual(["No circuit breaker before the database"]);
+  });
+
+  it("the prompt says so plainly — and no longer offers the single-point-of-failure code as an example to reach for", async () => {
+    let system = "";
+    const client = {
+      messages: {
+        create: async (params: { system: { text: string }[] }) => {
+          system = params.system.map((b) => b.text).join("");
+          return toolUseResponse(emptyFindingsInput);
+        },
+      },
+    } as unknown as Anthropic;
+    await identifyFailures(checkout, { client });
+
+    expect(system).toMatch(/Instance counts are not findings/);
+    expect(system).not.toMatch(/SINGLE_POINT_OF_FAILURE/);
   });
 });

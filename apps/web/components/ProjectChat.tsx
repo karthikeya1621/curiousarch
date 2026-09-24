@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Component } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
+import { scrollToEnd } from "../lib/scrollToEnd";
 import { Badge } from "./Badge";
 import { Card } from "./Card";
 import { SparklesIcon, WrenchIcon, XIcon } from "./icons";
@@ -85,6 +86,15 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
   const [dismissed, setDismissed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Keep the newest message in view: when the user sends one, when the reply
+  // arrives, and while the "Thinking…" bubble comes and goes (each changes
+  // what's at the bottom). Runs whether or not the popup is open, so opening
+  // it later shows the latest rather than wherever it was left.
+  useEffect(() => {
+    scrollToEnd(listRef.current, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
+  }, [chatMessages.length, chatStatus]);
 
   const slashMatch = draft.match(SLASH_COMP_PATTERN);
   const query = slashMatch?.[2]?.toLowerCase() ?? "";
@@ -155,7 +165,7 @@ export function ProjectChat({ onClose }: { onClose: () => void }) {
         // put a long reply out of reach with no way to scroll to it. This
         // way the list only ever gets what's actually left over after
         // everything else in the card, on any viewport.
-        <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
+        <div ref={listRef} className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
           {chatMessages.map((m, i) => (
             <div
               key={i}

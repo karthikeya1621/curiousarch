@@ -197,6 +197,8 @@ ${KIND_GUIDE}
 
 You will be given: the system's PREVIOUS extended components (if any), the EXISTING edges that touch them, and its freshly-reworked base topology (its current component ids — the ones you may wire edges to).
 
+You may also be told the system's current scale. Instance counts are yours to keep right, automatically: when a load balancer needs more than one instance at that scale, set its instanceCount to "multiple" yourself as part of this revision; while the scale is small leave it "single". Give the trait a rationale that names the scale.
+
 Keep every existing edge exactly as it was — the same two ends and the SAME DIRECTION — as long as both ends still exist. An edge's direction is meaning (which side calls or depends on which), so never reverse one, and never drop one unless the request specifically requires it. Only when a base end no longer exists (that component was replaced or removed in the rework) re-point the edge to the base component that now serves the equivalent role.
 
 The default action for every previous extended component is to KEEP it, with its EXACT same id, and keep its edge(s) as they were (see above) — re-pointing one to the equivalent base component only where its base end no longer exists (base component ids may have changed during the rework you're not shown the details of). Only drop one if the system described no longer has any plausible need for it at all - not because the base topology's ids changed, not because you're being cautious, and never as a default. This is the same "preserve by default" rule the base rework itself follows: silently losing something the user's system already had is a mistake, not a simplification. Only mint a new id for something genuinely new that didn't exist before.

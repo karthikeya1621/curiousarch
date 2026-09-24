@@ -359,6 +359,11 @@ describe("reviseExtendedComponents keeps the existing wiring", () => {
     expect(result.components).toHaveLength(1);
   });
 
+  it("the prompt makes instance counts the revise step's own job, sized from the scale it's told", () => {
+    expect(REVISE_PROMPT).toMatch(/Instance counts are yours to keep right, automatically/);
+    expect(REVISE_PROMPT).toMatch(/instanceCount to "multiple"/);
+  });
+
   it("the prompt says direction is meaning and to keep every edge", () => {
     expect(REVISE_PROMPT).toMatch(/SAME DIRECTION/);
     expect(REVISE_PROMPT).toMatch(/never reverse one/i);

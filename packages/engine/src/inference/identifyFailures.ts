@@ -41,17 +41,48 @@ const IdentifyFailuresResponseSchema = z.object({
 
 const TOOL_NAME = "emit_failures";
 
+/** The kinds that have an `instanceCount` trait — the only components an instance-count finding can be about. */
+const INSTANCE_COUNT_KINDS = new Set<string>(["service", "database", "load-balancer"]);
+const INSTANCE_COUNT_CODE = /SINGLE_POINT|SINGLE_INSTANCE|NO_REPLICA|REDUNDAN|INSTANCE_COUNT|MORE_INSTANCES/i;
+const INSTANCE_COUNT_TITLE =
+  /\b(single|one|only one)\s+(instance|replica|node|server|copy)\b|\bsingle point of failure\b|\bno (replicas?|redundancy)\b|\bwithout (a )?(replicas?|redundancy)\b|\b(more|multiple|additional|second)\s+instances?\b/i;
+
+/**
+ * Drops any finding that is only "this runs as a single instance / has no
+ * replicas / needs more instances". Asked for by the product owner: it was by
+ * far the most common finding, and acting on it (queue the fix, Re-simulate)
+ * spent a full billed call to change one trait — which Re-simulate now sets
+ * itself when the scale calls for it (reworkModel.ts), so it's never
+ * something to report.
+ *
+ * The prompt already says so, but a prompt is a request and the model's
+ * habit here is strong, so this is the deterministic half. Scoped to the
+ * kinds that HAVE an instance count: "X is a single point of failure" said of
+ * an external dependency is a different risk (no fallback) and stays. Matched
+ * on the code and the title only — never the explanation, where a finding
+ * about something else can perfectly well mention instances in passing.
+ */
+export function dropInstanceCountFindings(findings: AiFinding[], model: Pick<SystemModel, "components">): AiFinding[] {
+  const kindOf = new Map(model.components.map((c) => [c.id, c.kind as string]));
+  return findings.filter((f) => {
+    if (!INSTANCE_COUNT_KINDS.has(kindOf.get(f.componentId) ?? "")) return true;
+    return !(INSTANCE_COUNT_CODE.test(f.code) || INSTANCE_COUNT_TITLE.test(f.title));
+  });
+}
+
 const IDENTIFY_FAILURES_PROMPT = `You are a senior software architect reviewing a system design for real, concrete risks - the way you would in an actual design review, not a checklist exercise.
 
 You are given the system as JSON: its components, their categorical traits (booleans and small categories, never precise numbers), the edges between them, and its workload (users and/or requests, each a rough scale rather than an exact number).
 
 For each REAL risk you find, report:
-- code: a short SCREAMING_SNAKE_CASE identifier. Reuse a well-known name if it genuinely fits (SINGLE_POINT_OF_FAILURE, THUNDERING_HERD_RISK, CASCADING_FAILURE_RISK, UNBOUNDED_ADMISSION, QUEUE_NO_DEAD_LETTER, FIXED_SCALING_AT_SCALE, UNCACHED_DATABASE_AT_SCALE, EXTERNAL_DEPENDENCY_NO_FALLBACK - ONLY for a component whose kind is "external-dependency", never for an internal service or database, LB_NO_HEALTH_CHECKS - ONLY for a load-balancer) or invent a new one if the risk is real but doesn't match any of those - these are a starting vocabulary, not an exhaustive list. Think like an architect, not a lookup table.
+- code: a short SCREAMING_SNAKE_CASE identifier. Reuse a well-known name if it genuinely fits (THUNDERING_HERD_RISK, CASCADING_FAILURE_RISK, UNBOUNDED_ADMISSION, QUEUE_NO_DEAD_LETTER, FIXED_SCALING_AT_SCALE, UNCACHED_DATABASE_AT_SCALE, EXTERNAL_DEPENDENCY_NO_FALLBACK - ONLY for a component whose kind is "external-dependency", never for an internal service or database, LB_NO_HEALTH_CHECKS - ONLY for a load-balancer) or invent a new one if the risk is real but doesn't match any of those - these are a starting vocabulary, not an exhaustive list. Think like an architect, not a lookup table.
 - severity: "critical" (this will actually break something) or "warning" (a real risk, not yet a proven failure). Don't mark everything critical - that trains people to ignore critical.
 - componentId: which component (by its id in the JSON) this risk is on.
 - title: a short, plain label for the risk.
 - explanation: ONE OR TWO SHORT SENTENCES in plain language, as if explaining it to someone learning system design for the first time. No unexplained jargon. Say what could actually go wrong, concretely, referencing this specific system - not a generic definition of the risk category.
 - fixes: one or two concrete remediations, each with an id (a short kebab-case slug, unique within this finding), a label (what to do, plainly), and a tradeoff (what it costs - money, complexity, or a new risk - stated honestly in one sentence).
+
+Instance counts are not findings. Every component's instanceCount trait (how many copies of a service, load balancer or database run) is adjusted automatically when the system is re-simulated at a larger scale, so whether something runs as one copy or several, or whether a database has replicas, is never a risk to report - however it would be worded. Report risks that come from the OTHER traits and from the shape of the topology.
 
 Only report a risk you can point to something CONCRETE in the model for - a specific trait, a specific topology shape, a specific combination of the two. Don't invent a risk that isn't actually grounded in what's in front of you, and don't pad the list to look thorough. If the system is genuinely healthy at its current scale, say so by returning an empty findings list rather than manufacturing something to report.
 
@@ -87,5 +118,5 @@ export async function identifyFailures(
     options,
     "identifyFailures",
   );
-  return result.data.findings;
+  return dropInstanceCountFindings(result.data.findings, model);
 }

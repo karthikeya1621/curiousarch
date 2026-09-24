@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { baseView, checkNoDroppedEdges, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
+import { baseView, checkNoDroppedEdges, describeScale, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
 import { STRUCTURAL_SELF_CHECK } from "../src/inference/schema.js";
 import { checkout } from "../models/reference.js";
 import type { SystemModel } from "../src/types.js";
@@ -464,5 +464,46 @@ describe("the base call never sees the extended components", () => {
     expect(content).toContain('\\"from\\":\\"gw\\",\\"to\\":\\"cdn1\\"');
     expect(content).toContain('\\"from\\":\\"cdn1\\",\\"to\\":\\"svc\\"');
     expect(content).not.toContain('\\"from\\":\\"svc\\",\\"to\\":\\"db\\"'); // base-to-base edges aren't its business
+  });
+});
+
+describe("instance counts are set automatically", () => {
+  it("tells the base rework call to raise instanceCount itself when the scale needs it, and to leave it small otherwise", async () => {
+    let system = "";
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      if ((params.tools?.[0] as { name?: string } | undefined)?.name === "emit_system_model") {
+        system = (params.system as { text: string }[]).map((b) => b.text).join("");
+      }
+    });
+    await reworkModel(checkout, [], [], { client });
+
+    expect(system).toMatch(/Instance counts are yours to keep right, automatically/);
+    expect(system).toMatch(/leave it at the smallest value/);
+    expect(system).toMatch(/nobody will separately ask you to/);
+  });
+
+  it.each([
+    [{ users: { included: true, tier: 10_000, target: 1_000_000 } }, "\n\nThe system's current scale is 10,000 users."],
+    [
+      { users: { included: true, tier: 100, target: 1_000_000 }, requests: { included: true, tier: 100_000, target: 100_000 } },
+      "\n\nThe system's current scale is 100 users and 100,000 requests.",
+    ],
+    [{ users: { included: false, tier: 100, target: 100 } }, ""],
+    [{}, ""],
+  ])("describeScale %#", (workload, expected) => {
+    expect(describeScale(workload as never)).toBe(expected);
+  });
+
+  it("tells the extended-components step the current scale, so it can size a load balancer — it was never shown the workload before", async () => {
+    let reviseContent = "";
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      if ((params.tools?.[0] as { name?: string } | undefined)?.name === "emit_extended_components") {
+        reviseContent = JSON.stringify((params.messages[0] as { content: unknown }).content);
+      }
+    });
+    const scaled: SystemModel = { ...checkout, workload: { users: { included: true, tier: 10_000, target: 1_000_000 } } };
+    await reworkModel(scaled, [], [], { client });
+
+    expect(reviseContent).toContain("current scale is 10,000 users");
   });
 });
