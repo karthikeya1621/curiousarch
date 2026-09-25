@@ -264,6 +264,41 @@ export interface SystemModel {
   workload: Workload;
 }
 
+/**
+ * A model's `id` and `name` are plain strings, but the AI has produced them
+ * wrapped like a trait (`{"value":"Google Search Engine"}`) and, once, as a
+ * dump of the whole model — the next Re-simulate then copied the wrapped text
+ * forward, so the project title showed the JSON. Zod can't object: it is a
+ * valid string. This unwraps a JSON object holding the real text under
+ * `value` or under the field's own key, and returns anything else untouched.
+ */
+export function unwrapIdentityText(text: string, field: "id" | "name"): string {
+  let current = text;
+  for (let depth = 0; depth < 3; depth++) {
+    const trimmed = current.trim();
+    if (!trimmed.startsWith("{")) return current;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return current;
+    }
+    if (typeof parsed !== "object" || parsed === null) return current;
+    const obj = parsed as Record<string, unknown>;
+    const inner = typeof obj.value === "string" ? obj.value : typeof obj[field] === "string" ? obj[field] : undefined;
+    if (typeof inner !== "string" || inner.trim() === "") return current;
+    current = inner;
+  }
+  return current;
+}
+
+/** `model` with its `id` and `name` cleaned by `unwrapIdentityText`; the same object when nothing needed cleaning. */
+export function cleanModelIdentity<M extends { id: string; name: string }>(model: M): M {
+  const id = unwrapIdentityText(model.id, "id");
+  const name = unwrapIdentityText(model.name, "name");
+  return id === model.id && name === model.name ? model : { ...model, id, name };
+}
+
 /* ------------------------------------------------------------------ */
 /* AI-generated findings and fixes                                     */
 /* ------------------------------------------------------------------ */

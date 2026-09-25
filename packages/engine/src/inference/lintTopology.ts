@@ -123,3 +123,39 @@ export function mergeLintFindings(ai: AiFinding[], lint: AiFinding[]): AiFinding
   const have = new Set(ai.map((f) => `${f.code}\u0000${f.componentId}`));
   return [...ai, ...lint.filter((f) => !have.has(`${f.code}\u0000${f.componentId}`))];
 }
+
+/**
+ * Also collapses duplicate edges. Removes the direct edge in a parallel sync + async pair (A -> B alongside
+ * A -> queue/broker -> B), keeping the buffered path. The base call and the
+ * extended-components call run separately, so a fresh build can wire "upload ->
+ * transcoder" in one and add "upload -> broker -> transcoder" in the other:
+ * seen in 2 of 3 live builds of the same video-site description. The pair can't
+ * both be right, and the buffered path is the one a queue is added for, so the
+ * direct edge goes. Run on every build and Re-simulate result; the lint rule
+ * (`PARALLEL_SYNC_AND_ASYNC_PATH`) stays as the backstop for older projects.
+ */
+export function collapseParallelAsyncPaths<E extends { from: string; to: string }>(
+  components: { id: string; kind: string }[],
+  edges: E[],
+): E[] {
+  // Each from/to pair once too: the base and the extended call can both emit
+  // the same edge, and the merged list is where the two meet (seen live: a
+  // duplicate `matching-service -> notification-service` after a Re-simulate).
+  const seenPair = new Set<string>();
+  const unique = edges.filter((e) => {
+    const key = `${e.from}\u0000${e.to}`;
+    if (seenPair.has(key)) return false;
+    seenPair.add(key);
+    return true;
+  });
+  const kindOf = new Map(components.map((c) => [c.id, c.kind]));
+  const out = new Map<string, string[]>();
+  for (const e of unique) out.set(e.from, [...(out.get(e.from) ?? []), e.to]);
+  return unique.filter((e) => {
+    const buffered = (out.get(e.from) ?? []).some(
+      (mid) => mid !== e.to && ASYNC_KINDS.has(kindOf.get(mid) ?? "") && (out.get(mid) ?? []).includes(e.to),
+    );
+    // The direct edge is redundant only when it is not itself the queue leg.
+    return !(buffered && !ASYNC_KINDS.has(kindOf.get(e.to) ?? ""));
+  });
+}

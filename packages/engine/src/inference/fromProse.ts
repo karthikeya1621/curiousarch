@@ -30,8 +30,9 @@ import { BooleanTraitSchema, ProvenanceSchema, SystemModelSchema } from "./schem
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import { extractWorkloadParameters } from "./workloadParameters.ts";
 import { proposeExtendedComponents } from "./extendedComponents.ts";
+import { collapseParallelAsyncPaths } from "./lintTopology.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
-import type { SystemModel } from "../types.ts";
+import { cleanModelIdentity, type SystemModel } from "../types.ts";
 
 const TOOL_NAME = "emit_system_model";
 
@@ -165,9 +166,12 @@ export async function fromProse(
 
   return {
     model: {
-      ...topology.data,
+      ...cleanModelIdentity(topology.data),
       components: [...topology.data.components, ...extended.components],
-      edges: [...topology.data.edges, ...extended.edges],
+      edges: collapseParallelAsyncPaths(
+        [...topology.data.components, ...extended.components],
+        [...topology.data.edges, ...extended.edges],
+      ),
       workload: { ...topology.data.workload, ...workloadParameters },
     },
     raw: topology.raw,

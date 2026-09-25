@@ -120,7 +120,7 @@ A request to look at, review, analyze, or find gaps/risks/improvements in the CU
 
 "reply" is read aloud in a chat bubble, not rendered as a document - it has no markdown support at all, so any "**bold**", heading, or "1. / 2. / 3." list shows up as literal asterisks and numbers, not formatting. Write it the way you'd actually say it out loud to someone sitting next to you: plain sentences, no markdown, no headings, no numbered or bulleted lists - if you have several points, fold them into one or two short paragraphs instead of itemizing them. Keep it tight, usually 2-4 sentences; go longer only when the question genuinely can't be answered honestly in less. If you're tempted to write more than a short paragraph, that's a sign to pick the single most useful thing to say and say only that, not to organize everything you could say into a structured list.
 
-Decide, for the latest message:
+Decide, for the latest message. FIRST check it against the current model and any queued change: if it asks for something that is ALREADY TRUE (add a CDN when a CDN already sits there; add a queue between two components that already have one) or for something that can't be done (remove or change a component that isn't there), it is NOT a change - treat it as a QUESTION: isQuestion true, empty "instruction", and a "reply" that says plainly what is already in place or missing, naming the close match if there is one (a CDN when they said cache) and asking whether they meant that. Only a request that would actually change the model is a change: queuing one that does nothing spends a Re-simulate for no result. Then:
 - Is this a QUESTION about the architecture (asking "why", "what would happen if", "how does X work", or similar, without asking for an actual change)? If so, set isQuestion to true, put a clear, plain-spoken ANSWER in "reply" per the style rule above, grounded in specifics from the actual model (real component names, real traits) rather than generic textbook language, and set "instruction" to an empty string.
 - Or is this a REQUEST TO CHANGE the architecture (asking to add, remove, replace, or reconfigure something)? If so, set isQuestion to false and:
   - put a short, one-sentence restatement of the change in "reply", in the future tense since it is applied on Re-simulate (e.g. "Adding a CDN in front of the API Gateway to absorb static asset traffic.");
@@ -169,7 +169,13 @@ export async function chatWithProject(
     "chatWithProject:route",
   );
 
-  if (route.data.isQuestion) {
+  // A change's reply is a statement of what will happen ("Adding a CDN…").
+  // One that ends in a question ("…Did you mean the existing queue?") is the
+  // model asking for clarification while still flagging a change — seen live,
+  // and queuing it would spend a Re-simulate on a request nobody confirmed. The
+  // prompt asks for a question in that case; this is the deterministic half.
+  const clarifying = !route.data.isQuestion && route.data.reply.trim().endsWith("?");
+  if (route.data.isQuestion || clarifying) {
     return { isQuestion: true, reply: route.data.reply, repaired: route.repaired };
   }
 

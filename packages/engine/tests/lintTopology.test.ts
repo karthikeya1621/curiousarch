@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lintTopology, mergeLintFindings } from "../src/inference/lintTopology.js";
+import { collapseParallelAsyncPaths, lintTopology, mergeLintFindings } from "../src/inference/lintTopology.js";
 import { identifyFailures } from "../src/inference/identifyFailures.js";
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -80,5 +80,32 @@ describe("identifyFailures includes the lint", () => {
     const m = { id: "m", name: "m", workload: {}, ...model([c("a", "service"), c("q", "queue"), c("b", "service")], [["a", "b"], ["a", "q"], ["q", "b"]]) } as never;
     const findings = await identifyFailures(m, { client });
     expect(findings.map((x) => x.code)).toEqual(["PARALLEL_SYNC_AND_ASYNC_PATH"]);
+  });
+});
+
+describe("collapseParallelAsyncPaths", () => {
+  const comps = [c("up", "service"), c("q", "message-broker"), c("tx", "service"), c("db", "database")];
+  const edges = (pairs: [string, string][]) => pairs.map(([from, to]) => ({ from, to }));
+
+  it("drops the direct edge when a queue or broker path to the same target exists, and keeps everything else", () => {
+    const all = edges([["up", "tx"], ["up", "q"], ["q", "tx"], ["up", "db"], ["tx", "db"]]);
+    expect(collapseParallelAsyncPaths(comps, all)).toEqual(edges([["up", "q"], ["q", "tx"], ["up", "db"], ["tx", "db"]]));
+  });
+
+  it("changes nothing without a queue path, or when the only direct edge is the queue leg itself", () => {
+    const plain = edges([["up", "tx"], ["tx", "db"]]);
+    expect(collapseParallelAsyncPaths(comps, plain)).toEqual(plain);
+    const legOnly = edges([["up", "q"], ["q", "tx"]]);
+    expect(collapseParallelAsyncPaths(comps, legOnly)).toEqual(legOnly);
+  });
+
+  it("also collapses an edge emitted twice (the base and extended calls meeting in the merge)", () => {
+    const dup = edges([["up", "tx"], ["up", "tx"], ["tx", "db"]]);
+    expect(collapseParallelAsyncPaths(comps, dup)).toEqual(edges([["up", "tx"], ["tx", "db"]]));
+  });
+
+  it("leaves nothing for the lint to report afterwards", () => {
+    const all = edges([["up", "tx"], ["up", "q"], ["q", "tx"]]);
+    expect(lintTopology({ components: comps, edges: collapseParallelAsyncPaths(comps, all) } as never)).toEqual([]);
   });
 });

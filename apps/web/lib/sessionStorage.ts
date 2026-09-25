@@ -1,4 +1,4 @@
-import type { AiFinding, SystemModel } from "@archsim/engine";
+import { cleanModelIdentity, unwrapIdentityText, type AiFinding, type SystemModel } from "@archsim/engine";
 import { createClient } from "./supabase/client";
 
 const TABLE = "projects";
@@ -169,6 +169,22 @@ export async function saveProject(
   }
 }
 
+/**
+ * Projects saved before the engine started cleaning model identity can carry a
+ * JSON-wrapped `name` (`{"value":"…"}`) in the working model, the baseline and
+ * every version. Cleaned as they're read, so nothing needs a database
+ * migration; the next save writes the clean text back, and the projects list
+ * (whose `name` column was denormalized from it) heals with it.
+ */
+export function healSession(session: SavedSession): SavedSession {
+  return {
+    ...session,
+    model: cleanModelIdentity(session.model),
+    baselineModel: session.baselineModel ? cleanModelIdentity(session.baselineModel) : session.baselineModel,
+    versions: (session.versions ?? []).map((v) => ({ ...v, model: cleanModelIdentity(v.model) })),
+  };
+}
+
 export async function loadProject(id: string): Promise<SavedSession | null> {
   const supabase = createClient();
   const userId = await currentUserId(supabase);
@@ -182,7 +198,7 @@ export async function loadProject(id: string): Promise<SavedSession | null> {
       .eq("user_id", userId)
       .maybeSingle();
     if (error || !data) return null;
-    return data.data as SavedSession;
+    return healSession(data.data as SavedSession);
   } catch {
     return null;
   }
@@ -202,7 +218,7 @@ export async function listProjects(): Promise<ProjectSummary[] | null> {
     if (error || !data) return null;
     return data.map((row) => ({
       id: row.id as string,
-      name: row.name as string,
+      name: unwrapIdentityText(row.name as string, "name"),
       updatedAt: new Date(row.updated_at as string).getTime(),
     }));
   } catch {

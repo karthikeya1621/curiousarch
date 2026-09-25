@@ -415,3 +415,29 @@ describe("edges into a CDN are turned around in code", () => {
     expect(result.edges).toEqual([{ from: "checkout-svc", to: "stripe-api" }, { from: "edge-cdn", to: "checkout-svc" }]);
   });
 });
+
+describe("checkNoDroppedExtendedEdges: the connection must survive, not the literal edge", () => {
+  const baseIds = new Set(["index-service", "ingest-queue"]);
+  const job = [{ id: "crawler-job" }];
+
+  it("accepts a direct edge replaced by a path through a base queue (the base call's own edge completes it)", () => {
+    const previous = [{ from: "crawler-job", to: "index-service" }];
+    const result = { components: job, edges: [{ from: "crawler-job", to: "ingest-queue" }] };
+    const baseEdges = [{ from: "ingest-queue", to: "index-service" }];
+    expect(checkNoDroppedExtendedEdges(previous, baseIds, result, baseEdges)).toBeNull();
+  });
+
+  it("still flags the edge when nothing else connects the two ends, and reports a doubled edge once", () => {
+    const previous = [{ from: "crawler-job", to: "index-service" }, { from: "crawler-job", to: "index-service" }];
+    const problem = checkNoDroppedExtendedEdges(previous, baseIds, { components: job, edges: [] }, [
+      { from: "ingest-queue", to: "index-service" },
+    ]);
+    expect(problem).toMatch(/dropped or reversed 1 existing edge/);
+  });
+
+  it("does not let a path in the wrong direction count", () => {
+    const previous = [{ from: "crawler-job", to: "index-service" }];
+    const result = { components: job, edges: [{ from: "index-service", to: "crawler-job" }] };
+    expect(checkNoDroppedExtendedEdges(previous, baseIds, result)).toMatch(/dropped or reversed/);
+  });
+});

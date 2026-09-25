@@ -74,7 +74,8 @@ import { STRUCTURAL_SELF_CHECK, SystemModelSchema } from "./schema.ts";
 import { buildTool } from "./fromProse.ts";
 import { EXTENDED_KINDS, isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
-import { MAX_BASE_COMPONENTS, type Component, type SystemModel } from "../types.ts";
+import { collapseParallelAsyncPaths } from "./lintTopology.ts";
+import { cleanModelIdentity, MAX_BASE_COMPONENTS, type Component, type SystemModel } from "../types.ts";
 
 const REWORK_PROMPT = `You are reconsidering an EXISTING rough architectural model, not describing a new system from scratch. You will be given the current model as JSON - its components, their traits, the edges between them, and its workload.users/workload.requests for context (each has "included": whether that dimension is relevant to this system, "tier": the current rough step on a small ladder, and "target": the original ambition for it). Some of it may already reflect real fixes that were applied (an added component, a corrected trait). You may also be given a list of specific fixes the user has already chosen to apply, and a list of changes the user asked for in chat.
 
@@ -336,11 +337,15 @@ export function stripExtendedReferences(raw: unknown, extendedIds: ReadonlySet<s
 }
 
 export async function reworkModel(
-  model: SystemModel,
+  input: SystemModel,
   pendingFixes: PendingFixInput[] = [],
   pendingChanges: PendingChangeInput[] = [],
   options: StructuredCallOptions = {},
 ): Promise<ReworkModelResult> {
+  // The id and name are never the AI's to change (the prompt says so), and a
+  // rework once copied a JSON-wrapped name forward for good. They come from
+  // the input, cleaned, and are put back over whatever the AI returned.
+  const model = cleanModelIdentity(input);
   const pendingContext = `${formatPendingFixes(pendingFixes)}${formatPendingChanges(pendingChanges)}`;
   const extendedIds = new Set(model.components.filter(isExtendedComponent).map((c) => c.id));
   const result = await runStructuredCall(
@@ -390,8 +395,13 @@ export async function reworkModel(
   return {
     model: {
       ...result.data,
+      id: model.id,
+      name: model.name,
       components: [...result.data.components, ...extended.components],
-      edges: [...result.data.edges, ...extended.edges],
+      edges: collapseParallelAsyncPaths(
+        [...result.data.components, ...extended.components],
+        [...result.data.edges, ...extended.edges],
+      ),
       workload: { ...result.data.workload, users: model.workload.users, requests: model.workload.requests },
     },
     raw: result.raw,

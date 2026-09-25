@@ -199,7 +199,7 @@ You will be given: the system's PREVIOUS extended components (if any), the EXIST
 
 You may also be told the system's current scale. Instance counts are yours to keep right, automatically: when a load balancer needs more than one instance at that scale, set its instanceCount to "multiple" yourself as part of this revision; while the scale is small leave it "single". Give the trait a rationale that names the scale.
 
-Keep every existing edge exactly as it was — the same two ends and the SAME DIRECTION — as long as both ends still exist. An edge's direction is meaning (which side calls or depends on which), so never reverse one, and never drop one unless the request specifically requires it. Only when a base end no longer exists (that component was replaced or removed in the rework) re-point the edge to the base component that now serves the equivalent role.
+Keep every existing edge exactly as it was — the same two ends and the SAME DIRECTION — as long as both ends still exist. The one exception: when a chosen fix or requested change puts a component between two ends (a queue between a job and a service), route the connection through it and remove the direct edge - keeping both leaves two competing paths. An edge's direction is meaning (which side calls or depends on which), so never reverse one, and never drop one unless the request specifically requires it. Only when a base end no longer exists (that component was replaced or removed in the rework) re-point the edge to the base component that now serves the equivalent role.
 
 The default action for every previous extended component is to KEEP it, with its EXACT same id, and keep its edge(s) as they were (see above) — re-pointing one to the equivalent base component only where its base end no longer exists (base component ids may have changed during the rework you're not shown the details of). Only drop one if the system described no longer has any plausible need for it at all - not because the base topology's ids changed, not because you're being cautious, and never as a default. This is the same "preserve by default" rule the base rework itself follows: silently losing something the user's system already had is a mistake, not a simplification. Only mint a new id for something genuinely new that didn't exist before.
 
@@ -339,12 +339,38 @@ export function checkNoDroppedExtendedEdges(
   previousEdges: Edge[],
   reworkedBaseIds: ReadonlySet<string>,
   result: { components: { id: string }[]; edges: Edge[] },
+  /** The reworked base call's own edges — a path may run through them (extended -> queue -> base). */
+  baseEdges: Edge[] = [],
 ): string | null {
   const resultIds = new Set(result.components.map((c) => c.id));
   const exists = (id: string) => reworkedBaseIds.has(id) || resultIds.has(id);
-  const dropped = previousEdges.filter(
-    (e) => exists(e.from) && exists(e.to) && !result.edges.some((r) => r.from === e.from && r.to === e.to),
-  );
+  // What must survive is the connection, not the literal edge: a fix that
+  // inserts a queue between a job and a service replaces their direct edge
+  // with a path through it (found live: the strict version rejected exactly
+  // that, and the retry kept both, leaving two competing paths). Judged on
+  // unique pairs, over the extended and base edges together. A reversed edge
+  // is still caught: the original direction has no path.
+  const next = new Map<string, string[]>();
+  for (const e of [...baseEdges, ...result.edges]) next.set(e.from, [...(next.get(e.from) ?? []), e.to]);
+  const reachable = (from: string, to: string): boolean => {
+    const seen = new Set<string>();
+    const stack = [...(next.get(from) ?? [])];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (id === to) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      stack.push(...(next.get(id) ?? []));
+    }
+    return false;
+  };
+  const seenPairs = new Set<string>();
+  const dropped = previousEdges.filter((e) => {
+    const key = `${e.from}\u0000${e.to}`;
+    if (seenPairs.has(key)) return false;
+    seenPairs.add(key);
+    return exists(e.from) && exists(e.to) && !reachable(e.from, e.to);
+  });
   if (dropped.length === 0) return null;
 
   const list = dropped.map((e) => `"${e.from}" -> "${e.to}"`).join(", ");
@@ -352,8 +378,8 @@ export function checkNoDroppedExtendedEdges(
   const them = dropped.length === 1 ? "it" : "them";
   return (
     `You dropped or reversed ${dropped.length} existing ${noun} whose ends both still exist: ${list}. ` +
-    `Every existing edge must still be present exactly as it was, in the same direction — restore ${them}, ` +
-    `unless the request specifically required removing ${them}.`
+    `Every existing edge must still be present in the same direction (or reachable through a component that was ` +
+    `inserted between its ends) — restore ${them}, unless the request specifically required removing ${them}.`
   );
 }
 
@@ -393,7 +419,12 @@ export async function reviseExtendedComponents(
       maxRetries: 2,
       ...options,
       validateResult: (data) =>
-        checkNoDroppedExtendedEdges(previousEdges, baseIds, data as ExtendedComponentsResponse),
+        checkNoDroppedExtendedEdges(
+          previousEdges,
+          baseIds,
+          data as ExtendedComponentsResponse,
+          (reworkedBaseModel as { edges?: Edge[] }).edges ?? [],
+        ),
     },
     "reviseExtendedComponents",
   );

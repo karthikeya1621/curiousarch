@@ -212,3 +212,46 @@ describe("chatWithProject", () => {
     }
   });
 });
+
+describe("route prompt", () => {
+  it("treats a change that can't be made as a question, so a no-op is never queued", async () => {
+    let system = "";
+    const client = {
+      messages: {
+        create: async (params: { system: unknown }) => {
+          system = JSON.stringify(params.system);
+          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { isQuestion: true, reply: "r", instruction: "" } }] };
+        },
+      },
+    } as unknown as import("@anthropic-ai/sdk").default;
+    await chatWithProject({ id: "m", name: "m", workload: {}, components: [], edges: [] } as never, "Remove the cache.", [], [], [], [], { client });
+    expect(system).toMatch(/ALREADY TRUE[\s\S]*is NOT a change[\s\S]*treat it as a QUESTION/);
+  });
+});
+
+describe("a reply that asks a question is never queued as a change", () => {
+  const client = (reply: string) =>
+    ({
+      messages: {
+        create: async () => ({
+          content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { isQuestion: false, reply, instruction: "Add a queue." } }],
+        }),
+      },
+    }) as unknown as Anthropic;
+
+  it("treats a change flagged with a clarifying question as a question (nothing to queue)", async () => {
+    const result = await chatWithProject(checkout, "Add a queue.", [], [], [], [], {
+      client: client("You already have a queue between them. Did you mean a second one?"),
+    });
+    expect(result.isQuestion).toBe(true);
+    expect(result.instruction).toBeUndefined();
+  });
+
+  it("still queues an ordinary change statement", async () => {
+    const result = await chatWithProject(checkout, "Add a queue.", [], [], [], [], {
+      client: client("Adding a queue between the order service and the database."),
+    });
+    expect(result.isQuestion).toBe(false);
+    expect(result.instruction).toBe("Add a queue.");
+  });
+});

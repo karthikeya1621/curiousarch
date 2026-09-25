@@ -12,7 +12,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { baseView, checkNoDroppedEdges, dedupeEdges, describeScale, reconcileWithPrevious, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
 import { STRUCTURAL_SELF_CHECK } from "../src/inference/schema.js";
 import { checkout } from "../models/reference.js";
-import type { SystemModel } from "../src/types.js";
+import { cleanModelIdentity, unwrapIdentityText, type SystemModel } from "../src/types.js";
 
 // reworkModel's own schema no longer asks for workload at all (see
 // reworkModel.ts's top comment — the user sets a tier by moving a
@@ -606,5 +606,43 @@ describe("reconcileWithPrevious", () => {
   it("passes anything that isn't a model through untouched", () => {
     expect(reconcileWithPrevious(null, prev, { anythingAsked: false })).toBeNull();
     expect(reconcileWithPrevious({ components: "x" }, prev, { anythingAsked: false })).toEqual({ components: "x" });
+  });
+});
+
+describe("model id and name are never the AI's to change", () => {
+  it("unwrapIdentityText peels a trait-style wrapper, a whole-model dump and nesting, and leaves ordinary text alone", () => {
+    expect(unwrapIdentityText('{"value":"Google Search"}', "name")).toBe("Google Search");
+    expect(unwrapIdentityText('{"value": "search-v1"}', "id")).toBe("search-v1");
+    expect(unwrapIdentityText('{"id":"search-v1","name":"Search","components":[]}', "id")).toBe("search-v1");
+    expect(unwrapIdentityText(JSON.stringify({ value: JSON.stringify({ value: "Deep" }) }), "name")).toBe("Deep");
+    expect(unwrapIdentityText("Checkout {v2}", "name")).toBe("Checkout {v2}");
+    expect(unwrapIdentityText('{"unrelated":1}', "name")).toBe('{"unrelated":1}');
+    expect(unwrapIdentityText("{not json", "name")).toBe("{not json");
+    expect(unwrapIdentityText('{"value":""}', "name")).toBe('{"value":""}');
+  });
+
+  it("cleanModelIdentity returns the same object when there is nothing to clean", () => {
+    expect(cleanModelIdentity(checkout)).toBe(checkout);
+    expect(cleanModelIdentity({ ...checkout, name: '{"value":"X"}' }).name).toBe("X");
+  });
+
+  it("keeps the input's (cleaned) id and name whatever the AI returns for them", async () => {
+    const wrapped = { ...checkout, name: '{"value":"Checkout / order placement"}' };
+    const client = fakeClient([
+      toolUseResponse({ ...validReworkInput, id: '{"value": "checkout"}', name: '{"value":"Something else"}' }),
+      emptyExtendedResponse(),
+    ]);
+    const result = await reworkModel(wrapped, [], [], { client });
+    expect(result.model.id).toBe("checkout");
+    expect(result.model.name).toBe("Checkout / order placement");
+  });
+
+  it("sends the AI the cleaned identity, so a wrapped name is not copied forward", async () => {
+    let seen = "";
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      if (!seen) seen = JSON.stringify(params.messages);
+    });
+    await reworkModel({ ...checkout, name: '{"value":"Clean name"}' }, [], [], { client });
+    expect(seen).toContain('\\"name\\":\\"Clean name\\"');
   });
 });

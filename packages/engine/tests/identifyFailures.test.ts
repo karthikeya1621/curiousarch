@@ -213,3 +213,19 @@ describe("dropMisattributedFindings", () => {
     ]);
   });
 });
+
+describe("identifyFailures prompt", () => {
+  it("asks for risks to be judged at the current scale, not a future one", async () => {
+    let system = "";
+    const client = {
+      messages: {
+        create: async (params: { system: unknown }) => {
+          system = JSON.stringify(params.system);
+          return { content: [{ type: "tool_use", id: "c", name: "emit_failures", input: { findings: [] } }] };
+        },
+      },
+    } as unknown as Anthropic;
+    await identifyFailures({ id: "m", name: "m", workload: {}, components: [], edges: [] } as never, { client });
+    expect(system).toMatch(/Judge every risk at the system's CURRENT scale/);
+  });
+});
