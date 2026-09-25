@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { dropInstanceCountFindings, dropMisattributedFindings, identifyFailures } from "../src/inference/identifyFailures.js";
+import { dropInstanceCountFindings, dropAtScaleFindingsWhenSmall, dropMisattributedFindings, dropStandbyFallbackFindings, identifyFailures } from "../src/inference/identifyFailures.js";
 import { checkout } from "../models/reference.js";
 
 const validFindingsInput = {
@@ -227,5 +227,49 @@ describe("identifyFailures prompt", () => {
     } as unknown as Anthropic;
     await identifyFailures({ id: "m", name: "m", workload: {}, components: [], edges: [] } as never, { client });
     expect(system).toMatch(/Judge every risk at the system's CURRENT scale/);
+  });
+});
+
+describe("dropStandbyFallbackFindings", () => {
+  const model = {
+    components: [
+      { id: "payment-processor", label: "Payment processor" },
+      { id: "payment-processor-secondary", label: "Secondary payment processor" },
+      { id: "db", label: "Order database" },
+    ],
+  };
+  const f = (code: string, componentId: string) => ({ code, componentId, severity: "warning", title: "t", explanation: "e", fixes: [] }) as never;
+  const keep = (...fs: ReturnType<typeof f>[]) => dropStandbyFallbackFindings(fs, model as never).map((x: { code: string; componentId: string }) => `${x.code}:${x.componentId}`);
+
+  it("drops a no-fallback finding on a component that is itself the standby, keeps it on the primary and other findings on the standby", () => {
+    expect(
+      keep(
+        f("EXTERNAL_DEPENDENCY_NO_FALLBACK", "payment-processor-secondary"),
+        f("EXTERNAL_DEPENDENCY_NO_FALLBACK", "payment-processor"),
+        f("EXTERNAL_DEPENDENCY_NO_TIMEOUT", "payment-processor-secondary"),
+      ),
+    ).toEqual(["EXTERNAL_DEPENDENCY_NO_FALLBACK:payment-processor", "EXTERNAL_DEPENDENCY_NO_TIMEOUT:payment-processor-secondary"]);
+  });
+
+  it("does not mistake a word that merely contains the marker (e.g. 'secondary-index' is a standby name, 'backups' is not)", () => {
+    const m2 = { components: [{ id: "secondary-index", label: "x" }, { id: "backups-store", label: "y" }] };
+    const out = dropStandbyFallbackFindings([f("NO_FALLBACK", "secondary-index"), f("NO_FALLBACK", "backups-store")] as never, m2 as never);
+    expect(out.map((x) => x.componentId)).toEqual(["backups-store"]);
+  });
+});
+
+describe("dropAtScaleFindingsWhenSmall", () => {
+  const f = (code: string) => ({ code, componentId: "q", severity: "critical", title: "t", explanation: "e", fixes: [] }) as never;
+  const codes = (workload: unknown, ...cs: string[]) => dropAtScaleFindingsWhenSmall(cs.map(f), workload as never).map((x) => x.code);
+  const small = { users: { included: true, tier: 100, target: 1_000_000 }, requests: { included: false, tier: 1000, target: 1000 } };
+
+  it("drops findings whose code says 'at scale' while everything in use is on the bottom rung", () => {
+    expect(codes(small, "FIXED_SCALING_AT_SCALE", "UNCACHED_DATABASE_AT_SCALE", "QUEUE_NO_DEAD_LETTER")).toEqual(["QUEUE_NO_DEAD_LETTER"]);
+  });
+
+  it("keeps them once any dimension in use is above the bottom rung, and when no dimension is in use", () => {
+    expect(codes({ ...small, users: { included: true, tier: 10_000, target: 1_000_000 } }, "FIXED_SCALING_AT_SCALE")).toEqual(["FIXED_SCALING_AT_SCALE"]);
+    expect(codes({ users: { included: true, tier: 100, target: 100 }, requests: { included: true, tier: 100_000, target: 100_000 } }, "X_AT_SCALE")).toEqual(["X_AT_SCALE"]);
+    expect(codes({}, "X_AT_SCALE")).toEqual(["X_AT_SCALE"]);
   });
 });

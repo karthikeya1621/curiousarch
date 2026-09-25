@@ -19,7 +19,7 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { lintTopology, mergeLintFindings } from "./lintTopology.ts";
-import type { AiFinding, SystemModel } from "../types.ts";
+import { REQUEST_TIERS, USER_TIERS, type AiFinding, type SystemModel } from "../types.ts";
 
 const AiFixSchema = z.object({
   id: z.string().min(1),
@@ -71,6 +71,37 @@ export function dropInstanceCountFindings(findings: AiFinding[], model: Pick<Sys
   });
 }
 
+/** A component that exists to be another's standby: its own "no fallback" is not a risk. */
+const STANDBY_NAME = /(^|[^a-z])(secondary|backup|standby|failover|fallback|redundant|alternat(e|ive))([^a-z]|$)/i;
+
+/**
+ * Drops "no fallback" findings raised on a component whose name says it IS the
+ * fallback. Found live: choosing the fix "integrate a secondary payment
+ * processor" added `payment-processor-secondary`, and the next review reported
+ * EXTERNAL_DEPENDENCY_NO_FALLBACK on it — every fix produced a fresh finding
+ * of the same kind, so the list never converged.
+ */
+export function dropStandbyFallbackFindings(findings: AiFinding[], model: Pick<SystemModel, "components">): AiFinding[] {
+  const named = new Map(model.components.map((c) => [c.id, `${c.id} ${c.label}`]));
+  return findings.filter((f) => !(/FALLBACK/i.test(f.code) && STANDBY_NAME.test(named.get(f.componentId) ?? "")));
+}
+
+/**
+ * Drops findings whose own code says they are about running "at scale" while
+ * every dimension in use is still on the bottom rung (100 users, 1000
+ * requests). The prompt asks the model to judge risks at the current scale, but
+ * it still reported FIXED_SCALING_AT_SCALE on 100-user systems (two of three
+ * real projects). They come back on their own once the scale is raised and the
+ * review re-runs. Only the code is matched, never the explanation.
+ */
+export function dropAtScaleFindingsWhenSmall(findings: AiFinding[], workload: SystemModel["workload"]): AiFinding[] {
+  const used: boolean[] = [];
+  if (workload.users?.included) used.push(workload.users.tier === USER_TIERS[0]);
+  if (workload.requests?.included) used.push(workload.requests.tier === REQUEST_TIERS[0]);
+  const small = used.length > 0 && used.every(Boolean);
+  return small ? findings.filter((f) => !/AT_SCALE/i.test(f.code)) : findings;
+}
+
 /** Finding codes about one kind's own traits, and the only kind they can be about. */
 const KIND_SPECIFIC_CODES: { code: RegExp; kind: string }[] = [
   { code: /^EXTERNAL_DEPENDENCY_/, kind: "external-dependency" },
@@ -106,6 +137,8 @@ For each REAL risk you find, report:
 Instance counts are not findings. Every component's instanceCount trait (how many copies of a service, load balancer or database run) is adjusted automatically when the system is re-simulated at a larger scale, so whether something runs as one copy or several, or whether a database has replicas, is never a risk to report - however it would be worded. Report risks that come from the OTHER traits and from the shape of the topology.
 
 Judge every risk at the system's CURRENT scale, the workload tiers in the JSON. A risk that only bites at a far larger scale than the current tier ("at scale" problems on a system serving a hundred users) is not a finding yet - the person raises the scale to meet those later. Say "critical" only for something that breaks at the current scale.
+
+A component that exists to be another's standby (a secondary provider, a backup, a failover copy) is the fallback itself - never report "no fallback" on it.
 
 A CDN is reached by clients first and pulls from its origin, so it has no incoming edges from other components; reason about it as sitting in front of the origin.
 
@@ -143,6 +176,9 @@ export async function identifyFailures(
     options,
     "identifyFailures",
   );
-  const fromAi = dropMisattributedFindings(dropInstanceCountFindings(result.data.findings, model), model);
+  const fromAi = dropAtScaleFindingsWhenSmall(
+    dropStandbyFallbackFindings(dropMisattributedFindings(dropInstanceCountFindings(result.data.findings, model), model), model),
+    model.workload,
+  );
   return mergeLintFindings(fromAi, lintTopology(model));
 }
