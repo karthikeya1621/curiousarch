@@ -438,6 +438,24 @@ describe("setWorkloadTier", () => {
     expect(useAppStore.getState().findingsStale).toBe(true);
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it("moves at most one rung above the last simulated tier — a bigger jump lands on that rung", () => {
+    const at = (tier: number): SystemModel => ({
+      ...checkout,
+      workload: { ...checkout.workload, users: { included: true, tier, target: 100_000_000 } },
+    });
+    useAppStore.setState({ model: at(100), baselineModel: at(100) });
+
+    useAppStore.getState().setWorkloadTier("users", 1_000_000);
+    expect(useAppStore.getState().model.workload.users?.tier).toBe(10_000);
+
+    // Once Re-simulate has committed 10K, the next rung opens up; lowering is always allowed.
+    useAppStore.setState({ baselineModel: at(10_000) });
+    useAppStore.getState().setWorkloadTier("users", 100_000_000);
+    expect(useAppStore.getState().model.workload.users?.tier).toBe(1_000_000);
+    useAppStore.getState().setWorkloadTier("users", 100);
+    expect(useAppStore.getState().model.workload.users?.tier).toBe(100);
+  });
 });
 
 /**

@@ -1,4 +1,6 @@
+import { REQUEST_TIERS, USER_TIERS } from "@archsim/engine";
 import type { AiFinding, SystemModel } from "@archsim/engine";
+import { clampTier } from "../../workloadTiers";
 import type { AppliedFixRecord } from "../../sessionStorage";
 import { derivePending } from "../pending";
 import { refreshFindings } from "../findings";
@@ -97,6 +99,9 @@ export function createModelActions(set: StoreSet, get: StoreGet): ModelActions {
       const { model } = get();
       const current = model.workload[dimension];
       if (!current) return;
+      // One rung above the last simulated tier at most (see lib/workloadTiers.ts);
+      // the control disables the higher options, this is the backstop.
+      tier = clampTier(dimension === "users" ? USER_TIERS : REQUEST_TIERS, get().baselineModel?.workload[dimension]?.tier, tier);
       // Deliberately does NOT bump autosaveRevision — a parameter change is
       // something to review, not to persist (or redraw the canvas for — see
       // FlowDiagram.tsx's own comment on why it depends on

@@ -2,6 +2,7 @@ import { USER_TIERS, REQUEST_TIERS } from "@archsim/engine";
 import type { SystemModel, WorkloadDimensionValue } from "@archsim/engine";
 import { useAppStore } from "../lib/store";
 import { formatTier } from "../lib/formatTier";
+import { highestReachableTier } from "../lib/workloadTiers";
 import { Card } from "./Card";
 import { UndoIcon } from "./icons";
 
@@ -10,11 +11,14 @@ function SegmentedToggle({
   value,
   onChange,
   label,
+  disabledOptions = {},
 }: {
   options: readonly string[];
   value: string;
   onChange: (next: string) => void;
   label: string;
+  /** option -> why it can't be chosen right now (shown as its tooltip). */
+  disabledOptions?: Record<string, string>;
 }) {
   return (
     <div
@@ -28,11 +32,13 @@ function SegmentedToggle({
           role="radio"
           aria-checked={opt === value}
           onClick={() => onChange(opt)}
+          disabled={opt in disabledOptions}
+          title={disabledOptions[opt]}
           className={
-            "rounded px-2 py-0.5 text-xs font-medium transition-colors " +
+            "rounded px-2 py-0.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 " +
             (opt === value
               ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-              : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700")
+              : "text-slate-500 enabled:hover:bg-slate-100 dark:enabled:hover:bg-slate-700")
           }
         >
           {opt}
@@ -60,6 +66,14 @@ function TierControl({
   const ladder = dimension === "users" ? USER_TIERS : REQUEST_TIERS;
   const label = dimension === "users" ? "Users" : "Requests";
   const options = ladder.map(formatTier);
+  // One rung above the last simulated tier at most (lib/workloadTiers.ts):
+  // Re-simulate at each step so failures show up one scale at a time.
+  const baselineTier = useAppStore((s) => s.baselineModel?.workload[dimension]?.tier);
+  const reachable = highestReachableTier(ladder, baselineTier);
+  const disabledOptions: Record<string, string> = {};
+  for (const t of ladder) {
+    if (t > reachable) disabledOptions[formatTier(t)] = `Re-simulate at ${formatTier(reachable)} first — scale up one step at a time`;
+  }
 
   return (
     <div className="border-b border-slate-100 pb-3 pt-2 last:border-b-0 dark:border-slate-700">
@@ -71,6 +85,7 @@ function TierControl({
           options={options}
           value={formatTier(value.tier)}
           label={label}
+          disabledOptions={disabledOptions}
           onChange={(next) => {
             const tier = ladder.find((t) => formatTier(t) === next);
             if (tier !== undefined) setWorkloadTier(dimension, tier);
