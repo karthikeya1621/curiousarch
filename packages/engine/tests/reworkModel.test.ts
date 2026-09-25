@@ -731,10 +731,17 @@ describe("requests the extended step owns don't cost a retry, and no connection 
     expect(result.model.edges.some((e) => e.from === "gw" && e.to === "svc")).toBe(true);
   });
 
-  it("for any other request the same drop is still rejected and retried", async () => {
+  it("with nothing queued the same drop is still rejected and retried", async () => {
     const client = fakeClient([toolUseResponse(dropsGwSvc), toolUseResponse(validReworkInput), emptyExtendedResponse()]);
-    const result = await reworkModel(checkout, [], [{ request: "add rate limiting", instruction: "Turn on rate limiting." }], { client });
+    const result = await reworkModel(checkout, [], [], { client });
     expect(result.repaired).toBe(true);
+  });
+
+  it("with ANY request queued the base-only check stands down and the merged graph is repaired instead — no reading of the request's wording", async () => {
+    const client = fakeClient([toolUseResponse(dropsGwSvc), emptyExtendedResponse()]);
+    const result = await reworkModel(checkout, [], [{ request: "add rate limiting", instruction: "Turn on rate limiting." }], { client });
+    expect(result.repaired).toBe(false);
+    expect(result.model.edges.some((e) => e.from === "gw" && e.to === "svc")).toBe(true);
   });
 });
 
@@ -785,5 +792,45 @@ describe("instance counts come from the tier groups, judged by the AI — not fr
     const result = await reworkModel(tenK, [], [], { client });
     const svc = result.model.components.find((c) => c.id === "svc") as unknown as { instanceCount: { value: string } };
     expect(svc.instanceCount.value).toBe("single");
+  });
+});
+
+describe("load balancer routing on a Re-simulate", () => {
+  const lb = {
+    id: "lb1",
+    label: "Load balancer",
+    kind: "load-balancer",
+    instanceCount: { value: "single", provenance: "default", rationale: "One balancer at launch scale." },
+    hasHealthChecks: { value: false, provenance: "default", rationale: "No health checks described." },
+  };
+  const reviseWith = (edges: { from: string; to: string }[]): Anthropic.Message =>
+    ({ content: [{ type: "tool_use", id: "x", name: "emit_extended_components", input: { components: [lb], edges } }] }) as unknown as Anthropic.Message;
+  const withOldBalancer: SystemModel = {
+    ...checkout,
+    components: [...checkout.components, lb as never],
+    edges: [...checkout.edges, { from: "lb1", to: "svc" }],
+  };
+
+  it("leaves a balancer that was already there exactly as the user has it: a direct call to the service stays", async () => {
+    const client = fakeClient([toolUseResponse(validReworkInput), reviseWith([{ from: "lb1", to: "svc" }])]);
+    const result = await reworkModel(withOldBalancer, [], [], { client });
+    expect(result.model.edges.some((e) => e.from === "gw" && e.to === "svc")).toBe(true);
+    expect(result.model.edges.some((e) => e.from === "gw" && e.to === "lb1")).toBe(false);
+  });
+
+  it("routes callers through a balancer this Re-simulate adds (the direct edge becomes gw -> lb -> svc)", async () => {
+    const asked = [{ request: "add a load balancer in front of the order service", instruction: "Add a load balancer in front of svc." }];
+    const client = fakeClient([toolUseResponse(validReworkInput), reviseWith([{ from: "lb1", to: "svc" }])]);
+    const result = await reworkModel(checkout, [], asked, { client });
+    expect(result.model.edges.some((e) => e.from === "gw" && e.to === "svc")).toBe(false);
+    expect(result.model.edges.some((e) => e.from === "gw" && e.to === "lb1")).toBe(true);
+  });
+
+  it("a user's later edit sticks: once the balancer exists, removing a caller's route through it is not undone by the next Re-simulate", async () => {
+    // gw calls svc directly while an existing balancer also fronts it — the user's own arrangement
+    const client = fakeClient([toolUseResponse(validReworkInput), reviseWith([{ from: "lb1", to: "svc" }])]);
+    const result = await reworkModel(withOldBalancer, [], [{ request: "let the gateway call the service directly", instruction: "Keep gw -> svc." }], { client });
+    expect(result.model.edges.some((e) => e.from === "gw" && e.to === "svc")).toBe(true);
+    expect(result.model.edges.some((e) => e.from === "gw" && e.to === "lb1")).toBe(false);
   });
 });

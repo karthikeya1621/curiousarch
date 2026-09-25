@@ -454,3 +454,12 @@ describe("extended kinds also start without protections", () => {
     expect(PROPOSE_PROMPT).toMatch(/no protections - a timeout, a fallback, origin shielding, versioning, locking/);
   });
 });
+
+describe("load balancer placement in the prompts", () => {
+  it("tells both steps a NEW balancer sits between its callers and the service, and that an existing one keeps its connections", () => {
+    for (const prompt of [PROPOSE_PROMPT, REVISE_PROMPT]) {
+      expect(prompt).toMatch(/ADD a load balancer it sits BETWEEN its callers and what it balances: edges run caller -> load balancer -> service/);
+      expect(prompt).toMatch(/already in the system keeps the connections it has/);
+    }
+  });
+});

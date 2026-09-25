@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { dropInstanceCountFindings, dropAtScaleFindingsWhenSmall, dropMisattributedFindings, dropStandbyFallbackFindings, identifyFailures } from "../src/inference/identifyFailures.js";
+import { dropInstanceCountFindings, dropLargerScaleFindingsWhenSmall, dropMisattributedFindings, identifyFailures } from "../src/inference/identifyFailures.js";
 import { checkout } from "../models/reference.js";
 
 const validFindingsInput = {
@@ -22,6 +22,8 @@ const validFindingsInput = {
       fixes: [
         { id: "add-circuit-breaker", label: "Add a circuit breaker on the order service", tradeoff: "Failures surface as fast errors instead of hangs, which callers need to handle." },
       ],
+      bitesAt: "now",
+      aboutInstanceCount: false,
     },
   ],
 };
@@ -37,6 +39,8 @@ const invalidFindingsInput = {
       title: "No circuit breaker before the database",
       explanation: "",
       fixes: [],
+      bitesAt: "now",
+      aboutInstanceCount: false,
     },
   ],
 };
@@ -102,68 +106,56 @@ describe("identifyFailures", () => {
   });
 });
 
-describe("instance counts are never findings", () => {
+describe("instance counts are never findings — the AI flags them, code reads the flag", () => {
   const finding = (over: Record<string, unknown>) => ({
     code: "CASCADING_FAILURE_RISK",
-    severity: "warning" as const,
+    severity: "warning",
     componentId: "svc",
     title: "No circuit breaker",
     explanation: "Calls pile up.",
     fixes: [{ id: "f", label: "Do a thing", tradeoff: "Costs something." }],
+    bitesAt: "now",
+    aboutInstanceCount: false,
     ...over,
   });
   // svc: service, db: database, gw: gateway (from checkout) + an external dependency.
   const model = {
-    components: [
-      ...checkout.components,
-      { id: "stripe", kind: "external-dependency", label: "Stripe" },
-    ],
+    components: [...checkout.components, { id: "stripe", kind: "external-dependency", label: "Stripe" }],
   } as never;
   const drop = (...findings: ReturnType<typeof finding>[]) => dropInstanceCountFindings(findings as never, model);
 
-  it("keeps a finding about anything else", () => {
-    const keep = finding({});
+  it("keeps a finding the AI did not flag, whatever its wording", () => {
+    const keep = finding({ title: "Single instance of the order service", code: "SINGLE_POINT_OF_FAILURE" });
     expect(drop(keep)).toEqual([keep]);
   });
 
-  it.each([
-    ["the classic code", { code: "SINGLE_POINT_OF_FAILURE", title: "Order service is a problem" }],
-    ["an invented instance code", { code: "SINGLE_INSTANCE_SERVICE", title: "Something" }],
-    ["a replica code", { code: "DATABASE_NO_REPLICAS", componentId: "db", title: "Database" }],
-    ["a title saying single instance", { code: "AVAILABILITY_RISK", title: "Single instance of the order service" }],
-    ["a title saying it needs more instances", { code: "CAPACITY_RISK", title: "Order service needs more instances" }],
-    ["a title saying no replicas", { code: "DATA_LOSS_RISK", componentId: "db", title: "Primary database has no replicas" }],
-    ["a title calling it a single point of failure", { code: "AVAILABILITY_RISK", title: "Order service is a single point of failure" }],
-  ])("drops %s", (_label, over) => {
-    expect(drop(finding(over))).toEqual([]);
+  it("drops a finding the AI flagged as only about instance counts, on a kind that has one", () => {
+    expect(drop(finding({ aboutInstanceCount: true }))).toEqual([]);
+    expect(drop(finding({ aboutInstanceCount: true, componentId: "db" }))).toEqual([]);
   });
 
-  it("matches on code and title only — an explanation that mentions instances in passing is a finding about something else", () => {
-    const keep = finding({ explanation: "With a single instance, one slow call blocks everything, so a circuit breaker matters." });
+  it("only applies to kinds that HAVE an instance count: the same flag on an external dependency is a different risk and stays", () => {
+    const keep = finding({ aboutInstanceCount: true, componentId: "stripe", title: "Payment provider is a single point of failure" });
     expect(drop(keep)).toEqual([keep]);
   });
 
-  it("only applies to kinds that HAVE an instance count: a single point of failure on an external dependency is a different risk and stays", () => {
-    const keep = finding({
-      code: "SINGLE_POINT_OF_FAILURE",
-      componentId: "stripe",
-      title: "Payment provider is a single point of failure",
-    });
-    expect(drop(keep)).toEqual([keep]);
+  it("treats a finding saved before the field existed as not flagged", () => {
+    const { aboutInstanceCount: _drop, ...legacy } = finding({});
+    expect(drop(legacy as never)).toEqual([legacy]);
   });
 
   it("keeps everything else in a mixed list, in order", () => {
     const a = finding({ title: "A" });
-    const b = finding({ code: "SINGLE_POINT_OF_FAILURE" });
+    const b = finding({ aboutInstanceCount: true });
     const c = finding({ title: "C", componentId: "db" });
     expect(drop(a, b, c)).toEqual([a, c]);
   });
 
-  it("identifyFailures applies it: a model that reports one anyway gets it filtered out, at no extra cost", async () => {
+  it("identifyFailures applies it: a finding the model flags is filtered out, at no extra cost", async () => {
     const client = fakeClient([
       toolUseResponse({
         findings: [
-          finding({ code: "SINGLE_POINT_OF_FAILURE", title: "Single instance" }),
+          finding({ aboutInstanceCount: true, title: "Single instance" }),
           finding({ title: "No circuit breaker before the database", componentId: "db" }),
         ],
       }),
@@ -172,7 +164,7 @@ describe("instance counts are never findings", () => {
     expect(findings.map((f) => f.title)).toEqual(["No circuit breaker before the database"]);
   });
 
-  it("the prompt says so plainly — and no longer offers the single-point-of-failure code as an example to reach for", async () => {
+  it("the prompt says so plainly, defines both fields, and no longer offers the single-point-of-failure code as an example", async () => {
     let system = "";
     const client = {
       messages: {
@@ -185,6 +177,8 @@ describe("instance counts are never findings", () => {
     await identifyFailures(checkout, { client });
 
     expect(system).toMatch(/Instance counts are not findings/);
+    expect(system).toMatch(/aboutInstanceCount: true only when the entire concern/);
+    expect(system).toMatch(/bitesAt: "now" if this hurts/);
     expect(system).not.toMatch(/SINGLE_POINT_OF_FAILURE/);
   });
 });
@@ -230,46 +224,22 @@ describe("identifyFailures prompt", () => {
   });
 });
 
-describe("dropStandbyFallbackFindings", () => {
-  const model = {
-    components: [
-      { id: "payment-processor", label: "Payment processor" },
-      { id: "payment-processor-secondary", label: "Secondary payment processor" },
-      { id: "db", label: "Order database" },
-    ],
-  };
-  const f = (code: string, componentId: string) => ({ code, componentId, severity: "warning", title: "t", explanation: "e", fixes: [] }) as never;
-  const keep = (...fs: ReturnType<typeof f>[]) => dropStandbyFallbackFindings(fs, model as never).map((x: { code: string; componentId: string }) => `${x.code}:${x.componentId}`);
-
-  it("drops a no-fallback finding on a component that is itself the standby, keeps it on the primary and other findings on the standby", () => {
-    expect(
-      keep(
-        f("EXTERNAL_DEPENDENCY_NO_FALLBACK", "payment-processor-secondary"),
-        f("EXTERNAL_DEPENDENCY_NO_FALLBACK", "payment-processor"),
-        f("EXTERNAL_DEPENDENCY_NO_TIMEOUT", "payment-processor-secondary"),
-      ),
-    ).toEqual(["EXTERNAL_DEPENDENCY_NO_FALLBACK:payment-processor", "EXTERNAL_DEPENDENCY_NO_TIMEOUT:payment-processor-secondary"]);
-  });
-
-  it("does not mistake a word that merely contains the marker (e.g. 'secondary-index' is a standby name, 'backups' is not)", () => {
-    const m2 = { components: [{ id: "secondary-index", label: "x" }, { id: "backups-store", label: "y" }] };
-    const out = dropStandbyFallbackFindings([f("NO_FALLBACK", "secondary-index"), f("NO_FALLBACK", "backups-store")] as never, m2 as never);
-    expect(out.map((x) => x.componentId)).toEqual(["backups-store"]);
-  });
-});
-
-describe("dropAtScaleFindingsWhenSmall", () => {
-  const f = (code: string) => ({ code, componentId: "q", severity: "critical", title: "t", explanation: "e", fixes: [] }) as never;
-  const codes = (workload: unknown, ...cs: string[]) => dropAtScaleFindingsWhenSmall(cs.map(f), workload as never).map((x) => x.code);
+describe("dropLargerScaleFindingsWhenSmall — reads the AI's own bitesAt", () => {
+  const f = (bitesAt?: string) => ({ code: "X", componentId: "q", severity: "warning", title: "t", explanation: "e", fixes: [], ...(bitesAt ? { bitesAt } : {}) }) as never;
+  const kept = (workload: unknown, ...fs: unknown[]) => dropLargerScaleFindingsWhenSmall(fs as never, workload as never).map((x: { bitesAt?: string }) => x.bitesAt ?? "legacy");
   const small = { users: { included: true, tier: 100, target: 1_000_000 }, requests: { included: false, tier: 1000, target: 1000 } };
 
-  it("drops findings whose code says 'at scale' while everything in use is on the bottom rung", () => {
-    expect(codes(small, "FIXED_SCALING_AT_SCALE", "UNCACHED_DATABASE_AT_SCALE", "QUEUE_NO_DEAD_LETTER")).toEqual(["QUEUE_NO_DEAD_LETTER"]);
+  it("at the lowest tier holds back findings the AI marked 'larger-scale', and keeps 'now' and legacy ones", () => {
+    expect(kept(small, f("now"), f("larger-scale"), f())).toEqual(["now", "legacy"]);
   });
 
-  it("keeps them once any dimension in use is above the bottom rung, and when no dimension is in use", () => {
-    expect(codes({ ...small, users: { included: true, tier: 10_000, target: 1_000_000 } }, "FIXED_SCALING_AT_SCALE")).toEqual(["FIXED_SCALING_AT_SCALE"]);
-    expect(codes({ users: { included: true, tier: 100, target: 100 }, requests: { included: true, tier: 100_000, target: 100_000 } }, "X_AT_SCALE")).toEqual(["X_AT_SCALE"]);
-    expect(codes({}, "X_AT_SCALE")).toEqual(["X_AT_SCALE"]);
+  it("keeps everything once any dimension in use is above the bottom rung, or none is in use", () => {
+    expect(kept({ ...small, users: { included: true, tier: 10_000, target: 1_000_000 } }, f("larger-scale"))).toEqual(["larger-scale"]);
+    expect(kept({}, f("larger-scale"))).toEqual(["larger-scale"]);
+  });
+
+  it("the wording of the code plays no part: an 'AT_SCALE' code the AI marked 'now' stays", () => {
+    const named = { ...(f("now") as object), code: "FIXED_SCALING_AT_SCALE" } as never;
+    expect(dropLargerScaleFindingsWhenSmall([named], small as never)).toEqual([named]);
   });
 });

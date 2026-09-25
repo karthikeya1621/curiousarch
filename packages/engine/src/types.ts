@@ -318,6 +318,14 @@ export interface AiFinding {
   /** One or two plain sentences. No jargon — this is a learning tool. */
   explanation: string;
   fixes: AiFix[];
+  /**
+   * The AI's own call on when this risk bites: at the system's current scale,
+   * or only once the scale is larger. Optional: absent on a finding saved
+   * before the field existed. Read by code, never inferred from wording.
+   */
+  bitesAt?: "now" | "larger-scale";
+  /** The AI's own flag that the concern is only "run more instances / add replicas". Optional for the same reason. */
+  aboutInstanceCount?: boolean;
 }
 
 export interface AiFix {

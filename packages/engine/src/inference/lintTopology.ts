@@ -15,6 +15,10 @@
 import type { AiFinding, SystemModel } from "../types.ts";
 
 const ASYNC_KINDS = new Set<string>(["queue", "message-broker"]);
+/** A component traffic passes THROUGH: a direct edge around it is redundant. */
+const PASS_THROUGH_KINDS = new Set<string>([...ASYNC_KINDS, "load-balancer"]);
+/** Kinds that call a service on the request path — the ones a load balancer sits in front of. */
+const CALLER_KINDS = new Set<string>(["gateway", "service"]);
 
 export function lintTopology(model: Pick<SystemModel, "components" | "edges">): AiFinding[] {
   const byId = new Map(model.components.map((c) => [c.id, c]));
@@ -35,9 +39,26 @@ export function lintTopology(model: Pick<SystemModel, "components" | "edges">): 
     if (seenPairs.has(pair)) continue;
     seenPairs.add(pair);
     const via = (out.get(e.from) ?? []).find(
-      (mid) => mid !== e.to && ASYNC_KINDS.has(byId.get(mid)?.kind ?? "") && (out.get(mid) ?? []).includes(e.to),
+      (mid) => mid !== e.to && PASS_THROUGH_KINDS.has(byId.get(mid)?.kind ?? "") && (out.get(mid) ?? []).includes(e.to),
     );
     if (via === undefined) continue;
+    if (byId.get(via)?.kind === "load-balancer") {
+      findings.push({
+        code: "PATH_AROUND_LOAD_BALANCER",
+        severity: "warning",
+        componentId: e.to,
+        title: `${label(e.from)} reaches ${label(e.to)} both directly and through ${label(via)}`,
+        explanation: `Traffic can go straight to ${label(e.to)} or through the load balancer ${label(via)}. Requests that skip the load balancer get no health checks or spreading across instances, and the diagram doesn't say which path is the real one.`,
+        fixes: [
+          {
+            id: "remove-direct-path",
+            label: `Remove the direct connection from "${e.from}" to "${e.to}" so traffic only reaches it through the load balancer "${via}"`,
+            tradeoff: `Everything then depends on the load balancer, which becomes a component that must itself be kept highly available.`,
+          },
+        ],
+      });
+      continue;
+    }
     findings.push({
       code: "PARALLEL_SYNC_AND_ASYNC_PATH",
       severity: "warning",
@@ -49,6 +70,34 @@ export function lintTopology(model: Pick<SystemModel, "components" | "edges">): 
           id: "remove-direct-path",
           label: `Remove the direct connection from "${e.from}" to "${e.to}" so this work only flows through "${via}"`,
           tradeoff: `Everything on this path becomes asynchronous, so callers no longer get an immediate answer from ${label(e.to)}.`,
+        },
+      ],
+    });
+  }
+
+  // A load balancer belongs BETWEEN its callers and what it balances: a
+  // gateway or service that calls a balanced component directly, without going
+  // through the balancer that fronts it, bypasses it.
+  const seenBypass = new Set<string>();
+  for (const e of model.edges) {
+    const from = byId.get(e.from);
+    if (!from || !CALLER_KINDS.has(from.kind)) continue;
+    const lb = (into.get(e.to) ?? []).find((id) => id !== e.from && byId.get(id)?.kind === "load-balancer");
+    if (lb === undefined || (out.get(e.from) ?? []).includes(lb)) continue; // (a direct edge alongside X -> LB -> S is reported above)
+    const key = `${e.from}\u0000${e.to}`;
+    if (seenBypass.has(key)) continue;
+    seenBypass.add(key);
+    findings.push({
+      code: "PATH_AROUND_LOAD_BALANCER",
+      severity: "warning",
+      componentId: e.to,
+      title: `${label(e.from)} calls ${label(e.to)} directly, bypassing ${label(lb)}`,
+      explanation: `${label(lb)} is meant to spread traffic across ${label(e.to)}, but ${label(e.from)} reaches it without going through the load balancer, so that traffic gets no spreading or health checks.`,
+      fixes: [
+        {
+          id: "route-through-load-balancer",
+          label: `Route "${e.from}" through the load balancer "${lb}" instead of calling "${e.to}" directly (edge from "${e.from}" to "${lb}")`,
+          tradeoff: "All of that traffic now depends on the load balancer, which must itself be kept highly available.",
         },
       ],
     });
@@ -125,8 +174,10 @@ export function mergeLintFindings(ai: AiFinding[], lint: AiFinding[]): AiFinding
 }
 
 /**
- * Also collapses duplicate edges. Removes the direct edge in a parallel sync + async pair (A -> B alongside
- * A -> queue/broker -> B), keeping the buffered path. The base call and the
+ * Also collapses duplicate edges. Removes the direct edge in a parallel pair (A -> B alongside
+ * A -> queue/broker/load-balancer -> B), keeping the path through the intermediary (a load
+ * balancer is inserted by the extended step, which the base call never sees, so its
+ * gateway -> service edge survived next to gateway -> LB -> service: seen in the app). The base call and the
  * extended-components call run separately, so a fresh build can wire "upload ->
  * transcoder" in one and add "upload -> broker -> transcoder" in the other:
  * seen in 2 of 3 live builds of the same video-site description. The pair can't
@@ -137,6 +188,14 @@ export function mergeLintFindings(ai: AiFinding[], lint: AiFinding[]): AiFinding
 export function collapseParallelAsyncPaths<E extends { from: string; to: string }>(
   components: { id: string; kind: string }[],
   edges: E[],
+  /**
+   * The load balancers this may route callers through: those NEW in this
+   * result (a build's, or one this Re-simulate just added). A balancer that was
+   * already there is left exactly as the user has it — someone who wants
+   * internal calls to reach a service directly must be able to say so and have
+   * it stay. Omitted: every balancer.
+   */
+  routableBalancers?: ReadonlySet<string>,
 ): E[] {
   // Each from/to pair once too: the base and the extended call can both emit
   // the same edge, and the merged list is where the two meet (seen live: a
@@ -151,11 +210,83 @@ export function collapseParallelAsyncPaths<E extends { from: string; to: string 
   const kindOf = new Map(components.map((c) => [c.id, c.kind]));
   const out = new Map<string, string[]>();
   for (const e of unique) out.set(e.from, [...(out.get(e.from) ?? []), e.to]);
-  return unique.filter((e) => {
+  const passesThrough = (id: string) => {
+    const kind = kindOf.get(id) ?? "";
+    return ASYNC_KINDS.has(kind) || (kind === "load-balancer" && (routableBalancers?.has(id) ?? true));
+  };
+  const collapsed = unique.filter((e) => {
     const buffered = (out.get(e.from) ?? []).some(
-      (mid) => mid !== e.to && ASYNC_KINDS.has(kindOf.get(mid) ?? "") && (out.get(mid) ?? []).includes(e.to),
+      (mid) => mid !== e.to && passesThrough(mid) && (out.get(mid) ?? []).includes(e.to),
     );
-    // The direct edge is redundant only when it is not itself the queue leg.
-    return !(buffered && !ASYNC_KINDS.has(kindOf.get(e.to) ?? ""));
+    // The direct edge is redundant only when it is not itself the pass-through leg.
+    return !(buffered && !PASS_THROUGH_KINDS.has(kindOf.get(e.to) ?? ""));
   });
+  return routeThroughLoadBalancers(kindOf, collapsed, routableBalancers);
+}
+
+
+/**
+ * A load balancer sits BETWEEN its callers and what it balances: if L -> S
+ * exists, every gateway or service that calls S calls it through L. A caller
+ * with a direct edge X -> S is rewired to X -> L (or, when X -> L already
+ * exists, the redundant direct edge is just dropped). Only gateways and
+ * services are rewired — a queue or a scheduled job reaching S is not a request
+ * that a balancer spreads — and never when it would close a cycle. Product rule:
+ * "if there's a load balancer, it should be in between."
+ */
+function routeThroughLoadBalancers<E extends { from: string; to: string }>(
+  kindOf: Map<string, string>,
+  edges: E[],
+  routable?: ReadonlySet<string>,
+): E[] {
+  const front = new Map<string, string>(); // balanced component -> the balancer in front of it
+  for (const e of edges) {
+    if (routable && !routable.has(e.from)) continue;
+    if (kindOf.get(e.from) === "load-balancer" && kindOf.get(e.to) !== "load-balancer" && !front.has(e.to)) front.set(e.to, e.from);
+  }
+  if (front.size === 0) return edges;
+
+  const next = new Map<string, string[]>();
+  for (const e of edges) next.set(e.from, [...(next.get(e.from) ?? []), e.to]);
+  const reachable = (from: string, to: string): boolean => {
+    const seen = new Set<string>();
+    const stack = [...(next.get(from) ?? [])];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (id === to) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      stack.push(...(next.get(id) ?? []));
+    }
+    return false;
+  };
+
+  const seen = new Set<string>();
+  const out: E[] = [];
+  for (const e of edges) {
+    const lb = front.get(e.to);
+    const rewire = lb !== undefined && e.from !== lb && CALLER_KINDS.has(kindOf.get(e.from) ?? "") && !reachable(lb, e.from);
+    const edge = rewire ? { ...e, to: lb! } : e;
+    const key = `${edge.from}\u0000${edge.to}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(edge);
+  }
+  return out;
+}
+
+/**
+ * The balancers `collapseParallelAsyncPaths` may route callers through: the
+ * ones NEW in this result. Product rule: a load balancer sits between its
+ * callers and what it balances — as the default for a balancer being added; one
+ * already in the system is the user's to keep, so an edit made in chat (a
+ * caller that should go direct) sticks on every later Re-simulate. Decided from
+ * the structure, not from the wording of a request.
+ */
+export function routableLoadBalancers(
+  input: { components: { id: string; kind: string }[] },
+  result: { components: { id: string; kind: string }[] },
+): Set<string> {
+  const existing = new Set(input.components.filter((c) => c.kind === "load-balancer").map((c) => c.id));
+  return new Set(result.components.filter((c) => c.kind === "load-balancer" && !existing.has(c.id)).map((c) => c.id));
 }

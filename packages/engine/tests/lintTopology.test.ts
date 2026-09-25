@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collapseParallelAsyncPaths, lintTopology, mergeLintFindings } from "../src/inference/lintTopology.js";
+import { collapseParallelAsyncPaths, lintTopology, mergeLintFindings, routableLoadBalancers } from "../src/inference/lintTopology.js";
 import { identifyFailures } from "../src/inference/identifyFailures.js";
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -108,4 +108,86 @@ describe("collapseParallelAsyncPaths", () => {
     const all = edges([["up", "tx"], ["up", "q"], ["q", "tx"]]);
     expect(lintTopology({ components: comps, edges: collapseParallelAsyncPaths(comps, all) } as never)).toEqual([]);
   });
+});
+
+describe("a load balancer is a pass-through too", () => {
+  const comps = [c("gw", "gateway"), c("lb", "load-balancer"), c("svc", "service")];
+  const edges = (pairs: [string, string][]) => pairs.map(([from, to]) => ({ from, to }));
+
+  it("lints a direct edge that goes around a load balancer, with its own code and a fix that names the balancer", () => {
+    const found = lintTopology({ components: comps, edges: edges([["gw", "svc"], ["gw", "lb"], ["lb", "svc"]]) } as never);
+    expect(found.map((f) => `${f.code}:${f.componentId}`)).toEqual(["PATH_AROUND_LOAD_BALANCER:svc"]);
+    expect(found[0]!.fixes[0]!.label).toMatch(/load balancer "lb"/);
+  });
+
+  it("collapses the direct edge and leaves the path through the balancer", () => {
+    const all = edges([["gw", "svc"], ["gw", "lb"], ["lb", "svc"]]);
+    expect(collapseParallelAsyncPaths(comps, all)).toEqual(edges([["gw", "lb"], ["lb", "svc"]]));
+    expect(lintTopology({ components: comps, edges: collapseParallelAsyncPaths(comps, all) } as never)).toEqual([]);
+  });
+
+  it("does not touch a balancer's own legs, or a direct edge to a different service", () => {
+    const legs = edges([["gw", "lb"], ["lb", "svc"]]);
+    expect(collapseParallelAsyncPaths(comps, legs)).toEqual(legs);
+    const other = [...comps, c("svc2", "service")];
+    const split = edges([["gw", "svc2"], ["gw", "lb"], ["lb", "svc"]]);
+    expect(collapseParallelAsyncPaths(other, split)).toEqual(split);
+  });
+});
+
+describe("a load balancer sits between its callers and what it balances", () => {
+  const comps = [c("gw", "gateway"), c("lb", "load-balancer"), c("svc", "service"), c("other", "service"), c("job", "scheduled-job"), c("q", "queue")];
+  const edges = (pairs: [string, string][]) => pairs.map(([from, to]) => ({ from, to }));
+
+  it("rewires a caller that reaches the balanced service directly through the balancer", () => {
+    // the balancer only has an outgoing edge to the service; the gateway still calls the service itself
+    expect(collapseParallelAsyncPaths(comps, edges([["gw", "svc"], ["lb", "svc"]]))).toEqual(edges([["gw", "lb"], ["lb", "svc"]]));
+  });
+
+  it("rewires every gateway or service caller, but leaves a queue or a scheduled job that reaches it alone", () => {
+    const all = edges([["gw", "svc"], ["other", "svc"], ["lb", "svc"], ["job", "svc"], ["q", "svc"]]);
+    expect(collapseParallelAsyncPaths(comps, all)).toEqual(
+      edges([["gw", "lb"], ["other", "lb"], ["lb", "svc"], ["job", "svc"], ["q", "svc"]]),
+    );
+  });
+
+  it("does not rewire when it would close a cycle, and does nothing without a balancer", () => {
+    const cyc = edges([["svc", "other"], ["other", "gw"], ["lb", "svc"], ["gw", "svc"]]);
+    // lb -> svc -> other -> gw: gw is reachable from lb, so gw -> svc must stay as it was
+    expect(collapseParallelAsyncPaths(comps, cyc)).toEqual(cyc);
+    const plain = edges([["gw", "svc"], ["svc", "other"]]);
+    expect(collapseParallelAsyncPaths(comps, plain)).toEqual(plain);
+  });
+
+  it("lints a caller that bypasses the balancer in front of its target (once per edge), and stays quiet once it goes through it", () => {
+    const lintComps = comps.filter((x) => x.id !== "q"); // (an edgeless queue would be linted itself)
+    const bypass = lintTopology({ components: lintComps, edges: edges([["gw", "svc"], ["lb", "svc"]]) } as never);
+    expect(bypass.map((f) => `${f.code}:${f.componentId}`)).toEqual(["PATH_AROUND_LOAD_BALANCER:svc"]);
+    expect(bypass[0]!.fixes[0]!.label).toMatch(/edge from "gw" to "lb"/);
+    expect(lintTopology({ components: lintComps, edges: edges([["gw", "lb"], ["lb", "svc"]]) } as never)).toEqual([]);
+  });
+});
+
+describe("only a newly added balancer is routed through — an existing one is the user's to keep", () => {
+  const comps = [c("gw", "gateway"), c("lb", "load-balancer"), c("svc", "service"), c("admin", "service")];
+  const edges = (pairs: [string, string][]) => pairs.map(([from, to]) => ({ from, to }));
+  const wiring = edges([["gw", "svc"], ["admin", "svc"], ["lb", "svc"]]);
+
+  it("routes callers through a balancer that is in the allowed set, and leaves everything alone for one that is not", () => {
+    expect(collapseParallelAsyncPaths(comps, wiring, new Set(["lb"]))).toEqual(edges([["gw", "lb"], ["admin", "lb"], ["lb", "svc"]]));
+    expect(collapseParallelAsyncPaths(comps, wiring, new Set())).toEqual(wiring);
+  });
+
+  it("does not collapse a direct edge beside X -> LB -> S either when that balancer isn't allowed", () => {
+    const parallel = edges([["gw", "svc"], ["gw", "lb"], ["lb", "svc"]]);
+    expect(collapseParallelAsyncPaths(comps, parallel, new Set())).toEqual(parallel);
+    expect(collapseParallelAsyncPaths(comps, parallel, new Set(["lb"]))).toEqual(edges([["gw", "lb"], ["lb", "svc"]]));
+  });
+
+  it("routableLoadBalancers: a balancer new in the result is routable, an existing one is not", () => {
+    const input = { components: [c("gw", "gateway"), c("lb-old", "load-balancer")] };
+    const result = { components: [c("gw", "gateway"), c("lb-old", "load-balancer"), c("lb-new", "load-balancer")] };
+    expect([...routableLoadBalancers(input, result)]).toEqual(["lb-new"]);
+  });
+
 });

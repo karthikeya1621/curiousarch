@@ -19,7 +19,8 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { lintTopology, mergeLintFindings } from "./lintTopology.ts";
-import { REQUEST_TIERS, USER_TIERS, type AiFinding, type SystemModel } from "../types.ts";
+import type { AiFinding, SystemModel } from "../types.ts";
+import { atLowestTier } from "./startMinimal.ts";
 
 const AiFixSchema = z.object({
   id: z.string().min(1),
@@ -34,6 +35,8 @@ const AiFindingSchema = z.object({
   title: z.string().min(1),
   explanation: z.string().min(1, "One or two plain sentences. No jargon — this is a learning tool."),
   fixes: z.array(AiFixSchema).min(1),
+  bitesAt: z.enum(["now", "larger-scale"]),
+  aboutInstanceCount: z.boolean(),
 });
 
 const IdentifyFailuresResponseSchema = z.object({
@@ -44,62 +47,32 @@ const TOOL_NAME = "emit_failures";
 
 /** The kinds that have an `instanceCount` trait — the only components an instance-count finding can be about. */
 const INSTANCE_COUNT_KINDS = new Set<string>(["service", "database", "load-balancer"]);
-const INSTANCE_COUNT_CODE = /SINGLE_POINT|SINGLE_INSTANCE|NO_REPLICA|REDUNDAN|INSTANCE_COUNT|MORE_INSTANCES/i;
-const INSTANCE_COUNT_TITLE =
-  /\b(single|one|only one)\s+(instance|replica|node|server|copy)\b|\bsingle point of failure\b|\bno (replicas?|redundancy)\b|\bwithout (a )?(replicas?|redundancy)\b|\b(more|multiple|additional|second)\s+instances?\b/i;
 
 /**
- * Drops any finding that is only "this runs as a single instance / has no
- * replicas / needs more instances". Asked for by the product owner: it was by
- * far the most common finding, and acting on it (queue the fix, Re-simulate)
- * spent a full billed call to change one trait — which Re-simulate now sets
- * itself when the scale calls for it (reworkModel.ts), so it's never
- * something to report.
- *
- * The prompt already says so, but a prompt is a request and the model's
- * habit here is strong, so this is the deterministic half. Scoped to the
- * kinds that HAVE an instance count: "X is a single point of failure" said of
- * an external dependency is a different risk (no fallback) and stays. Matched
- * on the code and the title only — never the explanation, where a finding
- * about something else can perfectly well mention instances in passing.
+ * Drops a finding the AI itself flagged as "only about running more
+ * instances / adding replicas" (`aboutInstanceCount`). Asked for by the product
+ * owner: it was by far the most common finding, and acting on it (queue the
+ * fix, Re-simulate) spent a full billed call to change one trait — which
+ * Re-simulate now sets itself from the tier group (reworkModel.ts). The call is
+ * the AI's, made per finding in its own output; this only reads it. It used to
+ * be a list of regexes over the code and title, which was string-matching on
+ * natural language. Scoped to the kinds that HAVE an instance count: "X is a
+ * single point of failure" said of an external dependency is a different risk
+ * (no fallback) and stays.
  */
 export function dropInstanceCountFindings(findings: AiFinding[], model: Pick<SystemModel, "components">): AiFinding[] {
   const kindOf = new Map(model.components.map((c) => [c.id, c.kind as string]));
-  return findings.filter((f) => {
-    if (!INSTANCE_COUNT_KINDS.has(kindOf.get(f.componentId) ?? "")) return true;
-    return !(INSTANCE_COUNT_CODE.test(f.code) || INSTANCE_COUNT_TITLE.test(f.title));
-  });
-}
-
-/** A component that exists to be another's standby: its own "no fallback" is not a risk. */
-const STANDBY_NAME = /(^|[^a-z])(secondary|backup|standby|failover|fallback|redundant|alternat(e|ive))([^a-z]|$)/i;
-
-/**
- * Drops "no fallback" findings raised on a component whose name says it IS the
- * fallback. Found live: choosing the fix "integrate a secondary payment
- * processor" added `payment-processor-secondary`, and the next review reported
- * EXTERNAL_DEPENDENCY_NO_FALLBACK on it — every fix produced a fresh finding
- * of the same kind, so the list never converged.
- */
-export function dropStandbyFallbackFindings(findings: AiFinding[], model: Pick<SystemModel, "components">): AiFinding[] {
-  const named = new Map(model.components.map((c) => [c.id, `${c.id} ${c.label}`]));
-  return findings.filter((f) => !(/FALLBACK/i.test(f.code) && STANDBY_NAME.test(named.get(f.componentId) ?? "")));
+  return findings.filter((f) => !(f.aboutInstanceCount === true && INSTANCE_COUNT_KINDS.has(kindOf.get(f.componentId) ?? "")));
 }
 
 /**
- * Drops findings whose own code says they are about running "at scale" while
- * every dimension in use is still on the bottom rung (100 users, 1000
- * requests). The prompt asks the model to judge risks at the current scale, but
- * it still reported FIXED_SCALING_AT_SCALE on 100-user systems (two of three
- * real projects). They come back on their own once the scale is raised and the
- * review re-runs. Only the code is matched, never the explanation.
+ * At the lowest tier, drops findings the AI itself marked as biting only at a
+ * larger scale (`bitesAt: "larger-scale"`): a 100-user system was being handed
+ * "at scale" findings, and the review re-runs, so they return once the scale is
+ * raised. Judged by the AI per finding, not by matching the code's wording.
  */
-export function dropAtScaleFindingsWhenSmall(findings: AiFinding[], workload: SystemModel["workload"]): AiFinding[] {
-  const used: boolean[] = [];
-  if (workload.users?.included) used.push(workload.users.tier === USER_TIERS[0]);
-  if (workload.requests?.included) used.push(workload.requests.tier === REQUEST_TIERS[0]);
-  const small = used.length > 0 && used.every(Boolean);
-  return small ? findings.filter((f) => !/AT_SCALE/i.test(f.code)) : findings;
+export function dropLargerScaleFindingsWhenSmall(findings: AiFinding[], workload: SystemModel["workload"]): AiFinding[] {
+  return atLowestTier(workload) ? findings.filter((f) => f.bitesAt !== "larger-scale") : findings;
 }
 
 /** Finding codes about one kind's own traits, and the only kind they can be about. */
@@ -133,6 +106,9 @@ For each REAL risk you find, report:
 - title: a short, plain label for the risk.
 - explanation: ONE OR TWO SHORT SENTENCES in plain language, as if explaining it to someone learning system design for the first time. No unexplained jargon. Say what could actually go wrong, concretely, referencing this specific system - not a generic definition of the risk category.
 - fixes: one or two concrete remediations, each with an id (a short kebab-case slug, unique within this finding), a label (what to do, plainly), and a tradeoff (what it costs - money, complexity, or a new risk - stated honestly in one sentence).
+
+- bitesAt: "now" if this hurts or clearly threatens the system at its CURRENT scale, "larger-scale" if it only becomes a problem once the scale grows. Be honest: a system at its launch tier has few "now" risks. Findings marked "larger-scale" are held back until the scale is raised.
+- aboutInstanceCount: true only when the entire concern is that something runs as a single instance, lacks replicas, or needs more copies; false for every other risk.
 
 Instance counts are not findings. Every component's instanceCount trait (how many copies of a service, load balancer or database run) is adjusted automatically when the system is re-simulated at a larger scale, so whether something runs as one copy or several, or whether a database has replicas, is never a risk to report - however it would be worded. Report risks that come from the OTHER traits and from the shape of the topology.
 
@@ -176,8 +152,8 @@ export async function identifyFailures(
     options,
     "identifyFailures",
   );
-  const fromAi = dropAtScaleFindingsWhenSmall(
-    dropStandbyFallbackFindings(dropMisattributedFindings(dropInstanceCountFindings(result.data.findings, model), model), model),
+  const fromAi = dropLargerScaleFindingsWhenSmall(
+    dropMisattributedFindings(dropInstanceCountFindings(result.data.findings, model), model),
     model.workload,
   );
   return mergeLintFindings(fromAi, lintTopology(model));

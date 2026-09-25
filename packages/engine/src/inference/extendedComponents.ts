@@ -167,7 +167,7 @@ function buildTool(): Anthropic.Tool {
 
 const KIND_GUIDE = `You may ONLY use these ${EXTENDED_KINDS.length} extended kinds — never invent another:
 - "external-dependency": something outside this system's own control (a payment/auth provider, any third-party API). Traits: hasTimeout, hasFallback (true only when a real alternative exists - a second provider, a cached result, a degraded mode; a component that IS the alternative for another path, like a relay used when a direct connection fails, does not have a fallback of its own by that fact).
-- "load-balancer": pure traffic distribution across instances — distinct from a gateway, which admits/rejects but doesn't distribute. Traits: instanceCount ("single"/"multiple"), hasHealthChecks.
+- "load-balancer": pure traffic distribution across instances — distinct from a gateway, which admits/rejects but doesn't distribute. Traits: instanceCount ("single"/"multiple"), hasHealthChecks. When you ADD a load balancer it sits BETWEEN its callers and what it balances: edges run caller -> load balancer -> service, and those callers no longer have a direct edge to that service. A load balancer already in the system keeps the connections it has, unless the request says otherwise.
 - "message-broker": fan-out pub/sub to multiple independent consumer groups — distinct from a queue's point-to-point delivery. Traits: hasSchemaValidation, consumerScaling ("fixed"/"auto").
 - "cdn": edge cache in front of an origin. Trait: hasOriginShield. Clients reach the CDN first and it pulls from the origin, so the edge runs FROM the CDN TO its origin (cdn -> origin service) and nothing calls the CDN.
 - "object-storage": blob storage — distinct from a database, which is connection-pooled and query-oriented. Trait: hasVersioning.

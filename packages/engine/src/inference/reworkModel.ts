@@ -75,7 +75,7 @@ import { buildTool } from "./fromProse.ts";
 import { EXTENDED_KINDS, isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { TIER_GROUP_GUIDE } from "./tierGuide.ts";
-import { collapseParallelAsyncPaths } from "./lintTopology.ts";
+import { collapseParallelAsyncPaths, routableLoadBalancers } from "./lintTopology.ts";
 import { cleanModelIdentity, MAX_BASE_COMPONENTS, type Component, type SystemModel } from "../types.ts";
 
 const REWORK_PROMPT = `You are reconsidering an EXISTING rough architectural model, not describing a new system from scratch. You will be given the current model as JSON - its components, their traits, the edges between them, and its workload.users/workload.requests for context (each has "included": whether that dimension is relevant to this system, "tier": the current rough step on a small ladder, and "target": the original ambition for it). Some of it may already reflect real fixes that were applied (an added component, a corrected trait). You may also be given a list of specific fixes the user has already chosen to apply, and a list of changes the user asked for in chat.
@@ -366,9 +366,6 @@ export function dropEdgesToMentionedUnknowns(raw: unknown, queuedText: string): 
   return { ...(raw as object), edges };
 }
 
-/** Words in a request that mean the separate extended step, not the base call, owns the change. */
-const EXTENDED_REQUEST = new RegExp(`\\b(${EXTENDED_KINDS.map((k) => k.replace(/-/g, "[ -]")).join("|")}|cdn|load balancer|broker|object storage|blob storage|config store|feature flag|cron|scheduled)\\b`, "i");
-
 /**
  * Puts back an original edge whose connection did not survive the whole
  * rework — base call AND extended step together — unless a path between its
@@ -437,12 +434,14 @@ export async function reworkModel(
           stripped && Array.isArray(stripped.edges) ? { ...stripped, edges: dedupeEdges(stripped.edges) } : stripped;
         return reconcileWithPrevious(deduped, model, { anythingAsked: pendingFixes.length + pendingChanges.length > 0 });
       },
-      // A request the extended step owns ("add a CDN in front of the gateway")
-      // legitimately reroutes base edges through a component this call can't
-      // emit, so the base-only check would reject a correct answer; the merged
-      // graph is repaired below instead.
-      validateResult: (data) =>
-        EXTENDED_REQUEST.test(pendingContext) ? null : checkNoDroppedEdges(model, data as SystemModel),
+      // With nothing queued, an edge silently dropped is a mistake and is
+      // rejected. With a fix or chat change queued, edges may legitimately move
+      // (a request the extended step owns, like "add a CDN in front of the
+      // gateway", reroutes base edges through a component this call can't emit),
+      // so the base-only check would reject a correct answer; the merged graph
+      // is repaired below instead (`restoreDroppedConnections`). Decided by
+      // whether anything was asked, not by reading the request's wording.
+      validateResult: (data) => (pendingContext !== "" ? null : checkNoDroppedEdges(model, data as SystemModel)),
     },
     "reworkModel",
   );
@@ -494,6 +493,7 @@ export async function reworkModel(
           [...result.data.components, ...extended.components],
           [...result.data.edges, ...extended.edges],
         ),
+        routableLoadBalancers(model, { components: [...result.data.components, ...extended.components] }),
       ),
       workload: { ...result.data.workload, users: model.workload.users, requests: model.workload.requests },
     },
