@@ -365,7 +365,7 @@ describe("reviseExtendedComponents keeps the existing wiring", () => {
 
   it("the prompt makes instance counts the revise step's own job, sized from the scale it's told", () => {
     expect(REVISE_PROMPT).toMatch(/Instance counts are yours to keep right, automatically/);
-    expect(REVISE_PROMPT).toMatch(/instanceCount to "multiple"/);
+    expect(REVISE_PROMPT).toMatch(/judge a load balancer's instanceCount from that scale using the tier groups/);
   });
 
   it("the prompt says direction is meaning and to keep every edge", () => {
@@ -439,5 +439,12 @@ describe("checkNoDroppedExtendedEdges: the connection must survive, not the lite
     const previous = [{ from: "crawler-job", to: "index-service" }];
     const result = { components: job, edges: [{ from: "index-service", to: "crawler-job" }] };
     expect(checkNoDroppedExtendedEdges(previous, baseIds, result)).toMatch(/dropped or reversed/);
+  });
+});
+
+describe("the revise step shares the same tier groups", () => {
+  it("includes them, so the base and extended steps never disagree about what a tier means", () => {
+    expect(REVISE_PROMPT).toContain("Tier groups, as guidance for your own judgement");
+    expect(REVISE_PROMPT).toContain("Highest tier (100,000,000 users");
   });
 });

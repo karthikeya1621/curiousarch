@@ -32,6 +32,7 @@ import {
   traitSchema,
 } from "./schema.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
+import { TIER_GROUP_GUIDE } from "./tierGuide.ts";
 import { MAX_EXTENDED_COMPONENTS, MAX_TOTAL_COMPONENTS, type Component, type Edge } from "../types.ts";
 
 const ExternalDependencySchema = z.object({
@@ -197,7 +198,9 @@ ${KIND_GUIDE}
 
 You will be given: the system's PREVIOUS extended components (if any), the EXISTING edges that touch them, and its freshly-reworked base topology (its current component ids — the ones you may wire edges to).
 
-You may also be told the system's current scale. Instance counts are yours to keep right, automatically: when a load balancer needs more than one instance at that scale, set its instanceCount to "multiple" yourself as part of this revision; while the scale is small leave it "single". Give the trait a rationale that names the scale.
+You may also be told the system's current scale. Instance counts are yours to keep right, automatically: judge a load balancer's instanceCount from that scale using the tier groups below and set it yourself as part of this revision (larger when its tier group calls for it, the smallest when the scale is low), with a rationale that names the scale.
+
+${TIER_GROUP_GUIDE}
 
 Keep every existing edge exactly as it was — the same two ends and the SAME DIRECTION — as long as both ends still exist. The one exception: when a chosen fix or requested change puts a component between two ends (a queue between a job and a service), route the connection through it and remove the direct edge - keeping both leaves two competing paths. An edge's direction is meaning (which side calls or depends on which), so never reverse one, and never drop one unless the request specifically requires it. Only when a base end no longer exists (that component was replaced or removed in the rework) re-point the edge to the base component that now serves the equivalent role.
 

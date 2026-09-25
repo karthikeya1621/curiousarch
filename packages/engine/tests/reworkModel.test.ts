@@ -494,7 +494,8 @@ describe("instance counts are set automatically", () => {
     await reworkModel(checkout, [], [], { client });
 
     expect(system).toMatch(/Instance counts are yours to keep right, automatically/);
-    expect(system).toMatch(/leave it at the smallest value/);
+    expect(system).toMatch(/back to the smallest when the scale is lowered/);
+    expect(system).toMatch(/Do this on every rework, even when the user asked for nothing else/);
     expect(system).toMatch(/nobody will separately ask you to/);
   });
 
@@ -577,6 +578,11 @@ describe("reconcileWithPrevious", () => {
   it("keeps the previous provenance and rationale for a trait whose value didn't change", () => {
     const gw = out([{ id: "gw", hasRateLimiting: trait(false, "stated", "Still no limiter.") }]).components[0]!;
     expect(gw.hasRateLimiting).toEqual(trait(false, "default", "Not mentioned; typical first launch."));
+  });
+
+  it("an unchanged instance count keeps its provenance but takes the fresh rationale, which names the current scale", () => {
+    const [, svc] = out([{ id: "gw" }, { id: "svc", instanceCount: trait("single", "stated", "Launch tier, one instance is normal.") }]).components as Record<string, any>[];
+    expect(svc!.instanceCount).toEqual(trait("single", "default", "Launch tier, one instance is normal."));
   });
 
   it("never lets a trait the rework changed be 'stated'", () => {
@@ -747,5 +753,37 @@ describe("restoreDroppedConnections", () => {
 
   it("does not restore an edge that would close a cycle", () => {
     expect(restoreDroppedConnections([e("a", "b")], comps, [e("b", "c"), e("c", "a")])).toEqual([e("b", "c"), e("c", "a")]);
+  });
+});
+
+describe("instance counts come from the tier groups, judged by the AI — not from a threshold in code", () => {
+  it("gives the base rework call every tier group as guidance, and says it is judgement rather than a formula", async () => {
+    let system = "";
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      if ((params.tools?.[0] as { name?: string } | undefined)?.name === "emit_system_model") {
+        system = (params.system as { text: string }[]).map((b) => b.text).join("");
+      }
+    });
+    await reworkModel(checkout, [], [], { client });
+    for (const group of ["Lowest tier (100 users", "Second tier (10,000 users", "Third tier (1,000,000 users", "Highest tier (100,000,000 users"]) {
+      expect(system).toContain(group);
+    }
+    expect(system).toMatch(/not a formula/);
+    expect(system).toMatch(/higher group/);
+    expect(system).toMatch(/by its own role/);
+  });
+
+  it("does not change instance counts in code: a service the AI leaves single at 10K users stays single", async () => {
+    const tenK: SystemModel = { ...checkout, workload: { users: { included: true, tier: 10_000, target: 1_000_000 } } };
+    const singleSvc = {
+      ...validReworkInput,
+      components: validReworkInput.components.map((c) =>
+        c.id === "svc" ? { ...c, instanceCount: { rationale: "One instance is enough here.", provenance: "inferred", value: "single" } } : c,
+      ),
+    };
+    const client = fakeClient([toolUseResponse(singleSvc), emptyExtendedResponse()]);
+    const result = await reworkModel(tenK, [], [], { client });
+    const svc = result.model.components.find((c) => c.id === "svc") as unknown as { instanceCount: { value: string } };
+    expect(svc.instanceCount.value).toBe("single");
   });
 });

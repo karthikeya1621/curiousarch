@@ -74,6 +74,7 @@ import { STRUCTURAL_SELF_CHECK, SystemModelSchema } from "./schema.ts";
 import { buildTool } from "./fromProse.ts";
 import { EXTENDED_KINDS, isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
+import { TIER_GROUP_GUIDE } from "./tierGuide.ts";
 import { collapseParallelAsyncPaths } from "./lintTopology.ts";
 import { cleanModelIdentity, MAX_BASE_COMPONENTS, type Component, type SystemModel } from "../types.ts";
 
@@ -87,7 +88,9 @@ Rules, same as always:
 - Every trait is a rough category (a boolean or a small set of choices), never a number.
 - Beyond the extended kinds mentioned above (which you never emit yourself), you may only use the five base component kinds (gateway, service, cache, database, queue) - don't invent another new one.
 - For anything that still conceptually exists from the input, reuse its EXACT same component id - this is how the interface keeps track of what's the same thing across a rework, not a new one. Only mint a new id for a component that's genuinely new.
-- Instance counts are yours to keep right, automatically. At the system's CURRENT scale (its workload tiers, in the model), when a service needs more than one instance or a database needs replicas, set that instanceCount trait to the larger value yourself as part of this rework - nobody will separately ask you to. While the scale is small leave it at the smallest value; raise it only when the scale genuinely calls for it, with a rationale that names the scale and provenance "inferred".
+- Instance counts are yours to keep right, automatically. Judge each service's and database's instanceCount from the system's CURRENT scale (its workload tiers, in the model) using the tier groups below, and set it yourself as part of this rework - nobody will separately ask you to. Move it to the larger value when its tier group calls for it, and back to the smallest when the scale is lowered; give the trait a rationale that names the scale, with provenance "inferred". Do this on every rework, even when the user asked for nothing else.
+
+${TIER_GROUP_GUIDE}
 - Scale alone never switches on a protection. Rate limiting, circuit breakers, stampede protection, dead-letter queues and health checks are exactly what the separate review step reports as risks, so leave each one as it is unless a listed fix or requested change asks for it. Only instance counts (above) move by themselves. A protection you leave off is not a mistake here.
 - Keep the same top-level "id" and "name" - you are reworking this system, not renaming it.
 - Preserve every existing connection between two components you're both keeping unless you have a specific architectural reason to remove it (including routing it through a newly inserted component) - a rework that silently drops real connections produces a diagram that no longer reflects the actual system.
@@ -237,7 +240,8 @@ const isMitigation = (key: string) => /^has[A-Z]/.test(key);
  * Keeps the rework honest about what it changed, in code, because the prompt
  * alone wasn't enough (found live on a real project):
  * - a trait whose value is unchanged keeps its previous provenance and
- *   rationale — the model kept re-labelling old traits "stated" a pass at a
+ *   rationale (an instance count keeps only the provenance: its rationale names
+ *   the scale, which may have moved) — the model kept re-labelling old traits "stated" a pass at a
  *   time until nearly everything claimed to be stated, when nothing was;
  * - anything the rework itself changed or added is at most "inferred" — there
  *   is no prose here for it to have been "stated" in;
@@ -259,7 +263,10 @@ export function reconcileWithPrevious(raw: unknown, previous: SystemModel, opts:
       if (!isTrait(trait)) continue;
       const prev = old?.[key];
       if (isTrait(prev) && JSON.stringify(prev.value) === JSON.stringify(trait.value)) {
-        out[key] = prev;
+        // An instance count's rationale names the scale it was judged at, so
+        // carrying the old sentence forward leaves "10,000 users" on a system
+        // now at 1,000,000 (seen live). Keep its provenance, take the fresh reason.
+        out[key] = key === "instanceCount" ? { ...trait, provenance: prev.provenance } : prev;
       } else if (isTrait(prev) && !opts.anythingAsked && isMitigation(key) && prev.value === false && trait.value === true) {
         out[key] = prev;
       } else if (trait.provenance === "stated") {
