@@ -225,6 +225,10 @@ describe("SYSTEM_PROMPT", () => {
     expect(SYSTEM_PROMPT).toMatch(/one short sentence \(roughly 8 to 15 words\)/);
   });
 
+  it("asks for the system's defining data path as its own component (a media tier was missing from a Zoom-like build)", () => {
+    expect(SYSTEM_PROMPT).toMatch(/defining data path and give it its own component/);
+  });
+
   // Regression test for a confirmed-live bug, not a style preference: naming
   // the exact banned rationale word ("placeholder") as the negative example
   // measurably primes the model to reproduce that literal word when it has

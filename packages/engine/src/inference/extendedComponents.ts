@@ -168,7 +168,7 @@ const KIND_GUIDE = `You may ONLY use these ${EXTENDED_KINDS.length} extended kin
 - "external-dependency": something outside this system's own control (a payment/auth provider, any third-party API). Traits: hasTimeout, hasFallback (true only when a real alternative exists - a second provider, a cached result, a degraded mode; a component that IS the alternative for another path, like a relay used when a direct connection fails, does not have a fallback of its own by that fact).
 - "load-balancer": pure traffic distribution across instances — distinct from a gateway, which admits/rejects but doesn't distribute. Traits: instanceCount ("single"/"multiple"), hasHealthChecks.
 - "message-broker": fan-out pub/sub to multiple independent consumer groups — distinct from a queue's point-to-point delivery. Traits: hasSchemaValidation, consumerScaling ("fixed"/"auto").
-- "cdn": edge cache in front of an origin. Trait: hasOriginShield.
+- "cdn": edge cache in front of an origin. Trait: hasOriginShield. Clients reach the CDN first and it pulls from the origin, so the edge runs FROM the CDN TO its origin (cdn -> origin service) and nothing calls the CDN.
 - "object-storage": blob storage — distinct from a database, which is connection-pooled and query-oriented. Trait: hasVersioning.
 - "scheduled-job": a cron-style background processor, outside any request path. Traits: hasLocking, isIdempotent.
 - "config-store": feature flags / secrets manager / remote config, a control-plane dependency requests may need. Trait: hasLocalFallback.
@@ -221,6 +221,7 @@ Output only the structured components and edges. Do not add commentary.`;
  *      `maxComponents` in response order.
  *   3. Drop any edge whose endpoint isn't an actually-known id (base or
  *      one of the surviving new components).
+ *   4. Point every edge into a CDN the other way (CDN -> origin).
  * A React key collision (two nodes rendered under the same id) is
  * exactly what this whole function exists to make structurally
  * impossible, not just unlikely — the size cap is the same "don't just
@@ -233,7 +234,16 @@ function sanitizeExtendedResponse(
 ): ExtendedComponentsResponse {
   const components = response.components.filter((c) => !knownIds.has(c.id)).slice(0, maxComponents);
   const allIds = new Set([...knownIds, ...components.map((c) => c.id)]);
-  const validEdges = response.edges.filter((e) => allIds.has(e.from) && allIds.has(e.to));
+  // A CDN fronts its origin: clients reach it, it calls the origin. An edge
+  // INTO one is backwards — and the prompt asking for the right direction
+  // wasn't enough (found live: a fresh Zoom-like build still drew
+  // `livestream-service -> livestream-cdn`). The direction is never
+  // ambiguous, so it's fixed here in code, for free. This also corrects an
+  // older project's reversed edge on its next Re-simulate.
+  const cdnIds = new Set(components.filter((c) => c.kind === "cdn").map((c) => c.id));
+  const validEdges = response.edges
+    .filter((e) => allIds.has(e.from) && allIds.has(e.to))
+    .map((e) => (cdnIds.has(e.to) && !cdnIds.has(e.from) ? { ...e, from: e.to, to: e.from } : e));
 
   // Same class of bug as the duplicate-id check above, one layer down —
   // found live: the AI can also emit the exact same {from, to} edge twice

@@ -47,6 +47,21 @@ describe("lintTopology", () => {
   });
 });
 
+describe("lintTopology: CDN direction", () => {
+  const parts = [c("gw", "gateway"), c("live", "service"), c("cdn", "cdn")];
+
+  it("flags an edge INTO a cdn and offers a fix that names both ends and the right direction", () => {
+    const found = lintOf(model(parts, [["gw", "live"], ["live", "cdn"]]));
+    expect(found.map((f) => `${f.code}:${f.componentId}`)).toEqual(["CDN_BEHIND_ORIGIN:cdn"]);
+    expect(found[0]!.fixes[0]!.label).toMatch(/edge from "cdn" to "live"/);
+  });
+
+  it("is quiet when the cdn fronts its origin, and reports a doubled edge once", () => {
+    expect(codes(model(parts, [["gw", "live"], ["cdn", "live"]]))).toEqual([]);
+    expect(codes(model(parts, [["live", "cdn"], ["live", "cdn"]]))).toEqual(["CDN_BEHIND_ORIGIN:cdn"]);
+  });
+});
+
 describe("mergeLintFindings", () => {
   const f = (code: string, componentId: string) => ({ code, componentId, severity: "warning", title: "t", explanation: "e", fixes: [] }) as never;
   it("keeps AI findings first and skips a lint finding the AI already raised on the same component", () => {

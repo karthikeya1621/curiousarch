@@ -31,6 +31,7 @@ This is a LEARNING TOOL: the workload parameters extracted separately from this 
 Rules:
 - The model must be a DAG. Never create an edge back into a component that is upstream of it; retries and circuit breakers are traits on a component, not edges.
 - Every edge's "from" and "to" must be an id of a component you defined.
+- Name the system's defining data path and give it its own component. Whatever actually moves the system's main payload (audio/video streams for a conferencing product, file bytes for storage, messages for chat) is what the product IS; a generic API service that only handles requests around it is not that path. If the description mentions it, or the system plainly can't work without it, model it as its own service rather than folding it into another.
 - Model exactly the topology described. Do not add a cache or queue that wasn't mentioned or clearly implied. Do not omit one that was described.
 - Include at least one component beyond the gateway — a gateway alone admits or rejects traffic but does no work, and describes nothing about the system's actual architecture.
 - At most ${MAX_BASE_COMPONENTS} components total. A rough whiteboard sketch stays legible; a bigger number is a sign you're modelling incidental detail instead of the core topology — collapse or omit before you reach the limit, don't pad up to it.

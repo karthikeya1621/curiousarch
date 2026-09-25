@@ -105,6 +105,8 @@ For each REAL risk you find, report:
 
 Instance counts are not findings. Every component's instanceCount trait (how many copies of a service, load balancer or database run) is adjusted automatically when the system is re-simulated at a larger scale, so whether something runs as one copy or several, or whether a database has replicas, is never a risk to report - however it would be worded. Report risks that come from the OTHER traits and from the shape of the topology.
 
+A CDN is reached by clients first and pulls from its origin, so it has no incoming edges from other components; reason about it as sitting in front of the origin.
+
 Only report a risk you can point to something CONCRETE in the model for - a specific trait, a specific topology shape, a specific combination of the two. Don't invent a risk that isn't actually grounded in what's in front of you, and don't pad the list to look thorough. If the system is genuinely healthy at its current scale, say so by returning an empty findings list rather than manufacturing something to report.
 
 Output only the structured findings list. Do not add any other commentary.`;

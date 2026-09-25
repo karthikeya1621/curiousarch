@@ -373,3 +373,45 @@ describe("reviseExtendedComponents keeps the existing wiring", () => {
     expect(REVISE_PROMPT).toMatch(/never reverse one/i);
   });
 });
+
+describe("cdn direction in the prompts", () => {
+  it("tells both the propose and the revise step that the edge runs from the CDN to its origin", async () => {
+    const { PROPOSE_PROMPT, REVISE_PROMPT } = await import("../src/inference/extendedComponents.js");
+    for (const prompt of [PROPOSE_PROMPT, REVISE_PROMPT]) {
+      expect(prompt).toMatch(/edge runs FROM the CDN TO its origin/);
+    }
+  });
+});
+
+describe("edges into a CDN are turned around in code", () => {
+  const cdn = {
+    id: "edge-cdn",
+    label: "Edge CDN",
+    kind: "cdn",
+    hasOriginShield: { rationale: "Origin sees every cache miss otherwise.", provenance: "default", value: false },
+  };
+
+  it("propose: an edge from the origin INTO the cdn comes out cdn -> origin, once, without a retry", async () => {
+    const client = fakeClient([
+      toolUseResponse({ components: [cdn], edges: [{ from: "checkout-svc", to: "edge-cdn" }, { from: "edge-cdn", to: "checkout-svc" }] }),
+    ]);
+    const result = await proposeExtendedComponents("a site with a CDN", baseModel, { client });
+    expect(result.edges).toEqual([{ from: "edge-cdn", to: "checkout-svc" }]);
+  });
+
+  it("revise: the previous (backwards) edge is kept as shown, then corrected on the way out", async () => {
+    const client = fakeClient([toolUseResponse({ components: [cdn], edges: [{ from: "checkout-svc", to: "edge-cdn" }] })]);
+    const result = await reviseExtendedComponents([cdn as never], baseModel, { client }, undefined, [
+      { from: "checkout-svc", to: "edge-cdn" },
+    ]);
+    expect(result.edges).toEqual([{ from: "edge-cdn", to: "checkout-svc" }]);
+  });
+
+  it("leaves every other edge alone, including one from another extended component", async () => {
+    const client = fakeClient([
+      toolUseResponse({ components: [cdn, stripeComponent], edges: [{ from: "checkout-svc", to: "stripe-api" }, { from: "edge-cdn", to: "checkout-svc" }] }),
+    ]);
+    const result = await proposeExtendedComponents("payments and a CDN", baseModel, { client });
+    expect(result.edges).toEqual([{ from: "checkout-svc", to: "stripe-api" }, { from: "edge-cdn", to: "checkout-svc" }]);
+  });
+});

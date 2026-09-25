@@ -54,6 +54,31 @@ export function lintTopology(model: Pick<SystemModel, "components" | "edges">): 
     });
   }
 
+  // A CDN is reached by clients and pulls from its origin, so it is never
+  // the target of another component's edge. An edge INTO one is backwards.
+  const cdnIds = new Set(model.components.filter((c) => c.kind === "cdn").map((c) => c.id));
+  const seenCdn = new Set<string>();
+  for (const e of model.edges) {
+    if (!cdnIds.has(e.to) || cdnIds.has(e.from)) continue;
+    const key = `${e.from}\u0000${e.to}`;
+    if (seenCdn.has(key)) continue;
+    seenCdn.add(key);
+    findings.push({
+      code: "CDN_BEHIND_ORIGIN",
+      severity: "warning",
+      componentId: e.to,
+      title: `${label(e.from)} is drawn calling ${label(e.to)}, but the CDN should sit in front`,
+      explanation: `Clients hit a CDN first and it pulls from the origin, not the other way round. Drawn backwards, the CDN looks like something ${label(e.from)} depends on, which hides the real risk: a busy or cold CDN sending every request to ${label(e.from)}.`,
+      fixes: [
+        {
+          id: "reverse-cdn-edge",
+          label: `Reverse the connection between "${e.from}" and "${e.to}" so clients reach the CDN "${e.to}" first and it pulls from "${e.from}" (edge from "${e.to}" to "${e.from}")`,
+          tradeoff: "Only changes how the diagram reads; the CDN then shows as the first stop for client traffic and its cache misses land on the origin.",
+        },
+      ],
+    });
+  }
+
   // A queue nothing reads from (messages pile up forever) or nothing writes to.
   for (const c of model.components) {
     if (c.kind !== "queue") continue;
