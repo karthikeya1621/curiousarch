@@ -188,7 +188,7 @@ ${KIND_GUIDE}
 
 ${EDGE_REQUIREMENT}
 
-This is a LEARNING TOOL: the system's workload starts at its lowest tier regardless of any scale the description states — a stated number is a future target, never the current state (the base topology you were given already reflects this). Match that same starting point: default to the minimal trait value ("single" instance, "fixed" scaling, and so on) even when the description mentions a large eventual scale, and only choose a scaled-up value — or mark a trait "stated" — when the prose describes an actual PRESENT structural fact, not a future ambition.
+This is a LEARNING TOOL: the system's workload starts at its lowest tier regardless of any scale the description states — a stated number is a future target, never the current state (the base topology you were given already reflects this). Match that same starting point: default to the minimal trait value ("single" instance, "fixed" scaling, and no protections - a timeout, a fallback, origin shielding, versioning, locking and the like stay OFF unless the description says the system has them) even when the description mentions a large eventual scale, and only choose a scaled-up value — or mark a trait "stated" — when the prose describes an actual PRESENT structural fact, not a future ambition.
 
 Output only the structured components and edges. Do not add commentary.`;
 

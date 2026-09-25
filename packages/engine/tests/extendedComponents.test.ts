@@ -448,3 +448,9 @@ describe("the revise step shares the same tier groups", () => {
     expect(REVISE_PROMPT).toContain("Highest tier (100,000,000 users");
   });
 });
+
+describe("extended kinds also start without protections", () => {
+  it("the propose prompt keeps timeouts, fallbacks, shielding, versioning and locking off unless the description says otherwise", () => {
+    expect(PROPOSE_PROMPT).toMatch(/no protections - a timeout, a fallback, origin shielding, versioning, locking/);
+  });
+});

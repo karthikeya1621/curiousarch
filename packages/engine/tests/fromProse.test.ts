@@ -118,6 +118,25 @@ describe("fromProse", () => {
     expect(result.model.workload.users?.tier).toBe(100);
   });
 
+  it("starts at the minimum for the lowest tier: a protection the model chose on its own comes back off, one the description states stays on", async () => {
+    const chosen = {
+      ...validModelInput,
+      components: validModelInput.components.map((c) =>
+        c.id === "gw"
+          ? { ...c, hasRateLimiting: { rationale: "Typical for a public gateway.", provenance: "default", value: true } }
+          : c.id === "svc"
+            ? { ...c, hasCircuitBreaker: { rationale: "The description says calls use breakers.", provenance: "stated", value: true } }
+            : c,
+      ),
+    };
+    const client = fakeClient([toolUseResponse("emit_system_model", chosen)]);
+    const result = await fromProse("a toy system", { client });
+    const gw = result.model.components.find((c) => c.id === "gw") as unknown as { hasRateLimiting: { value: boolean } };
+    const svc = result.model.components.find((c) => c.id === "svc") as unknown as { hasCircuitBreaker: { value: boolean } };
+    expect(gw.hasRateLimiting.value).toBe(false);
+    expect(svc.hasCircuitBreaker.value).toBe(true);
+  });
+
   it("repairs once when the first attempt fails validation", async () => {
     const client = fakeClient([
       toolUseResponse("emit_system_model", invalidModelInput),
@@ -235,6 +254,12 @@ describe("SYSTEM_PROMPT", () => {
   // nothing specific to say (see schema.ts's STRUCTURAL_SELF_CHECK doc
   // comment). Only checking the distinctive ones — "none"/"unknown" are also
   // banned but too common as ordinary English to substring-check safely.
+  it("asks for protections to start OFF at the starting tier, and says 'typical' means a first launch", () => {
+    expect(SYSTEM_PROMPT).toMatch(/protections: rate limiting, circuit breakers, stampede protection and dead-letter queues are all OFF/);
+    expect(SYSTEM_PROMPT).toMatch(/typical for a first launch/);
+    expect(SYSTEM_PROMPT).toMatch(/on only when the description states the system already has it/);
+  });
+
   it("never spells out a banned rationale word as an example", () => {
     const text = SYSTEM_PROMPT.toLowerCase();
     for (const word of ["placeholder", "lorem ipsum", "tbd", "n/a"]) {

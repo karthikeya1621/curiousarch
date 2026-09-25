@@ -31,6 +31,7 @@ import { SYSTEM_PROMPT } from "./prompt.ts";
 import { extractWorkloadParameters } from "./workloadParameters.ts";
 import { proposeExtendedComponents } from "./extendedComponents.ts";
 import { collapseParallelAsyncPaths } from "./lintTopology.ts";
+import { startMinimal } from "./startMinimal.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { cleanModelIdentity, type SystemModel } from "../types.ts";
 
@@ -167,7 +168,10 @@ export async function fromProse(
   return {
     model: {
       ...cleanModelIdentity(topology.data),
-      components: [...topology.data.components, ...extended.components],
+      components: startMinimal(
+        [...topology.data.components, ...extended.components],
+        { ...topology.data.workload, ...workloadParameters },
+      ),
       edges: collapseParallelAsyncPaths(
         [...topology.data.components, ...extended.components],
         [...topology.data.edges, ...extended.edges],
