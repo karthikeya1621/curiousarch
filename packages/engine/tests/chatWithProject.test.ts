@@ -255,3 +255,22 @@ describe("a reply that asks a question is never queued as a change", () => {
     expect(result.instruction).toBe("Add a queue.");
   });
 });
+
+describe("route prompt kinds", () => {
+  it("lists every valid component kind, so the restated instruction never invents one (\"storage\", \"message-queue\")", async () => {
+    let system = "";
+    const client = {
+      messages: {
+        create: async (params: { system: unknown }) => {
+          system = JSON.stringify(params.system);
+          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { isQuestion: true, reply: "r", instruction: "" } }] };
+        },
+      },
+    } as unknown as Anthropic;
+    await chatWithProject(checkout, "Add storage.", [], [], [], [], { client });
+    for (const kind of ["gateway", "service", "cache", "database", "queue", "object-storage", "message-broker", "cdn", "external-dependency"]) {
+      expect(system).toContain(kind);
+    }
+    expect(system).toMatch(/never a made-up one/);
+  });
+});

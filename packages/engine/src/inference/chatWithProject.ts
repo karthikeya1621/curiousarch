@@ -53,6 +53,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { EXTENDED_KINDS } from "./extendedComponents.ts";
 import { formatPendingChanges, formatPendingFixes, type PendingChangeInput, type PendingFixInput } from "./reworkModel.ts";
 import { runStructuredCall, UTILITY_MODEL, type StructuredCallOptions } from "./structuredCall.ts";
 import type { AiFinding, SystemModel } from "../types.ts";
@@ -124,6 +125,7 @@ Decide, for the latest message. FIRST check it against the current model and any
 - Is this a QUESTION about the architecture (asking "why", "what would happen if", "how does X work", or similar, without asking for an actual change)? If so, set isQuestion to true, put a clear, plain-spoken ANSWER in "reply" per the style rule above, grounded in specifics from the actual model (real component names, real traits) rather than generic textbook language, and set "instruction" to an empty string.
 - Or is this a REQUEST TO CHANGE the architecture (asking to add, remove, replace, or reconfigure something)? If so, set isQuestion to false and:
   - put a short, one-sentence restatement of the change in "reply", in the future tense since it is applied on Re-simulate (e.g. "Adding a CDN in front of the API Gateway to absorb static asset traffic.");
+  - when the instruction names a component's kind, use only these exact values: gateway, service, cache, database, queue, ${EXTENDED_KINDS.join(", ")} - never a made-up one such as "storage" or "message-queue" (use object-storage, queue or message-broker);
   - put ONE complete, self-contained instruction in "instruction": what to change, on which components (use their real ids from the model, or from a queued change if the request builds on one), and any detail the user gave. It must make sense to someone who never saw this conversation - replace "it", "that", "the new one" and similar with what they refer to. If the request cancels or reverses a queued change, say so explicitly.
 
 If the message is ambiguous, prefer treating it as a question and explain what you'd need to know to make a specific change.
