@@ -336,6 +336,71 @@ export function stripExtendedReferences(raw: unknown, extendedIds: ReadonlySet<s
   return out;
 }
 
+/**
+ * A request for a NEW extended component ("store videos in object storage")
+ * makes the base call wire an edge to it under whatever id the instruction
+ * used — an id that isn't in its own output, because the extended step owns
+ * that component (seen live: `Edge references unknown component "video-storage"`,
+ * a billed retry). An edge to an id that isn't in the output but IS named in the
+ * user's own queued text is that case, and is dropped here; the extended step
+ * wires the new component up. An unknown id nobody mentioned is still a real
+ * mistake and still fails validation. Components are never touched.
+ */
+export function dropEdgesToMentionedUnknowns(raw: unknown, queuedText: string): unknown {
+  if (typeof raw !== "object" || raw === null || queuedText === "") return raw;
+  const out = raw as { components?: unknown; edges?: unknown };
+  if (!Array.isArray(out.components) || !Array.isArray(out.edges)) return raw;
+  const present = new Set(out.components.map((c) => (c as { id?: string } | null)?.id ?? ""));
+  const mentioned = new Set(queuedText.match(/[a-z0-9]+(?:-[a-z0-9]+)+/gi)?.map((t) => t.toLowerCase()) ?? []);
+  const edges = out.edges.filter((e) => {
+    const edge = e as { from?: string; to?: string } | null;
+    return [edge?.from, edge?.to].every((id) => typeof id !== "string" || present.has(id) || !mentioned.has(id.toLowerCase()));
+  });
+  return { ...(raw as object), edges };
+}
+
+/** Words in a request that mean the separate extended step, not the base call, owns the change. */
+const EXTENDED_REQUEST = new RegExp(`\\b(${EXTENDED_KINDS.map((k) => k.replace(/-/g, "[ -]")).join("|")}|cdn|load balancer|broker|object storage|blob storage|config store|feature flag|cron|scheduled)\\b`, "i");
+
+/**
+ * Puts back an original edge whose connection did not survive the whole
+ * rework — base call AND extended step together — unless a path between its
+ * ends now exists or restoring it would close a cycle. The base call is judged
+ * on its own output only (`checkNoDroppedEdges`), so a request such as "add a
+ * CDN in front of the gateway" (which the base call can't represent) makes it
+ * reroute an edge through a component it can't emit; found live, that cost two
+ * billed retries. Fixing the merged graph in code is the reliable half.
+ */
+export function restoreDroppedConnections<E extends { from: string; to: string }>(
+  original: E[],
+  components: { id: string }[],
+  edges: E[],
+): E[] {
+  const ids = new Set(components.map((c) => c.id));
+  const next = new Map<string, string[]>();
+  const add = (e: E) => next.set(e.from, [...(next.get(e.from) ?? []), e.to]);
+  edges.forEach(add);
+  const reachable = (from: string, to: string): boolean => {
+    const seen = new Set<string>();
+    const stack = [...(next.get(from) ?? [])];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (id === to) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      stack.push(...(next.get(id) ?? []));
+    }
+    return false;
+  };
+  const restored: E[] = [];
+  for (const e of dedupeEdges(original)) {
+    if (!ids.has(e.from) || !ids.has(e.to) || reachable(e.from, e.to) || reachable(e.to, e.from)) continue;
+    restored.push(e);
+    add(e);
+  }
+  return [...edges, ...restored];
+}
+
 export async function reworkModel(
   input: SystemModel,
   pendingFixes: PendingFixInput[] = [],
@@ -357,12 +422,20 @@ export async function reworkModel(
       maxRetries: 2,
       ...options,
       normalizeOutput: (raw) => {
-        const stripped = stripExtendedReferences(raw, extendedIds) as { edges?: { from: string; to: string }[] } | null;
+        const stripped = dropEdgesToMentionedUnknowns(
+          stripExtendedReferences(raw, extendedIds),
+          pendingContext,
+        ) as { edges?: { from: string; to: string }[] } | null;
         const deduped =
           stripped && Array.isArray(stripped.edges) ? { ...stripped, edges: dedupeEdges(stripped.edges) } : stripped;
         return reconcileWithPrevious(deduped, model, { anythingAsked: pendingFixes.length + pendingChanges.length > 0 });
       },
-      validateResult: (data) => checkNoDroppedEdges(model, data as SystemModel),
+      // A request the extended step owns ("add a CDN in front of the gateway")
+      // legitimately reroutes base edges through a component this call can't
+      // emit, so the base-only check would reject a correct answer; the merged
+      // graph is repaired below instead.
+      validateResult: (data) =>
+        EXTENDED_REQUEST.test(pendingContext) ? null : checkNoDroppedEdges(model, data as SystemModel),
     },
     "reworkModel",
   );
@@ -392,6 +465,15 @@ export async function reworkModel(
     previousEdges,
   );
 
+  // The extended step writes its own traits, so the same honesty rules apply
+  // to them (found by the live eval: a changed `hasFallback` came back
+  // "stated"): unchanged traits keep their provenance and rationale, changed
+  // ones are at most "inferred", and a protection nobody asked for stays off.
+  const reconciled = reconcileWithPrevious({ components: extended.components }, model, {
+    anythingAsked: pendingFixes.length + pendingChanges.length > 0,
+  }) as { components: Component[] };
+  extended.components = reconciled.components;
+
   return {
     model: {
       ...result.data,
@@ -400,7 +482,11 @@ export async function reworkModel(
       components: [...result.data.components, ...extended.components],
       edges: collapseParallelAsyncPaths(
         [...result.data.components, ...extended.components],
-        [...result.data.edges, ...extended.edges],
+        restoreDroppedConnections(
+          model.edges,
+          [...result.data.components, ...extended.components],
+          [...result.data.edges, ...extended.edges],
+        ),
       ),
       workload: { ...result.data.workload, users: model.workload.users, requests: model.workload.requests },
     },

@@ -72,6 +72,39 @@ export const WorkloadParametersSchema = z
 
 export type WorkloadParameters = z.infer<typeof WorkloadParametersSchema>;
 
+/** The ladder rung closest to `value` (by ratio — the rungs are ~100x apart, so 1M is nearer 10M than 100). */
+function nearestRung(ladder: readonly number[], value: number): number {
+  if (!(value > 0)) return ladder[0]!;
+  let best = ladder[0]!;
+  for (const rung of ladder) {
+    // Epsilon so a tie (1M requests is exactly as far from 100K as from 10M) goes to the lower rung — this tool starts small.
+    if (Math.abs(Math.log(value / rung)) < Math.abs(Math.log(value / best)) - 1e-9) best = rung;
+  }
+  return best;
+}
+
+/**
+ * The prompt asks for "the closest ladder step" to a stated number, and the
+ * model still answers with the raw number now and then (seen live: a target of
+ * 1,000,000 requests against a 1K / 100K / 10M / 1B ladder), which costs a
+ * billed retry for something that has a single obvious answer. Snap it in code,
+ * before validation.
+ */
+export function snapToLadder(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const out = { ...(raw as Record<string, unknown>) };
+  for (const [dimension, ladder] of [["users", USER_TIERS], ["requests", REQUEST_TIERS]] as const) {
+    const param = out[dimension];
+    if (typeof param !== "object" || param === null) continue;
+    const p = { ...(param as Record<string, unknown>) };
+    for (const field of ["tier", "target"] as const) {
+      if (typeof p[field] === "number") p[field] = nearestRung(ladder, p[field] as number);
+    }
+    out[dimension] = p;
+  }
+  return out;
+}
+
 const TOOL_NAME = "emit_workload_parameters";
 
 function buildToolInputSchema(): Record<string, unknown> {
@@ -114,7 +147,7 @@ export async function extractWorkloadParameters(
     // Snapping a stated number to the nearest ladder rung doesn't need
     // Sonnet — see structuredCall.ts's own comment on UTILITY_MODEL. An
     // explicit caller-supplied model (if any) still wins.
-    { model: UTILITY_MODEL, ...options },
+    { model: UTILITY_MODEL, ...options, normalizeOutput: snapToLadder },
     "extractWorkloadParameters",
   );
   return result.data;

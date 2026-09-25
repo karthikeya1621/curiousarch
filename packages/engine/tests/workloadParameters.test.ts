@@ -7,7 +7,8 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { extractWorkloadParameters } from "../src/inference/workloadParameters.js";
+import { extractWorkloadParameters, snapToLadder } from "../src/inference/workloadParameters.js";
+import { USER_TIERS } from "../src/types.js";
 
 const validInput = {
   users: { included: true, tier: 100, target: 1_000_000 },
@@ -55,11 +56,23 @@ describe("extractWorkloadParameters", () => {
     expect(result.requests.included).toBe(false);
   });
 
-  it("repairs once when the tier/target aren't on the closed ladder", async () => {
-    const client = fakeClient([toolUseResponse(invalidInput_offLadder), toolUseResponse(validInput)]);
+  it("snaps a tier/target that isn't on the closed ladder to the nearest rung, without a retry", async () => {
+    // Only ONE canned response: a retry would throw "no more canned responses".
+    const client = fakeClient([toolUseResponse(invalidInput_offLadder)]);
     const result = await extractWorkloadParameters("A movie booking system for 1M users", { client });
 
-    expect(result.users.target).toBe(1_000_000);
+    expect(USER_TIERS as readonly number[]).toContain(result.users.tier);
+    expect(USER_TIERS as readonly number[]).toContain(result.users.target);
+  });
+
+  it("snapToLadder picks the rung nearest by ratio: 1,000,000 requests -> 100,000; 3,000,000 users -> 1,000,000", () => {
+    const snapped = snapToLadder({
+      users: { included: true, tier: 100, target: 3_000_000 },
+      requests: { included: true, tier: 1_000, target: 1_000_000 },
+    }) as { users: { target: number }; requests: { target: number } };
+    expect(snapped.users.target).toBe(1_000_000);
+    expect(snapped.requests.target).toBe(100_000);
+    expect(snapToLadder(null)).toBeNull();
   });
 
   it("repairs once when neither dimension is included", async () => {
@@ -71,8 +84,8 @@ describe("extractWorkloadParameters", () => {
 
   it("throws with the validation error after exhausting the repair retry", async () => {
     const client = fakeClient([
-      toolUseResponse(invalidInput_offLadder),
-      toolUseResponse(invalidInput_offLadder),
+      toolUseResponse(invalidInput_noneIncluded),
+      toolUseResponse(invalidInput_noneIncluded),
     ]);
 
     await expect(

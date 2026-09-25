@@ -20,7 +20,8 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "eval:live": "tsx scripts/eval-live.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",

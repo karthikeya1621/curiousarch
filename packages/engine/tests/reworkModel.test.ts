@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { baseView, checkNoDroppedEdges, dedupeEdges, describeScale, reconcileWithPrevious, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
+import { baseView, checkNoDroppedEdges, dedupeEdges, dropEdgesToMentionedUnknowns, restoreDroppedConnections, describeScale, reconcileWithPrevious, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
 import { STRUCTURAL_SELF_CHECK } from "../src/inference/schema.js";
 import { checkout } from "../models/reference.js";
 import { cleanModelIdentity, unwrapIdentityText, type SystemModel } from "../src/types.js";
@@ -644,5 +644,108 @@ describe("model id and name are never the AI's to change", () => {
     });
     await reworkModel({ ...checkout, name: '{"value":"Clean name"}' }, [], [], { client });
     expect(seen).toContain('\\"name\\":\\"Clean name\\"');
+  });
+});
+
+describe("extended components are held to the same honesty rules as base ones", () => {
+  const dep = (fallback: { value: boolean; provenance: string; rationale: string }) => ({
+    id: "pay",
+    label: "Payment provider",
+    kind: "external-dependency",
+    hasTimeout: { value: true, provenance: "default", rationale: "A timeout is the usual guard." },
+    hasFallback: fallback,
+  });
+  const withDep: SystemModel = {
+    ...checkout,
+    components: [...checkout.components, dep({ value: false, provenance: "default", rationale: "No fallback mentioned." }) as never],
+    edges: [...checkout.edges, { from: "svc", to: "pay" }],
+  };
+  const reviseResponse = (fallback: { value: boolean; provenance: string; rationale: string }): Anthropic.Message =>
+    ({
+      content: [
+        { type: "tool_use", id: "x", name: "emit_extended_components", input: { components: [dep(fallback)], edges: [{ from: "svc", to: "pay" }] } },
+      ],
+    }) as unknown as Anthropic.Message;
+  const asked = [{ request: "give the payment provider a fallback", instruction: "Set hasFallback on pay to true." }];
+
+  it("a trait the revise step changed comes back at most 'inferred', never 'stated'", async () => {
+    const client = fakeClient([toolUseResponse(validReworkInput), reviseResponse({ value: true, provenance: "stated", rationale: "Asked for." })]);
+    const result = await reworkModel(withDep, [], asked, { client });
+    const pay = result.model.components.find((c) => c.id === "pay") as unknown as { hasFallback: { provenance: string; value: boolean } };
+    expect(pay.hasFallback).toMatchObject({ value: true, provenance: "inferred" });
+  });
+
+  it("an unchanged trait keeps its earlier provenance and rationale", async () => {
+    const client = fakeClient([toolUseResponse(validReworkInput), reviseResponse({ value: false, provenance: "stated", rationale: "Rewritten." })]);
+    const result = await reworkModel(withDep, [], [], { client });
+    const pay = result.model.components.find((c) => c.id === "pay") as unknown as { hasFallback: { provenance: string; rationale: string } };
+    expect(pay.hasFallback).toMatchObject({ provenance: "default", rationale: "No fallback mentioned." });
+  });
+
+  it("a protection nobody asked for stays off", async () => {
+    const client = fakeClient([toolUseResponse(validReworkInput), reviseResponse({ value: true, provenance: "inferred", rationale: "Scale makes it worth having." })]);
+    const result = await reworkModel(withDep, [], [], { client });
+    const pay = result.model.components.find((c) => c.id === "pay") as unknown as { hasFallback: { value: boolean } };
+    expect(pay.hasFallback.value).toBe(false);
+  });
+});
+
+describe("dropEdgesToMentionedUnknowns", () => {
+  const raw = {
+    components: [{ id: "svc" }, { id: "db" }],
+    edges: [{ from: "svc", to: "db" }, { from: "svc", to: "video-storage" }, { from: "svc", to: "ghost" }],
+  };
+
+  it("drops an edge to an id that is not in the output but is named in the queued request", () => {
+    const out = dropEdgesToMentionedUnknowns(raw, 'Store videos: add object storage (id: "video-storage") and connect svc to it.') as typeof raw;
+    expect(out.edges).toEqual([{ from: "svc", to: "db" }, { from: "svc", to: "ghost" }]);
+  });
+
+  it("leaves an unknown id nobody mentioned alone, so a real mistake still fails validation", () => {
+    expect((dropEdgesToMentionedUnknowns(raw, "Add a cache.") as typeof raw).edges).toHaveLength(3);
+    expect(dropEdgesToMentionedUnknowns(raw, "")).toBe(raw);
+  });
+
+  it("never drops an edge to a mentioned id that IS in the output, and never touches components", () => {
+    const withNew = { ...raw, components: [...raw.components, { id: "video-storage" }] };
+    const out = dropEdgesToMentionedUnknowns(withNew, "add video-storage") as typeof withNew;
+    expect(out.edges).toHaveLength(3);
+    expect(out.components).toBe(withNew.components);
+  });
+});
+
+describe("requests the extended step owns don't cost a retry, and no connection is lost", () => {
+  const asked = [{ request: "add a CDN in front of the gateway", instruction: "Add a CDN component in front of gw." }];
+  const dropsGwSvc = { ...validReworkInput, edges: [{ from: "svc", to: "db" }] }; // rerouted "through" a CDN the base call can't emit
+
+  it("accepts a base result that dropped an edge for such a request (one base response only — a retry would throw) and restores the edge", async () => {
+    const client = fakeClient([toolUseResponse(dropsGwSvc), emptyExtendedResponse()]);
+    const result = await reworkModel(checkout, [], asked, { client });
+    expect(result.repaired).toBe(false);
+    expect(result.model.edges.some((e) => e.from === "gw" && e.to === "svc")).toBe(true);
+  });
+
+  it("for any other request the same drop is still rejected and retried", async () => {
+    const client = fakeClient([toolUseResponse(dropsGwSvc), toolUseResponse(validReworkInput), emptyExtendedResponse()]);
+    const result = await reworkModel(checkout, [], [{ request: "add rate limiting", instruction: "Turn on rate limiting." }], { client });
+    expect(result.repaired).toBe(true);
+  });
+});
+
+describe("restoreDroppedConnections", () => {
+  const e = (from: string, to: string) => ({ from, to });
+  const comps = ["a", "b", "c", "q"].map((id) => ({ id }));
+
+  it("puts back an original edge whose ends both survive but are no longer connected", () => {
+    expect(restoreDroppedConnections([e("a", "b")], comps, [e("b", "c")])).toEqual([e("b", "c"), e("a", "b")]);
+  });
+
+  it("does not restore when a path now connects the ends (an inserted queue), or when an end is gone", () => {
+    expect(restoreDroppedConnections([e("a", "b")], comps, [e("a", "q"), e("q", "b")])).toEqual([e("a", "q"), e("q", "b")]);
+    expect(restoreDroppedConnections([e("a", "gone")], comps, [])).toEqual([]);
+  });
+
+  it("does not restore an edge that would close a cycle", () => {
+    expect(restoreDroppedConnections([e("a", "b")], comps, [e("b", "c"), e("c", "a")])).toEqual([e("b", "c"), e("c", "a")]);
   });
 });
