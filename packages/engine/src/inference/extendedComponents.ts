@@ -165,7 +165,7 @@ function buildTool(): Anthropic.Tool {
 }
 
 const KIND_GUIDE = `You may ONLY use these ${EXTENDED_KINDS.length} extended kinds — never invent another:
-- "external-dependency": something outside this system's own control (a payment/auth provider, any third-party API). Traits: hasTimeout, hasFallback.
+- "external-dependency": something outside this system's own control (a payment/auth provider, any third-party API). Traits: hasTimeout, hasFallback (true only when a real alternative exists - a second provider, a cached result, a degraded mode; a component that IS the alternative for another path, like a relay used when a direct connection fails, does not have a fallback of its own by that fact).
 - "load-balancer": pure traffic distribution across instances — distinct from a gateway, which admits/rejects but doesn't distribute. Traits: instanceCount ("single"/"multiple"), hasHealthChecks.
 - "message-broker": fan-out pub/sub to multiple independent consumer groups — distinct from a queue's point-to-point delivery. Traits: hasSchemaValidation, consumerScaling ("fixed"/"auto").
 - "cdn": edge cache in front of an origin. Trait: hasOriginShield.

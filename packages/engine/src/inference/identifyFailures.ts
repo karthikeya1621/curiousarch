@@ -18,6 +18,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
+import { lintTopology, mergeLintFindings } from "./lintTopology.ts";
 import type { AiFinding, SystemModel } from "../types.ts";
 
 const AiFixSchema = z.object({
@@ -138,5 +139,6 @@ export async function identifyFailures(
     options,
     "identifyFailures",
   );
-  return dropMisattributedFindings(dropInstanceCountFindings(result.data.findings, model), model);
+  const fromAi = dropMisattributedFindings(dropInstanceCountFindings(result.data.findings, model), model);
+  return mergeLintFindings(fromAi, lintTopology(model));
 }
