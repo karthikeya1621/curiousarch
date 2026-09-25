@@ -70,6 +70,26 @@ export function dropInstanceCountFindings(findings: AiFinding[], model: Pick<Sys
   });
 }
 
+/** Finding codes about one kind's own traits, and the only kind they can be about. */
+const KIND_SPECIFIC_CODES: { code: RegExp; kind: string }[] = [
+  { code: /^EXTERNAL_DEPENDENCY_/, kind: "external-dependency" },
+  { code: /^LB_/, kind: "load-balancer" },
+];
+
+/**
+ * Drops a finding whose code names another kind's trait ("no load-balancer
+ * health checks" raised on a gateway, which has no such trait). The prompt
+ * says so, but found live: it was raised anyway, and the only way to close it
+ * was to add a load balancer just to satisfy the finding. Deterministic half
+ * of that prompt rule.
+ */
+export function dropMisattributedFindings(findings: AiFinding[], model: Pick<SystemModel, "components">): AiFinding[] {
+  const kindOf = new Map(model.components.map((c) => [c.id, c.kind as string]));
+  return findings.filter((f) =>
+    KIND_SPECIFIC_CODES.every(({ code, kind }) => !code.test(f.code) || kindOf.get(f.componentId) === kind),
+  );
+}
+
 const IDENTIFY_FAILURES_PROMPT = `You are a senior software architect reviewing a system design for real, concrete risks - the way you would in an actual design review, not a checklist exercise.
 
 You are given the system as JSON: its components, their categorical traits (booleans and small categories, never precise numbers), the edges between them, and its workload (users and/or requests, each a rough scale rather than an exact number).
@@ -118,5 +138,5 @@ export async function identifyFailures(
     options,
     "identifyFailures",
   );
-  return dropInstanceCountFindings(result.data.findings, model);
+  return dropMisattributedFindings(dropInstanceCountFindings(result.data.findings, model), model);
 }

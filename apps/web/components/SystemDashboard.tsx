@@ -75,6 +75,13 @@ export function SystemDashboard({
             )}
           </div>
         </button>
+        {healthy && (
+          // A clean review is an ending with nowhere to go. Say what it means
+          // (this scale, not forever) and what to try next.
+          <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+            No risks found at this scale. Raise the users or requests scale and Re-simulate to see what breaks next.
+          </p>
+        )}
         {expanded && findings.length > 0 && (
           <>
             <div

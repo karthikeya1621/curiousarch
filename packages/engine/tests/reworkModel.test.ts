@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { baseView, checkNoDroppedEdges, describeScale, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
+import { baseView, checkNoDroppedEdges, dedupeEdges, describeScale, reconcileWithPrevious, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
 import { STRUCTURAL_SELF_CHECK } from "../src/inference/schema.js";
 import { checkout } from "../models/reference.js";
 import type { SystemModel } from "../src/types.js";
@@ -51,11 +51,13 @@ const validReworkInput = {
   ],
 };
 
+// Schema-invalid in a way no in-code normalisation can quietly repair: an edge
+// to an id that isn't in the output. (An empty rationale on an UNCHANGED trait
+// used to be the fixture, but reconcileWithPrevious now restores those from the
+// input model before validation — by design.)
 const invalidReworkInput = {
   ...validReworkInput,
-  components: validReworkInput.components.map((c) =>
-    c.id === "svc" ? { ...c, hasCircuitBreaker: { ...c.hasCircuitBreaker, rationale: "" } } : c,
-  ),
+  edges: [...validReworkInput.edges, { from: "svc", to: "ghost" }],
 };
 
 function toolUseResponse(input: unknown): Anthropic.Message {
@@ -205,7 +207,7 @@ describe("reworkModel", () => {
     expect(seenUserContent).toContain("No circuit breaker before the database");
     // The static instructions must stay identical whether or not fixes
     // are queued, or the system-prompt cache never hits.
-    expect(JSON.stringify(seenSystem)).not.toContain("circuit breaker");
+    expect(JSON.stringify(seenSystem)).not.toContain("Add a circuit breaker on the order service");
   });
 
   it("omits the pending-fixes section entirely when none are queued", async () => {
@@ -312,13 +314,13 @@ describe("checkNoDroppedEdges", () => {
     const broken: SystemModel = { ...checkout, edges: [{ from: "gw", to: "svc" }] }; // svc -> db missing
     const problem = checkNoDroppedEdges(checkout, broken);
     expect(problem).toMatch(/"svc" -> "db"/);
-    expect(problem).toMatch(/dropped 1 edge/i);
+    expect(problem).toMatch(/dropped 1 connection/i);
   });
 
   it("lists and correctly pluralizes multiple dropped edges", () => {
     const broken: SystemModel = { ...checkout, edges: [] }; // both edges gone
     const problem = checkNoDroppedEdges(checkout, broken);
-    expect(problem).toMatch(/dropped 2 edges/i);
+    expect(problem).toMatch(/dropped 2 connections/i);
     expect(problem).toMatch(/"gw" -> "svc"/);
     expect(problem).toMatch(/"svc" -> "db"/);
     expect(problem).toMatch(/restore them/i);
@@ -377,7 +379,7 @@ describe("reworkModel: rejecting a schema-valid but substantively empty repair",
       toolUseResponse(patchedButStillBroken),
     ]);
 
-    await expect(reworkModel(checkout, [], [], { client, maxRetries: 1 })).rejects.toThrow(/dropped 1 edge/i);
+    await expect(reworkModel(checkout, [], [], { client, maxRetries: 1 })).rejects.toThrow(/dropped 1 connection/i);
   });
 });
 
@@ -519,5 +521,90 @@ describe("instance counts are set automatically", () => {
     await reworkModel(scaled, [], [], { client });
 
     expect(reviseContent).toContain("current scale is 10,000 users");
+  });
+});
+
+describe("checkNoDroppedEdges: what must survive is the connection", () => {
+  const queue = { id: "q", kind: "queue", label: "Queue" } as never;
+
+  it("accepts a direct edge replaced by a path through an inserted component", () => {
+    const withQueue: SystemModel = {
+      ...checkout,
+      components: [...checkout.components, queue],
+      edges: [{ from: "gw", to: "svc" }, { from: "svc", to: "q" }, { from: "q", to: "db" }],
+    };
+    expect(checkNoDroppedEdges(checkout, withQueue)).toBeNull();
+  });
+
+  it("does not count an edge the input listed twice as dropped twice — or at all once it's emitted once", () => {
+    const duplicated: SystemModel = { ...checkout, edges: [...checkout.edges, { from: "svc", to: "db" }] };
+    expect(checkNoDroppedEdges(duplicated, checkout)).toBeNull();
+    const broken: SystemModel = { ...checkout, edges: [{ from: "gw", to: "svc" }] };
+    expect(checkNoDroppedEdges(duplicated, broken)).toMatch(/dropped 1 connection/i);
+  });
+
+  it("dedupeEdges keeps each pair once, in order", () => {
+    expect(dedupeEdges([{ from: "a", to: "b" }, { from: "a", to: "b" }, { from: "b", to: "a" }])).toEqual([
+      { from: "a", to: "b" },
+      { from: "b", to: "a" },
+    ]);
+  });
+
+  it("the input the base call sees is deduplicated, and duplicate output edges are collapsed rather than retried", async () => {
+    const dup: SystemModel = { ...checkout, edges: [...checkout.edges, { from: "svc", to: "db" }] };
+    expect(baseView(dup).edges).toHaveLength(2);
+    const client = fakeClient([
+      toolUseResponse({ ...validReworkInput, edges: [...validReworkInput.edges, { from: "svc", to: "db" }] }),
+      emptyExtendedResponse(),
+    ]);
+    const result = await reworkModel(dup, [], [], { client });
+    expect(result.repaired).toBe(false);
+    expect(result.model.edges.filter((e) => e.from === "svc" && e.to === "db")).toHaveLength(1);
+  });
+});
+
+describe("reconcileWithPrevious", () => {
+  const trait = (value: unknown, provenance: string, rationale: string) => ({ value, provenance, rationale });
+  const prev = {
+    components: [
+      { id: "gw", kind: "gateway", label: "G", hasRateLimiting: trait(false, "default", "Not mentioned; typical first launch.") },
+      { id: "svc", kind: "service", label: "S", instanceCount: trait("single", "default", "One instance at launch."), hasCircuitBreaker: trait(false, "default", "None yet.") },
+    ],
+    edges: [],
+  } as unknown as SystemModel;
+  const out = (components: unknown[]) => reconcileWithPrevious({ components, edges: [] }, prev, { anythingAsked: false }) as { components: Record<string, any>[] };
+
+  it("keeps the previous provenance and rationale for a trait whose value didn't change", () => {
+    const gw = out([{ id: "gw", hasRateLimiting: trait(false, "stated", "Still no limiter.") }]).components[0]!;
+    expect(gw.hasRateLimiting).toEqual(trait(false, "default", "Not mentioned; typical first launch."));
+  });
+
+  it("never lets a trait the rework changed be 'stated'", () => {
+    const svc = out([{ id: "gw" }, { id: "svc", instanceCount: trait("multiple", "stated", "1M users.") }]).components[1]!;
+    expect(svc.instanceCount).toEqual(trait("multiple", "inferred", "1M users."));
+  });
+
+  it("switches nothing on by itself: an off protection stays off when nothing was asked for", () => {
+    const svc = out([{ id: "gw" }, { id: "svc", hasCircuitBreaker: trait(true, "inferred", "Scale needs it.") }]).components[1]!;
+    expect(svc.hasCircuitBreaker.value).toBe(false);
+  });
+
+  it("allows turning a protection on when a fix or chat change was queued", () => {
+    const result = reconcileWithPrevious(
+      { components: [{ id: "svc", hasCircuitBreaker: trait(true, "inferred", "Requested.") }] },
+      prev,
+      { anythingAsked: true },
+    ) as { components: Record<string, any>[] };
+    expect(result.components[0]!.hasCircuitBreaker.value).toBe(true);
+  });
+
+  it("does not touch a brand-new component's values, only caps 'stated'", () => {
+    const c = out([{ id: "cache1", hasStampedeProtection: trait(true, "stated", "Popular keys.") }]).components[0]!;
+    expect(c.hasStampedeProtection).toEqual(trait(true, "inferred", "Popular keys."));
+  });
+
+  it("passes anything that isn't a model through untouched", () => {
+    expect(reconcileWithPrevious(null, prev, { anythingAsked: false })).toBeNull();
+    expect(reconcileWithPrevious({ components: "x" }, prev, { anythingAsked: false })).toEqual({ components: "x" });
   });
 });

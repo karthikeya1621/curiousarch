@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { dropInstanceCountFindings, identifyFailures } from "../src/inference/identifyFailures.js";
+import { dropInstanceCountFindings, dropMisattributedFindings, identifyFailures } from "../src/inference/identifyFailures.js";
 import { checkout } from "../models/reference.js";
 
 const validFindingsInput = {
@@ -186,5 +186,30 @@ describe("instance counts are never findings", () => {
 
     expect(system).toMatch(/Instance counts are not findings/);
     expect(system).not.toMatch(/SINGLE_POINT_OF_FAILURE/);
+  });
+});
+
+describe("dropMisattributedFindings", () => {
+  const model = {
+    components: [
+      { id: "gw", kind: "gateway" },
+      { id: "lb", kind: "load-balancer" },
+      { id: "pay", kind: "external-dependency" },
+      { id: "svc", kind: "service" },
+    ],
+  };
+  const f = (code: string, componentId: string) => ({ code, componentId, severity: "warning", title: "t", explanation: "e", fixes: [] });
+  const keep = (...fs: ReturnType<typeof f>[]) => dropMisattributedFindings(fs as never, model as never).map((x) => x.code + ":" + x.componentId);
+
+  it("drops a load-balancer finding raised on a gateway, and an external-dependency one raised on a service", () => {
+    expect(keep(f("LB_NO_HEALTH_CHECKS", "gw"), f("EXTERNAL_DEPENDENCY_NO_FALLBACK", "svc"))).toEqual([]);
+  });
+
+  it("keeps them on the kind they are about, and leaves every other code alone", () => {
+    expect(keep(f("LB_NO_HEALTH_CHECKS", "lb"), f("EXTERNAL_DEPENDENCY_NO_FALLBACK", "pay"), f("THUNDERING_HERD_RISK", "svc"))).toEqual([
+      "LB_NO_HEALTH_CHECKS:lb",
+      "EXTERNAL_DEPENDENCY_NO_FALLBACK:pay",
+      "THUNDERING_HERD_RISK:svc",
+    ]);
   });
 });

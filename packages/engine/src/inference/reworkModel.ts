@@ -80,15 +80,16 @@ const REWORK_PROMPT = `You are reconsidering an EXISTING rough architectural mod
 
 If specific fixes or requested changes are listed, implement each of them precisely first - they are already-decided choices, not suggestions to evaluate. Requested changes are listed oldest first; where a later one conflicts with (or cancels) an earlier one, the later one wins. If a requested change is about one of the EXTENDED kinds described below, do not attempt it yourself - the separate step that owns those kinds implements it, so your own output simply doesn't change on account of that part of the request; only make a base-kind change for a request that genuinely calls for one. Then reconsider the ARCHITECTURE holistically on top of that, the way an architect revisiting a system does: given where this system stands now (including its current scale), does it call for anything more - additional scaling on a component, a new service, a new connection, a component that should be split or added, a trait that's clearly wrong given the rest of the system? You may leave everything else exactly as it is if nothing more is warranted - do not change something just to have changed it. You are not deciding the workload parameters themselves - only the architecture that serves them.
 
-Some parts of a system are of an EXTENDED kind (${EXTENDED_KINDS.join(", ")}). Those belong to a separate step: you are NOT shown them in the model JSON (at most a short note after it says they exist), so never output a component of one of those kinds, never reuse a name that sounds like one as a component id, and never reference one in an edge - every edge you output must connect two components that are in YOUR output. That separate step re-wires them into your result afterwards, so nothing about them is lost by your leaving them out. Every edge between two components you both keep must still be present in your output exactly as it was unless the architecture genuinely no longer calls for that specific connection. Dropping one for any other reason is a mistake - when in doubt, keep it.
+Some parts of a system are of an EXTENDED kind (${EXTENDED_KINDS.join(", ")}). Those belong to a separate step: you are NOT shown them in the model JSON (at most a short note after it says they exist), so never output a component of one of those kinds, never reuse a name that sounds like one as a component id, and never reference one in an edge - every edge you output must connect two components that are in YOUR output. That separate step re-wires them into your result afterwards, so nothing about them is lost by your leaving them out. Every connection between two components you both keep must still exist in your output unless the architecture genuinely no longer calls for it. Dropping one for any other reason is a mistake - when in doubt, keep it. When a chosen fix or requested change puts a component BETWEEN two you keep (a queue, a cache, a proxy), route the connection through it and remove the direct edge - keeping both leaves two competing paths. List each edge once.
 
 Rules, same as always:
 - Every trait is a rough category (a boolean or a small set of choices), never a number.
 - Beyond the extended kinds mentioned above (which you never emit yourself), you may only use the five base component kinds (gateway, service, cache, database, queue) - don't invent another new one.
 - For anything that still conceptually exists from the input, reuse its EXACT same component id - this is how the interface keeps track of what's the same thing across a rework, not a new one. Only mint a new id for a component that's genuinely new.
 - Instance counts are yours to keep right, automatically. At the system's CURRENT scale (its workload tiers, in the model), when a service needs more than one instance or a database needs replicas, set that instanceCount trait to the larger value yourself as part of this rework - nobody will separately ask you to. While the scale is small leave it at the smallest value; raise it only when the scale genuinely calls for it, with a rationale that names the scale and provenance "inferred".
+- Scale alone never switches on a protection. Rate limiting, circuit breakers, stampede protection, dead-letter queues and health checks are exactly what the separate review step reports as risks, so leave each one as it is unless a listed fix or requested change asks for it. Only instance counts (above) move by themselves. A protection you leave off is not a mistake here.
 - Keep the same top-level "id" and "name" - you are reworking this system, not renaming it.
-- Preserve every existing edge between two components you're both keeping unless you have a specific architectural reason to remove it - a rework that silently drops real connections produces a diagram that no longer reflects the actual system.
+- Preserve every existing connection between two components you're both keeping unless you have a specific architectural reason to remove it (including routing it through a newly inserted component) - a rework that silently drops real connections produces a diagram that no longer reflects the actual system.
 - At most ${MAX_BASE_COMPONENTS} components in your own output. If the holistic review would call for more, that's a sign to fold or reconsider something already there before adding, not to grow past the limit.
 - Every trait still needs a rationale and a provenance. "stated" means the input model already had this value and you're keeping it because it's still correct - never mark something "stated" that you are choosing or changing yourself; that's "inferred" (derived from something else in the system) or "default" (your own reasonable choice, nothing in the system dictates it). Keep every rationale to one short, specific sentence of roughly 8 to 15 words; for a trait you are leaving as it was, restate its reason more briefly rather than copying it at length.
 - The model must remain a DAG - never create an edge back into a component that is upstream of it.
@@ -172,20 +173,101 @@ export function checkNoDroppedEdges(input: SystemModel, result: SystemModel): st
   const baseIds = new Set(input.components.filter((c) => !isExtendedComponent(c)).map((c) => c.id));
   const resultIds = new Set(result.components.map((c) => c.id));
   const kept = (id: string) => baseIds.has(id) && resultIds.has(id);
+  const reachable = reachability(result.edges);
 
-  const dropped = input.edges.filter(
-    (e) => kept(e.from) && kept(e.to) && !result.edges.some((r) => r.from === e.from && r.to === e.to),
+  // What must survive is the CONNECTION, not the literal edge: a fix that
+  // inserts a queue between two services legitimately replaces their direct
+  // edge with a path through the new component. Judged on unique pairs, so an
+  // edge the input listed twice can't be "dropped" twice (or at all, by
+  // emitting it once).
+  const dropped = dedupeEdges(input.edges).filter(
+    (e) => kept(e.from) && kept(e.to) && !reachable(e.from, e.to),
   );
   if (dropped.length === 0) return null;
 
   const list = dropped.map((e) => `"${e.from}" -> "${e.to}"`).join(", ");
-  const noun = dropped.length === 1 ? "edge" : "edges";
+  const noun = dropped.length === 1 ? "connection" : "connections";
   const them = dropped.length === 1 ? "it" : "them";
   return (
     `You dropped ${dropped.length} ${noun} between components you're keeping, without being asked to: ${list}. ` +
-    `Every edge between two components you both kept must still be present exactly as it was — restore ${them}, ` +
-    `unless the request specifically required removing ${them}.`
+    `Every connection between two components you both kept must still exist (directly, or through a component ` +
+    `you inserted between them) - restore ${them}, unless the request specifically required removing ${them}.`
   );
+}
+
+/** Each from/to pair once, first occurrence kept. */
+export function dedupeEdges<E extends { from: string; to: string }>(edges: E[]): E[] {
+  const seen = new Set<string>();
+  return edges.filter((e) => {
+    const key = `${e.from}\u0000${e.to}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** `reachable(a, b)`: is there a path (of one or more edges) from a to b? */
+function reachability(edges: { from: string; to: string }[]): (from: string, to: string) => boolean {
+  const next = new Map<string, string[]>();
+  for (const e of edges) next.set(e.from, [...(next.get(e.from) ?? []), e.to]);
+  return (from, to) => {
+    const seen = new Set<string>();
+    const stack = [...(next.get(from) ?? [])];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (id === to) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      stack.push(...(next.get(id) ?? []));
+    }
+    return false;
+  };
+}
+
+interface RawTrait {
+  value?: unknown;
+  provenance?: unknown;
+  rationale?: unknown;
+}
+const isTrait = (v: unknown): v is RawTrait => typeof v === "object" && v !== null && "value" in v;
+const isMitigation = (key: string) => /^has[A-Z]/.test(key);
+
+/**
+ * Keeps the rework honest about what it changed, in code, because the prompt
+ * alone wasn't enough (found live on a real project):
+ * - a trait whose value is unchanged keeps its previous provenance and
+ *   rationale — the model kept re-labelling old traits "stated" a pass at a
+ *   time until nearly everything claimed to be stated, when nothing was;
+ * - anything the rework itself changed or added is at most "inferred" — there
+ *   is no prose here for it to have been "stated" in;
+ * - when nothing was asked for (no queued fix or chat change), a protection
+ *   (`has…` trait) that was off stays off: raising the scale once switched on
+ *   rate limiting, breakers and stampede protection everywhere, which left
+ *   the review step nothing to find.
+ * Applied before validation, so it costs no retry.
+ */
+export function reconcileWithPrevious(raw: unknown, previous: SystemModel, opts: { anythingAsked: boolean }): unknown {
+  if (typeof raw !== "object" || raw === null || !Array.isArray((raw as { components?: unknown }).components)) return raw;
+  const before = new Map(previous.components.map((c) => [c.id, c as unknown as Record<string, unknown>]));
+  const components = (raw as { components: unknown[] }).components.map((c) => {
+    if (typeof c !== "object" || c === null) return c;
+    const comp = c as Record<string, unknown>;
+    const old = before.get(String(comp.id));
+    const out: Record<string, unknown> = { ...comp };
+    for (const [key, trait] of Object.entries(comp)) {
+      if (!isTrait(trait)) continue;
+      const prev = old?.[key];
+      if (isTrait(prev) && JSON.stringify(prev.value) === JSON.stringify(trait.value)) {
+        out[key] = prev;
+      } else if (isTrait(prev) && !opts.anythingAsked && isMitigation(key) && prev.value === false && trait.value === true) {
+        out[key] = prev;
+      } else if (trait.provenance === "stated") {
+        out[key] = { ...trait, provenance: "inferred" };
+      }
+    }
+    return out;
+  });
+  return { ...(raw as object), components };
 }
 
 /**
@@ -218,7 +300,7 @@ export function baseView(model: SystemModel): SystemModel {
   return {
     ...model,
     components: model.components.filter((c) => baseIds.has(c.id)),
-    edges: model.edges.filter((e) => baseIds.has(e.from) && baseIds.has(e.to)),
+    edges: dedupeEdges(model.edges.filter((e) => baseIds.has(e.from) && baseIds.has(e.to))),
   };
 }
 
@@ -269,7 +351,12 @@ export async function reworkModel(
     {
       maxRetries: 2,
       ...options,
-      normalizeOutput: (raw) => stripExtendedReferences(raw, extendedIds),
+      normalizeOutput: (raw) => {
+        const stripped = stripExtendedReferences(raw, extendedIds) as { edges?: { from: string; to: string }[] } | null;
+        const deduped =
+          stripped && Array.isArray(stripped.edges) ? { ...stripped, edges: dedupeEdges(stripped.edges) } : stripped;
+        return reconcileWithPrevious(deduped, model, { anythingAsked: pendingFixes.length + pendingChanges.length > 0 });
+      },
       validateResult: (data) => checkNoDroppedEdges(model, data as SystemModel),
     },
     "reworkModel",
