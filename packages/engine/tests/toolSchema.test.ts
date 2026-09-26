@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 import Ajv2020 from "ajv/dist/2020.js";
 import { buildToolInputSchema } from "../src/inference/fromProse.js";
+import { buildExtendedToolInputSchema, ProposeResponseSchema, ReviseResponseSchema } from "../src/inference/extendedComponents.js";
 
 describe("tool input schema", () => {
   it("validates as JSON Schema draft 2020-12", () => {
@@ -85,5 +86,42 @@ describe("tool input schema", () => {
     for (const v of values) {
       expect(v).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe("the revise step's tool input schema (keep / remove / components / edges)", () => {
+  const schema = buildExtendedToolInputSchema(ReviseResponseSchema);
+
+  it("validates as JSON Schema draft 2020-12", () => {
+    expect(() => new Ajv2020({ strict: false }).compile(schema)).not.toThrow();
+  });
+
+  it("requires all four fields, forbids extras, and types keep/remove as string arrays", () => {
+    const s = schema as { required?: string[]; additionalProperties?: boolean; properties: Record<string, { type?: string; items?: { type?: string } }> };
+    expect([...(s.required ?? [])].sort()).toEqual(["components", "edges", "keep", "remove"]);
+    expect(s.additionalProperties).toBe(false);
+    expect(s.properties.keep).toMatchObject({ type: "array", items: { type: "string" } });
+    expect(s.properties.remove).toMatchObject({ type: "array", items: { type: "string" } });
+  });
+
+  it("every $ref points at a top-level definitions entry", () => {
+    const refs = JSON.stringify(schema).match(/"\$ref":"[^"]+"/g) ?? [];
+    for (const ref of refs) expect(ref).toMatch(/"\$ref":"#\/definitions\/[A-Za-z0-9_]+"/);
+  });
+});
+
+describe("the propose step's tool input schema (considered / components / edges)", () => {
+  const schema = buildExtendedToolInputSchema(ProposeResponseSchema);
+
+  it("validates as JSON Schema draft 2020-12, requires all three fields and forbids extras", () => {
+    expect(() => new Ajv2020({ strict: false }).compile(schema)).not.toThrow();
+    const s = schema as { required?: string[]; additionalProperties?: boolean };
+    expect([...(s.required ?? [])].sort()).toEqual(["components", "considered", "edges"]);
+    expect(s.additionalProperties).toBe(false);
+  });
+
+  it("every $ref points at a top-level definitions entry", () => {
+    const refs = JSON.stringify(schema).match(/"\$ref":"[^"]+"/g) ?? [];
+    for (const ref of refs) expect(ref).toMatch(/"\$ref":"#\/definitions\/[A-Za-z0-9_]+"/);
   });
 });

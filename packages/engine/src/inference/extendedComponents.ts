@@ -144,10 +144,133 @@ export const ExtendedComponentsResponseSchema = z
 
 export type ExtendedComponentsResponse = z.infer<typeof ExtendedComponentsResponseSchema>;
 
+const KindDecisionSchema = z.object({
+  kind: z.enum(EXTENDED_KINDS),
+  needed: z.boolean(),
+  evidence: z.string().min(1),
+});
+export type KindDecision = z.infer<typeof KindDecisionSchema>;
+
+/**
+ * What the propose step (a build) returns: a decision for EACH of the seven
+ * kinds, then the components. Found live: for a description that named a load
+ * balancer, object storage, a CDN, a payment provider and a nightly job, the
+ * step answered with an empty list about 1 build in 4 (a 57-token reply that
+ * skipped any reasoning), and the build silently lacked all five. Making the AI
+ * state, per kind, whether one is needed and why — before it lists components —
+ * puts the reasoning back, and gives code a structural consistency check that
+ * involves no reading of the description: a kind it says is needed must come
+ * back as a component, and vice versa.
+ */
+export const ProposeResponseSchema = z
+  .object({
+    considered: z.array(KindDecisionSchema),
+    components: z.array(ExtendedComponentSchema),
+    edges: z.array(EdgeSchema),
+  })
+  .superRefine((val, ctx) => {
+    const kinds = val.considered.map((d) => d.kind);
+    for (const kind of EXTENDED_KINDS) {
+      if (kinds.filter((k) => k === kind).length !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `"considered" needs exactly one entry for "${kind}" - every one of the ${EXTENDED_KINDS.length} kinds must be decided.`,
+          path: ["considered"],
+        });
+      }
+    }
+    const ids = val.components.map((c) => c.id);
+    for (const id of new Set(ids.filter((x, i) => ids.indexOf(x) !== i))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate component id "${id}" — every component needs a distinct id.`, path: ["components"] });
+    }
+    if (val.components.length > MAX_EXTENDED_COMPONENTS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Too many extended components (${val.components.length}) — at most ${MAX_EXTENDED_COMPONENTS} are allowed in one response.`,
+        path: ["components"],
+      });
+    }
+  });
+export type ProposeResponse = z.infer<typeof ProposeResponseSchema>;
+
+/** The AI's per-kind decisions must agree with the components it returned. */
+export function checkDecisionsMatchComponents(data: { considered: KindDecision[]; components: { kind: string }[] }): string | null {
+  const returned = new Set(data.components.map((c) => c.kind));
+  const missing = data.considered.filter((d) => d.needed && !returned.has(d.kind)).map((d) => d.kind);
+  const unexpected = [...returned].filter((k) => !data.considered.some((d) => d.kind === k && d.needed));
+  const parts: string[] = [];
+  if (missing.length) parts.push(`you decided ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} needed but returned no such component - add ${missing.length === 1 ? "it" : "them"}, or set needed to false`);
+  if (unexpected.length) parts.push(`you returned ${unexpected.join(", ")} without deciding ${unexpected.length === 1 ? "it is" : "they are"} needed - set needed to true or remove ${unexpected.length === 1 ? "it" : "them"}`);
+  return parts.length ? `Your decisions and your components disagree: ${parts.join("; and ")}.` : null;
+}
+
+/**
+ * What the revise step returns. It used to re-emit every existing extended
+ * component in full on every Re-simulate — most of a revise call's output, and
+ * money, for components that hadn't changed. Now it lists the ids it leaves
+ * exactly as they are (`keep`), returns in full only the components it ADDS or
+ * CHANGES, and lists the ids it removes (`remove`, only when asked). A previous
+ * component named in none of the three is a dropped one, which is checked.
+ */
+export const ReviseResponseSchema = z
+  .object({
+    keep: z.array(z.string()),
+    remove: z.array(z.string()),
+    components: z.array(ExtendedComponentSchema),
+    edges: z.array(EdgeSchema),
+  })
+  .superRefine((val, ctx) => {
+    const ids = val.components.map((c) => c.id);
+    for (const id of new Set(ids.filter((x, i) => ids.indexOf(x) !== i))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate component id "${id}" — every component needs a distinct id.`, path: ["components"] });
+    }
+    if (val.components.length > MAX_EXTENDED_COMPONENTS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Too many extended components (${val.components.length}) — at most ${MAX_EXTENDED_COMPONENTS} are allowed in one response.`,
+        path: ["components"],
+      });
+    }
+  });
+export type ReviseResponse = z.infer<typeof ReviseResponseSchema>;
+
+/**
+ * The full extended component list a revise response describes: the previous
+ * components it keeps, plus the ones it returns (added or changed), minus those
+ * it removes. `problem` says what is wrong when it is inconsistent: an id that
+ * was never a previous component, one both kept and returned, or — unless a
+ * request may have asked for it — any previous component that is removed or not
+ * mentioned at all (the wipe found on a real project).
+ */
+export function mergeRevision(
+  previous: Component[],
+  data: ReviseResponse,
+  removalMayBeRequested: boolean,
+): { components: Component[]; problem: string | null } {
+  const previousIds = new Set(previous.map((c) => c.id));
+  const keep = new Set(data.keep);
+  const remove = new Set(data.remove);
+  const returned = new Set(data.components.map((c) => c.id));
+
+  const unknown = [...keep, ...remove].filter((id) => !previousIds.has(id));
+  if (unknown.length > 0) {
+    return { components: [], problem: `"keep" and "remove" may only list ids of the previous extended components; not previous ones: ${unknown.map((id) => `"${id}"`).join(", ")}.` };
+  }
+  const both = [...keep].filter((id) => returned.has(id) || remove.has(id));
+  if (both.length > 0) {
+    return { components: [], problem: `Each previous component is in exactly ONE of keep / components / remove; in more than one: ${both.map((id) => `"${id}"`).join(", ")}.` };
+  }
+  const dropped = previous.filter((c) => !keep.has(c.id) && !returned.has(c.id)).map((c) => c.id);
+  if (dropped.length > 0 && !removalMayBeRequested) {
+    return { components: [], problem: checkNoDroppedExtendedComponents(previous.filter((c) => dropped.includes(c.id)), { components: [] }) };
+  }
+  return { components: [...previous.filter((c) => keep.has(c.id)), ...data.components], problem: null };
+}
+
 const TOOL_NAME = "emit_extended_components";
 
-function buildToolInputSchema(): Record<string, unknown> {
-  const schema = zodToJsonSchema(ExtendedComponentsResponseSchema, {
+export function buildExtendedToolInputSchema(responseSchema: z.ZodTypeAny = ExtendedComponentsResponseSchema): Record<string, unknown> {
+  const schema = zodToJsonSchema(responseSchema, {
     target: "jsonSchema7",
     $refStrategy: "root",
     definitions: { BooleanTrait: BooleanTraitSchema, Provenance: ProvenanceSchema },
@@ -156,12 +279,12 @@ function buildToolInputSchema(): Record<string, unknown> {
   return schema;
 }
 
-function buildTool(): Anthropic.Tool {
+function buildTool(responseSchema: z.ZodTypeAny = ExtendedComponentsResponseSchema): Anthropic.Tool {
   return {
     name: TOOL_NAME,
     description: "Emit any additional components this system needs, from a fixed extended set, plus the edges connecting them to the rest of the system.",
     strict: true,
-    input_schema: buildToolInputSchema() as Anthropic.Tool.InputSchema,
+    input_schema: buildExtendedToolInputSchema(responseSchema) as Anthropic.Tool.InputSchema,
   };
 }
 
@@ -174,7 +297,7 @@ const KIND_GUIDE = `You may ONLY use these ${EXTENDED_KINDS.length} extended kin
 - "scheduled-job": a cron-style background processor, outside any request path. Traits: hasLocking, isIdempotent.
 - "config-store": feature flags / secrets manager / remote config, a control-plane dependency requests may need. Trait: hasLocalFallback.
 
-Most systems need zero or one of these — only include a kind the description (or the existing system) genuinely calls for. Do not add one just to have used it, and never more than ${MAX_EXTENDED_COMPONENTS} in total. Every trait needs "rationale" (one real line of roughly 8 to 15 words tied to something specific, never a generic filler word standing in for one; if there's nothing specific to point to, say that as the reason itself) and "provenance" ("stated" the description said so, "inferred" you derived it from something else, or "default" your own reasonable choice).`;
+Most systems need zero or one of these, but a description that NAMES one (a load balancer, a CDN, object storage, a third-party provider, a scheduled job) has stated it - include it. Only include a kind the description (or the existing system) genuinely calls for. Do not add one just to have used it, and never more than ${MAX_EXTENDED_COMPONENTS} in total. Every trait needs "rationale" (one real line of roughly 8 to 15 words tied to something specific, never a generic filler word standing in for one; if there's nothing specific to point to, say that as the reason itself) and "provenance" ("stated" the description said so, "inferred" you derived it from something else, or "default" your own reasonable choice).`;
 
 const EDGE_REQUIREMENT = `Every component you emit MUST have at least one edge connecting it to something — either an id from the base topology you were given, or the id of another component you're emitting here. A component with no edge at all is a floating box on the diagram and is never correct: figure out which existing component would realistically call or depend on it (usually the service whose job description implies the connection), and wire it in. Never reference an id that doesn't exist in either set.`;
 
@@ -190,7 +313,9 @@ ${EDGE_REQUIREMENT}
 
 This is a LEARNING TOOL: the system's workload starts at its lowest tier regardless of any scale the description states — a stated number is a future target, never the current state (the base topology you were given already reflects this). Match that same starting point: default to the minimal trait value ("single" instance, "fixed" scaling, and no protections - a timeout, a fallback, origin shielding, versioning, locking and the like stay OFF unless the description says the system has them) even when the description mentions a large eventual scale, and only choose a scaled-up value — or mark a trait "stated" — when the prose describes an actual PRESENT structural fact, not a future ambition.
 
-Output only the structured components and edges. Do not add commentary.`;
+How to answer: first decide, for EACH of the ${EXTENDED_KINDS.length} kinds in "considered", whether this system needs one (needed true or false) and give a short "evidence" - what the description says, or why it is not needed. Then return components for exactly the kinds you marked needed, with their edges. Deciding all seven, one by one, comes first: an answer that lists no components must come from seven considered "no" decisions, not from skipping the question.
+
+Output only the structured decisions, components and edges. Do not add commentary.`;
 
 export const REVISE_PROMPT = `You are reconsidering a system's EXTENDED components — the small additional set beyond its base topology (gateway/service/cache/database/queue) — as part of a broader rework of the whole system.
 
@@ -202,7 +327,17 @@ You may also be told the system's current scale. Instance counts are yours to ke
 
 ${TIER_GROUP_GUIDE}
 
+Every trait's rationale must be true at the system's CURRENT scale: write it fresh, never copy an old one, and never leave one that says "starting tier", "launch" or names a smaller scale; for a protection that is off, say it is not part of the described system.
+
 Keep every existing edge exactly as it was — the same two ends and the SAME DIRECTION — as long as both ends still exist. The one exception: when a chosen fix or requested change puts a component between two ends (a queue between a job and a service), route the connection through it and remove the direct edge - keeping both leaves two competing paths. An edge's direction is meaning (which side calls or depends on which), so never reverse one, and never drop one unless the request specifically requires it. Only when a base end no longer exists (that component was replaced or removed in the rework) re-point the edge to the base component that now serves the equivalent role.
+
+How to answer: each PREVIOUS extended component goes in exactly one place.
+- "keep": the ids you leave EXACTLY as they are - and only when every rationale it carries is still true at the current scale (one that names an old scale or says "starting tier" must be returned again, fresh).
+- "components": the components you ADD or CHANGE, each in full (a changed one keeps its exact same id).
+- "remove": ids you take out - only when a listed fix or requested change asks for it.
+"edges" is the complete list of edges touching any extended component, as before.
+
+Add a NEW extended component only when the description, a listed fix or a requested change calls for it, or the system cannot work at its current scale without it - never because systems like this typically have one (a relay, a balancer or a job nobody described is an invention). A component you add gets its traits from the tier groups above, like the ones you keep.
 
 The default action for every previous extended component is to KEEP it, with its EXACT same id, and keep its edge(s) as they were (see above) — re-pointing one to the equivalent base component only where its base end no longer exists (base component ids may have changed during the rework you're not shown the details of). Only drop one if the system described no longer has any plausible need for it at all - not because the base topology's ids changed, not because you're being cautious, and never as a default. This is the same "preserve by default" rule the base rework itself follows: silently losing something the user's system already had is a mistake, not a simplification. Only mint a new id for something genuinely new that didn't exist before.
 
@@ -309,13 +444,24 @@ export async function proposeExtendedComponents(
   const result = await runStructuredCall(
     PROPOSE_PROMPT,
     `System description:\n${description}\n\nBase topology already built:\n${baseComponentContext(baseModel)}\n\n${budget}`,
-    ExtendedComponentsResponseSchema,
-    buildTool(),
-    options,
+    ProposeResponseSchema,
+    buildTool(ProposeResponseSchema),
+    {
+      ...options,
+      // A response with no "considered" list (older callers, canned test
+      // responses) is read as: needed exactly for the kinds it returned.
+      normalizeOutput: (raw) => {
+        if (typeof raw !== "object" || raw === null || "considered" in raw) return raw;
+        const comps = Array.isArray((raw as { components?: unknown }).components) ? ((raw as { components: { kind?: string }[] }).components) : [];
+        const present = new Set(comps.map((c) => c?.kind));
+        return { ...(raw as object), considered: EXTENDED_KINDS.map((kind) => ({ kind, needed: present.has(kind), evidence: present.has(kind) ? "returned" : "not needed" })) };
+      },
+      validateResult: (data) => checkDecisionsMatchComponents(data as ProposeResponse),
+    },
     "proposeExtendedComponents",
   );
   return sanitizeExtendedResponse(
-    result.data,
+    { components: result.data.components, edges: result.data.edges } as ExtendedComponentsResponse,
     new Set(baseModel.components.map((c) => c.id)),
     remaining,
   ) as { components: Component[]; edges: Edge[] };
@@ -386,6 +532,34 @@ export function checkNoDroppedExtendedEdges(
   );
 }
 
+/**
+ * Every extended component that existed before must still exist. Found on a
+ * real project: a Re-simulate at 1M users (nothing queued) handed the revise
+ * step six previous extended components and it answered with an empty list —
+ * the payment provider, push provider, CDN, recording storage, nightly job and
+ * load balancer all vanished, and the next Re-simulate treated the system as if
+ * they had never existed. `checkNoDroppedExtendedEdges` couldn't catch it: a
+ * component that no longer exists exempts its edges. This is a continuity
+ * invariant, like the edge one: removing something is only ever a response to a
+ * request, so with nothing queued a missing component is an error, and the AI is
+ * told which ones to restore.
+ */
+export function checkNoDroppedExtendedComponents(
+  previous: { id: string }[],
+  result: { components: { id: string }[] },
+): string | null {
+  const kept = new Set(result.components.map((c) => c.id));
+  const dropped = previous.filter((c) => !kept.has(c.id)).map((c) => c.id);
+  if (dropped.length === 0) return null;
+  const noun = dropped.length === 1 ? "component" : "components";
+  const them = dropped.length === 1 ? "it" : "them";
+  return (
+    `You dropped ${dropped.length} existing extended ${noun} without being asked to: ${dropped.map((id) => `"${id}"`).join(", ")}. ` +
+    `Every existing extended component must stay, with its same id and its edges - restore ${them}. ` +
+    `Removing one is only for a request that specifically asks for it.`
+  );
+}
+
 export async function reviseExtendedComponents(
   previousExtended: Component[],
   reworkedBaseModel: { components: BaseComponentRef[] },
@@ -408,31 +582,46 @@ export async function reviseExtendedComponents(
    * proposal.
    */
   previousEdges: Edge[] = [],
+  /**
+   * True when a fix or chat change is queued: it may ask for a component to be
+   * removed, so a missing one is no longer an error by itself. False (nothing
+   * asked): every previous extended component must survive.
+   */
+  removalMayBeRequested = false,
 ): Promise<{ components: Component[]; edges: Edge[] }> {
   const { remaining, text: budget } = budgetLine(reworkedBaseModel.components.length);
   const baseIds = new Set(reworkedBaseModel.components.map((c) => c.id));
   const existingEdges =
     previousEdges.length > 0 ? `\n\nExisting edges touching them (from -> to):\n${JSON.stringify(previousEdges)}` : "";
+  const baseEdges = (reworkedBaseModel as { edges?: Edge[] }).edges ?? [];
   const result = await runStructuredCall(
     REVISE_PROMPT,
     `Previous extended components:\n${JSON.stringify(previousExtended)}${existingEdges}\n\nFreshly reworked base topology:\n${baseComponentContext(reworkedBaseModel)}\n\n${budget}${additionalContext ?? ""}`,
-    ExtendedComponentsResponseSchema,
-    buildTool(),
+    ReviseResponseSchema,
+    buildTool(ReviseResponseSchema),
     {
       maxRetries: 2,
       ...options,
-      validateResult: (data) =>
-        checkNoDroppedExtendedEdges(
+      // A response that omits keep/remove (older callers, canned test responses)
+      // means "nothing kept, nothing removed": every previous component it still
+      // wants must be returned in full, as before.
+      normalizeOutput: (raw) => (typeof raw === "object" && raw !== null ? { keep: [], remove: [], ...(raw as object) } : raw),
+      validateResult: (data) => {
+        const merged = mergeRevision(previousExtended, data as ReviseResponse, removalMayBeRequested);
+        if (merged.problem) return merged.problem;
+        return checkNoDroppedExtendedEdges(
           previousEdges,
           baseIds,
-          data as ExtendedComponentsResponse,
-          (reworkedBaseModel as { edges?: Edge[] }).edges ?? [],
-        ),
+          { components: merged.components, edges: (data as ReviseResponse).edges },
+          baseEdges,
+        );
+      },
     },
     "reviseExtendedComponents",
   );
+  const merged = mergeRevision(previousExtended, result.data, removalMayBeRequested);
   return sanitizeExtendedResponse(
-    result.data,
+    { components: merged.components, edges: result.data.edges } as ExtendedComponentsResponse,
     new Set(reworkedBaseModel.components.map((c) => c.id)),
     remaining,
   ) as { components: Component[]; edges: Edge[] };

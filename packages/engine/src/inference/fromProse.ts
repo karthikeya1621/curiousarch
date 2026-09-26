@@ -30,7 +30,8 @@ import { BooleanTraitSchema, ProvenanceSchema, SystemModelSchema } from "./schem
 import { SYSTEM_PROMPT } from "./prompt.ts";
 import { extractWorkloadParameters } from "./workloadParameters.ts";
 import { proposeExtendedComponents } from "./extendedComponents.ts";
-import { collapseParallelAsyncPaths } from "./lintTopology.ts";
+import { collapseParallelAsyncPaths, dedupeEdges } from "./lintTopology.ts";
+import { reviewGraph } from "./reviewGraph.ts";
 import { startMinimal } from "./startMinimal.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { cleanModelIdentity, type SystemModel } from "../types.ts";
@@ -165,18 +166,22 @@ export async function fromProse(
   // comment on why this is a separate call at all).
   const extended = await proposeExtendedComponents(description, topology.data, options);
 
+  const components = [...topology.data.components, ...extended.components];
+  const workload = { ...topology.data.workload, ...workloadParameters };
+  const mergedEdges = dedupeEdges([...topology.data.edges, ...extended.edges]);
+  // The two calls above could not see each other's edges, so the merged wiring
+  // can contradict itself. The AI reviews it (seeing the whole graph and the
+  // description); the deterministic rewrites are only the fallback when that
+  // review was skipped or failed.
+  const review = await reviewGraph(components, mergedEdges, { newComponentIds: components.map((c) => c.id), request: description }, options);
+  const edges = review.reviewed ? dedupeEdges(review.edges) : collapseParallelAsyncPaths(components, mergedEdges);
+
   return {
     model: {
       ...cleanModelIdentity(topology.data),
-      components: startMinimal(
-        [...topology.data.components, ...extended.components],
-        { ...topology.data.workload, ...workloadParameters },
-      ),
-      edges: collapseParallelAsyncPaths(
-        [...topology.data.components, ...extended.components],
-        [...topology.data.edges, ...extended.edges],
-      ),
-      workload: { ...topology.data.workload, ...workloadParameters },
+      components: startMinimal(components, workload),
+      edges,
+      workload,
     },
     raw: topology.raw,
     repaired: topology.repaired,

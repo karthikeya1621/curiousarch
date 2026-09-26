@@ -62,11 +62,10 @@ import type { AiFinding, SystemModel } from "../types.ts";
 // identity in this schema, so no $ref-hoisting gotcha (see fromProse.ts's
 // own comment on that class of bug) applies here.
 const RouteSchema = z.object({
-  isQuestion: z.boolean(),
-  needsClarification: z
-    .boolean()
+  intent: z
+    .enum(["change", "question", "no-change"])
     .describe(
-      "True when you are asking the user something before anything can change: the request is ambiguous, already true of the current model, or asks for something that isn't there. Such a message is answered, never queued. False otherwise.",
+      '"change": the message asks for the architecture to be changed and the change would actually alter the model. "question": it asks about the architecture (why, what would happen if, how does X work). "no-change": nothing should be queued - an answer to a question you asked ("No", "not required", "never mind", "ignore it"), thanks or an acknowledgement, a request that is already true of the model, one that asks for something that is not there, or one that needs clarifying first.',
     ),
   reply: z
     .string()
@@ -126,14 +125,15 @@ A request to look at, review, analyze, or find gaps/risks/improvements in the CU
 
 "reply" is read aloud in a chat bubble, not rendered as a document - it has no markdown support at all, so any "**bold**", heading, or "1. / 2. / 3." list shows up as literal asterisks and numbers, not formatting. Write it the way you'd actually say it out loud to someone sitting next to you: plain sentences, no markdown, no headings, no numbered or bulleted lists - if you have several points, fold them into one or two short paragraphs instead of itemizing them. Keep it tight, usually 2-4 sentences; go longer only when the question genuinely can't be answered honestly in less. If you're tempted to write more than a short paragraph, that's a sign to pick the single most useful thing to say and say only that, not to organize everything you could say into a structured list.
 
-Decide, for the latest message. FIRST check it against the current model and any queued change: if it asks for something that is ALREADY TRUE (add a CDN when a CDN already sits there; add a queue between two components that already have one) or for something that can't be done (remove or change a component that isn't there), it is NOT a change - set needsClarification true (and isQuestion true, empty "instruction"), with a "reply" that says plainly what is already in place or missing, naming the close match if there is one (a CDN when they said cache) and asking whether they meant that. Only a request that would actually change the model is a change: queuing one that does nothing spends a Re-simulate for no result. Then:
-- Is this a QUESTION about the architecture (asking "why", "what would happen if", "how does X work", or similar, without asking for an actual change)? If so, set isQuestion to true, put a clear, plain-spoken ANSWER in "reply" per the style rule above, grounded in specifics from the actual model (real component names, real traits) rather than generic textbook language, and set "instruction" to an empty string.
-- Or is this a REQUEST TO CHANGE the architecture (asking to add, remove, replace, or reconfigure something)? If so, set isQuestion to false and:
+Decide, for the latest message, which ONE intent it has:
+- "no-change": FIRST check the message against the current model, any queued change and the conversation so far. It is "no-change" when it is an answer to something you just asked ("No", "not required", "never mind", "ignore it", "yes that's fine"), thanks or an acknowledgement, a request for something ALREADY TRUE (add a CDN when a CDN already sits there; add a queue between two components that already have one), a request about something that is not there (remove or change a component that doesn't exist), or a request that needs clarifying before anything can change. Put a short, plain "reply" - acknowledge an answer in a few words, or say plainly what is already in place or missing, naming the close match if there is one (a CDN when they said cache) and asking whether they meant that - and set "instruction" to an empty string. Nothing is queued: queuing one spends a Re-simulate for no result.
+- "question": a QUESTION about the architecture (asking "why", "what would happen if", "how does X work", or similar, without asking for an actual change). Put a clear, plain-spoken ANSWER in "reply" per the style rule above, grounded in specifics from the actual model (real component names, real traits) rather than generic textbook language, and set "instruction" to an empty string.
+- "change": a REQUEST TO CHANGE the architecture (add, remove, replace or reconfigure something) that would actually alter the model. Then:
   - put a short, one-sentence restatement of the change in "reply", in the future tense since it is applied on Re-simulate (e.g. "Adding a CDN in front of the API Gateway to absorb static asset traffic.");
   - when the instruction names a component's kind, use only these exact values: gateway, service, cache, database, queue, ${EXTENDED_KINDS.join(", ")} - never a made-up one such as "storage" or "message-queue" (use object-storage, queue or message-broker);
   - put ONE complete, self-contained instruction in "instruction": what to change, on which components (use their real ids from the model, or from a queued change if the request builds on one), and any detail the user gave. It must make sense to someone who never saw this conversation - replace "it", "that", "the new one" and similar with what they refer to. If the request cancels or reverses a queued change, say so explicitly.
 
-If the message is ambiguous, prefer treating it as a question and explain what you'd need to know to make a specific change.
+If the message is ambiguous, prefer "no-change" or "question" and explain what you'd need to know to make a specific change.
 
 Output only the structured decision.
 
@@ -176,11 +176,13 @@ export async function chatWithProject(
     "chatWithProject:route",
   );
 
-  // The AI's own call, in its own typed field: a message it says needs
-  // clarification (ambiguous, already true, impossible) is answered, not queued
-  // — queuing it would spend a Re-simulate on a request nobody confirmed. (This
-  // replaced a check for a reply that ended in "?".)
-  if (route.data.isQuestion || route.data.needsClarification) {
+  // The AI's own call, in one typed field: only a "change" is queued. An
+  // answer, an acknowledgement ("No", "ignore it"), a request that is already
+  // true or impossible, or one that needs clarifying is shown as a reply and
+  // queues nothing — queuing one spends a Re-simulate for no result. (This
+  // replaced two overlapping booleans that could contradict each other, and
+  // before them a check for a reply ending in "?".)
+  if (route.data.intent !== "change") {
     return { isQuestion: true, reply: route.data.reply, repaired: route.repaired };
   }
 

@@ -15,6 +15,9 @@ import {
   PROPOSE_PROMPT,
   REVISE_PROMPT,
   checkNoDroppedExtendedEdges,
+  checkNoDroppedExtendedComponents,
+  mergeRevision,
+  checkDecisionsMatchComponents,
 } from "../src/inference/extendedComponents.js";
 import { MAX_EXTENDED_COMPONENTS, MAX_TOTAL_COMPONENTS } from "../src/types.js";
 
@@ -461,5 +464,136 @@ describe("load balancer placement in the prompts", () => {
       expect(prompt).toMatch(/ADD a load balancer it sits BETWEEN its callers and what it balances: edges run caller -> load balancer -> service/);
       expect(prompt).toMatch(/already in the system keeps the connections it has/);
     }
+  });
+});
+
+describe("existing extended components must survive a revision unless removal was requested", () => {
+  const cdn = {
+    id: "edge-cdn", label: "Edge CDN", kind: "cdn",
+    hasOriginShield: { rationale: "No shielding described for the origin.", provenance: "default", value: false },
+  };
+
+  it("checkNoDroppedExtendedComponents names exactly the missing ids, and is quiet when all are kept", () => {
+    expect(checkNoDroppedExtendedComponents([{ id: "a" }, { id: "b" }], { components: [{ id: "a" }] })).toMatch(/dropped 1 existing extended component .*"b"/);
+    expect(checkNoDroppedExtendedComponents([{ id: "a" }, { id: "b" }], { components: [] })).toMatch(/dropped 2 existing extended components without being asked to: "a", "b"/);
+    expect(checkNoDroppedExtendedComponents([{ id: "a" }], { components: [{ id: "a" }, { id: "new" }] })).toBeNull();
+  });
+
+  it("revise: an empty answer with nothing queued is rejected and the retry that restores them is accepted", async () => {
+    const client = fakeClient([
+      toolUseResponse({ components: [], edges: [] }),
+      toolUseResponse({ components: [cdn], edges: [{ from: "edge-cdn", to: "checkout-svc" }] }),
+    ]);
+    const result = await reviseExtendedComponents([cdn as never], baseModel, { client }, undefined, [{ from: "edge-cdn", to: "checkout-svc" }]);
+    expect(result.components.map((c) => c.id)).toEqual(["edge-cdn"]);
+  });
+
+  it("revise: with a request queued the same empty answer is accepted (the request may be to remove it)", async () => {
+    const client = fakeClient([toolUseResponse({ components: [], edges: [] })]);
+    const result = await reviseExtendedComponents([cdn as never], baseModel, { client }, "Remove the CDN.", [], true);
+    expect(result.components).toEqual([]);
+  });
+});
+
+describe("the revise step lists what it keeps instead of re-emitting it", () => {
+  const cdn = {
+    id: "edge-cdn", label: "Edge CDN", kind: "cdn",
+    hasOriginShield: { rationale: "No shielding described for the origin.", provenance: "default", value: false },
+  };
+  const lb = {
+    id: "api-lb", label: "API LB", kind: "load-balancer",
+    instanceCount: { rationale: "At 10,000 users one balancer is enough.", provenance: "default", value: "single" },
+    hasHealthChecks: { rationale: "Not part of the described system.", provenance: "default", value: false },
+  };
+  const both = [cdn, lb] as never[];
+  const prevEdges = [{ from: "edge-cdn", to: "checkout-svc" }, { from: "api-lb", to: "gw" }];
+
+  it("a kept component is taken from the previous list unchanged, and only the changed one is returned in full", () => {
+    const changedLb = { ...lb, instanceCount: { rationale: "At 1,000,000 users the balancer runs several instances.", provenance: "inferred", value: "multiple" } };
+    const { components, problem } = mergeRevision(both, { keep: ["edge-cdn"], remove: [], components: [changedLb], edges: [] } as never, false);
+    expect(problem).toBeNull();
+    expect(components.map((c) => c.id)).toEqual(["edge-cdn", "api-lb"]);
+    expect((components[1] as unknown as { instanceCount: { value: string } }).instanceCount.value).toBe("multiple");
+  });
+
+  it.each([
+    ["an id that was never a previous component", { keep: ["ghost"], remove: [], components: [] }, /not previous ones: "ghost"/],
+    ["an id both kept and returned", { keep: ["edge-cdn"], remove: [], components: [cdn] }, /exactly ONE of keep/],
+    ["a previous component mentioned nowhere (the wipe)", { keep: ["edge-cdn"], remove: [], components: [] }, /dropped 1 existing extended component .*"api-lb"/],
+    ["a removal nobody asked for", { keep: ["edge-cdn"], remove: ["api-lb"], components: [] }, /dropped 1 existing extended component .*"api-lb"/],
+  ])("rejects %s", (_label, data, message) => {
+    expect(mergeRevision(both, { edges: [], ...data } as never, false).problem).toMatch(message);
+  });
+
+  it("accepts a removal when a request may have asked for it", () => {
+    const merged = mergeRevision(both, { keep: ["edge-cdn"], remove: ["api-lb"], components: [], edges: [] } as never, true);
+    expect(merged.problem).toBeNull();
+    expect(merged.components.map((c) => c.id)).toEqual(["edge-cdn"]);
+  });
+
+  it("revise end to end: a response that keeps one component and returns another gives the full merged list", async () => {
+    const client = fakeClient([toolUseResponse({ keep: ["edge-cdn"], remove: [], components: [lb], edges: prevEdges })]);
+    const result = await reviseExtendedComponents(both, baseModel, { client }, undefined, prevEdges);
+    expect(result.components.map((c) => c.id).sort()).toEqual(["api-lb", "edge-cdn"]);
+    expect(result.edges).toEqual(prevEdges);
+  });
+
+  it("revise end to end: an inconsistent response is rejected with the reason and the corrected one accepted", async () => {
+    const client = fakeClient([
+      toolUseResponse({ keep: ["edge-cdn"], remove: [], components: [], edges: prevEdges }), // api-lb mentioned nowhere
+      toolUseResponse({ keep: ["edge-cdn", "api-lb"], remove: [], components: [], edges: prevEdges }),
+    ]);
+    const result = await reviseExtendedComponents(both, baseModel, { client }, undefined, prevEdges);
+    expect(result.components.map((c) => c.id).sort()).toEqual(["api-lb", "edge-cdn"]);
+  });
+
+  it("the prompt explains the three places a previous component can go, and ties keep to rationales that are still true", () => {
+    expect(REVISE_PROMPT).toMatch(/goes in exactly one place/);
+    expect(REVISE_PROMPT).toMatch(/"keep": the ids you leave EXACTLY as they are - and only when every rationale it carries is still true at the current scale/);
+  });
+});
+
+describe("the propose step decides each kind before listing components", () => {
+  const decision = (kind: string, needed: boolean) => ({ kind, needed, evidence: needed ? "The description names it." : "Not needed." });
+  const all = (neededKinds: string[]) => EXTENDED_KINDS.map((k) => decision(k, neededKinds.includes(k)));
+  const cdn = {
+    id: "video-cdn", label: "Video CDN", kind: "cdn",
+    hasOriginShield: { rationale: "No shielding described for the origin.", provenance: "default", value: false },
+  };
+
+  it("checkDecisionsMatchComponents: quiet when they agree, and names the disagreement either way", () => {
+    expect(checkDecisionsMatchComponents({ considered: all(["cdn"]) as never, components: [{ kind: "cdn" }] })).toBeNull();
+    expect(checkDecisionsMatchComponents({ considered: all(["cdn", "object-storage"]) as never, components: [{ kind: "cdn" }] })).toMatch(/object-storage is needed but returned no such component/);
+    expect(checkDecisionsMatchComponents({ considered: all([]) as never, components: [{ kind: "cdn" }] })).toMatch(/returned cdn without deciding it is needed/);
+  });
+
+  it("an empty list that contradicts a 'needed' decision is rejected with the reason, and the corrected answer accepted", async () => {
+    const client = fakeClient([
+      toolUseResponse({ considered: all(["cdn"]), components: [], edges: [] }), // the live failure, but now self-contradictory
+      toolUseResponse({ considered: all(["cdn"]), components: [cdn], edges: [{ from: "video-cdn", to: "checkout-svc" }] }),
+    ]);
+    const result = await proposeExtendedComponents("a site whose video is served through a CDN", baseModel, { client });
+    expect(result.components.map((c) => c.id)).toEqual(["video-cdn"]);
+  });
+
+  it("an empty answer backed by seven 'no' decisions is accepted (a system that needs none)", async () => {
+    const client = fakeClient([toolUseResponse({ considered: all([]), components: [], edges: [] })]);
+    const result = await proposeExtendedComponents("a plain CRUD app", baseModel, { client });
+    expect(result.components).toEqual([]);
+  });
+
+  it("the schema wants exactly one decision per kind", async () => {
+    const client = fakeClient([
+      toolUseResponse({ considered: [decision("cdn", true)], components: [cdn], edges: [{ from: "video-cdn", to: "checkout-svc" }] }),
+      toolUseResponse({ considered: all(["cdn"]), components: [cdn], edges: [{ from: "video-cdn", to: "checkout-svc" }] }),
+    ]);
+    const result = await proposeExtendedComponents("a site with a CDN", baseModel, { client });
+    expect(result.components).toHaveLength(1);
+  });
+
+  it("the prompt asks for a decision on each kind first, and says a named kind has been stated", () => {
+    expect(PROPOSE_PROMPT).toMatch(/first decide, for EACH of the 7 kinds in "considered"/);
+    expect(PROPOSE_PROMPT).toMatch(/an answer that lists no components must come from seven considered "no" decisions/);
+    expect(PROPOSE_PROMPT).toMatch(/a description that NAMES one .* has stated it - include it/);
   });
 });

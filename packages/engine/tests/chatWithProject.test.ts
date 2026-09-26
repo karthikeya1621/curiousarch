@@ -37,13 +37,13 @@ function fakeClient(
 }
 
 const questionRoute = {
-  isQuestion: true, needsClarification: false,
+  intent: "question",
   reply: "The cache has a short TTL because showtime availability changes frequently.",
   instruction: "",
 };
 
 const changeRoute = {
-  isQuestion: false, needsClarification: false,
+  intent: "change",
   reply: "Adding a CDN in front of the API Gateway.",
   instruction: 'Add a CDN component between the client and the API Gateway "gw" to serve static assets.',
 };
@@ -219,47 +219,63 @@ describe("route prompt", () => {
     const client = {
       messages: {
         create: async (params: { system: unknown }) => {
-          system = JSON.stringify(params.system);
-          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { isQuestion: true, needsClarification: false, reply: "r", instruction: "" } }] };
+          system = JSON.stringify(params.system).replace(/\\"/g, '"');
+          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", reply: "r", instruction: "" } }] };
         },
       },
     } as unknown as import("@anthropic-ai/sdk").default;
     await chatWithProject({ id: "m", name: "m", workload: {}, components: [], edges: [] } as never, "Remove the cache.", [], [], [], [], { client });
-    expect(system).toMatch(/ALREADY TRUE[\s\S]*is NOT a change[\s\S]*set needsClarification true/);
+    expect(system).toMatch(/"no-change": FIRST check the message[\s\S]*ALREADY TRUE[\s\S]*Nothing is queued/);
   });
 });
 
-describe("a message the AI says needs clarification is never queued as a change", () => {
-  const client = (fields: { isQuestion: boolean; needsClarification: boolean; reply: string }) =>
+describe("only an intent of 'change' is ever queued", () => {
+  const client = (intent: string, reply: string) =>
     ({
       messages: {
         create: async () => ({
-          content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { ...fields, instruction: "Add a queue." } }],
+          content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent, reply, instruction: "Add a queue." } }],
         }),
       },
     }) as unknown as Anthropic;
+  const send = (message: string, intent: string, reply: string) =>
+    chatWithProject(checkout, message, [], [], [], [], { client: client(intent, reply) });
 
-  it("treats a change flagged needsClarification as a question (nothing to queue)", async () => {
-    const result = await chatWithProject(checkout, "Add a queue.", [], [], [], [], {
-      client: client({ isQuestion: false, needsClarification: true, reply: "You already have a queue between them. A second one?" }),
-    });
-    expect(result.isQuestion).toBe(true);
-    expect(result.instruction).toBeUndefined();
-  });
-
-  it("still queues an ordinary change statement", async () => {
-    const result = await chatWithProject(checkout, "Add a queue.", [], [], [], [], {
-      client: client({ isQuestion: false, needsClarification: false, reply: "Adding a queue between the order service and the database." }),
-    });
+  it("queues a change and nothing else", async () => {
+    const result = await send("Add a queue.", "change", "Adding a queue between the order service and the database.");
     expect(result.isQuestion).toBe(false);
     expect(result.instruction).toBe("Add a queue.");
   });
 
-  it("the wording of the reply plays no part: a reply ending in '?' with the flag off is still queued", async () => {
-    const result = await chatWithProject(checkout, "Add a queue.", [], [], [], [], {
-      client: client({ isQuestion: false, needsClarification: false, reply: "Should this be a queue or a broker? Adding a queue." }),
-    });
-    expect(result.isQuestion).toBe(false);
+  it.each([
+    ["an answer to a clarifying question", "No.", "no-change", "Understood."],
+    ["an acknowledgement", "No. Ignore it", "no-change", "Got it, moving on."],
+    ["a request that is already true", "Add a queue.", "no-change", "You already have a queue between them."],
+    ["a question", "Why a queue?", "question", "It decouples the two."],
+  ])("never queues %s", async (_label, message, intent, reply) => {
+    const result = await send(message, intent, reply);
+    expect(result.isQuestion).toBe(true);
+    expect(result.reply).toBe(reply);
+    expect(result.instruction).toBeUndefined();
+  });
+
+  it("the wording of the reply plays no part — a reply ending in '?' is queued if, and only if, the intent is 'change'", async () => {
+    expect((await send("x", "change", "Should this be a queue or a broker? Adding a queue.")).isQuestion).toBe(false);
+    expect((await send("x", "no-change", "Adding a queue.")).isQuestion).toBe(true);
+  });
+
+  it("the prompt defines the three intents and treats a reply to your own question as no-change", async () => {
+    let system = "";
+    const c = {
+      messages: {
+        create: async (params: { system: unknown }) => {
+          system = JSON.stringify(params.system).replace(/\\"/g, '"');
+          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", reply: "r", instruction: "" } }] };
+        },
+      },
+    } as unknown as Anthropic;
+    await chatWithProject(checkout, "No.", [], [], [], [], { client: c });
+    for (const word of ['"no-change"', '"question"', '"change"', "not required", "ignore it"]) expect(system).toContain(word);
   });
 });
 
@@ -269,8 +285,8 @@ describe("route prompt kinds", () => {
     const client = {
       messages: {
         create: async (params: { system: unknown }) => {
-          system = JSON.stringify(params.system);
-          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { isQuestion: true, needsClarification: false, reply: "r", instruction: "" } }] };
+          system = JSON.stringify(params.system).replace(/\\"/g, '"');
+          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", reply: "r", instruction: "" } }] };
         },
       },
     } as unknown as Anthropic;

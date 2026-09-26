@@ -75,12 +75,16 @@ import { buildTool } from "./fromProse.ts";
 import { EXTENDED_KINDS, isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { TIER_GROUP_GUIDE } from "./tierGuide.ts";
-import { collapseParallelAsyncPaths, routableLoadBalancers } from "./lintTopology.ts";
+import { atLowestTier, startMinimal } from "./startMinimal.ts";
+import { collapseParallelAsyncPaths, dedupeEdges, routableLoadBalancers } from "./lintTopology.ts";
+import { reviewGraph } from "./reviewGraph.ts";
+
+export { dedupeEdges };
 import { cleanModelIdentity, MAX_BASE_COMPONENTS, type Component, type SystemModel } from "../types.ts";
 
 const REWORK_PROMPT = `You are reconsidering an EXISTING rough architectural model, not describing a new system from scratch. You will be given the current model as JSON - its components, their traits, the edges between them, and its workload.users/workload.requests for context (each has "included": whether that dimension is relevant to this system, "tier": the current rough step on a small ladder, and "target": the original ambition for it). Some of it may already reflect real fixes that were applied (an added component, a corrected trait). You may also be given a list of specific fixes the user has already chosen to apply, and a list of changes the user asked for in chat.
 
-If specific fixes or requested changes are listed, implement each of them precisely first - they are already-decided choices, not suggestions to evaluate. Requested changes are listed oldest first; where a later one conflicts with (or cancels) an earlier one, the later one wins. If a requested change is about one of the EXTENDED kinds described below, do not attempt it yourself - the separate step that owns those kinds implements it, so your own output simply doesn't change on account of that part of the request; only make a base-kind change for a request that genuinely calls for one. Then reconsider the ARCHITECTURE holistically on top of that, the way an architect revisiting a system does: given where this system stands now (including its current scale), does it call for anything more - additional scaling on a component, a new service, a new connection, a component that should be split or added, a trait that's clearly wrong given the rest of the system? You may leave everything else exactly as it is if nothing more is warranted - do not change something just to have changed it. You are not deciding the workload parameters themselves - only the architecture that serves them.
+If specific fixes or requested changes are listed, implement each of them precisely first - they are already-decided choices, not suggestions to evaluate. Requested changes are listed oldest first; where a later one conflicts with (or cancels) an earlier one, the later one wins. If a requested change is about one of the EXTENDED kinds described below, do not attempt it yourself - the separate step that owns those kinds implements it, so your own output simply doesn't change on account of that part of the request; only make a base-kind change for a request that genuinely calls for one. Then reconsider the ARCHITECTURE holistically on top of that, the way an architect revisiting a system does: given where this system stands now (including its current scale), does it call for anything more - additional scaling on a component, a new connection, a component that should be split, a trait that's clearly wrong given the rest of the system? Add a NEW component only when a listed fix or requested change asks for it, or the system cannot work at its current scale without it - never because systems like this typically have one. You may leave everything else exactly as it is if nothing more is warranted - do not change something just to have changed it. You are not deciding the workload parameters themselves - only the architecture that serves them.
 
 Some parts of a system are of an EXTENDED kind (${EXTENDED_KINDS.join(", ")}). Those belong to a separate step: you are NOT shown them in the model JSON (at most a short note after it says they exist), so never output a component of one of those kinds, never reuse a name that sounds like one as a component id, and never reference one in an edge - every edge you output must connect two components that are in YOUR output. That separate step re-wires them into your result afterwards, so nothing about them is lost by your leaving them out. Every connection between two components you both keep must still exist in your output unless the architecture genuinely no longer calls for it. Dropping one for any other reason is a mistake - when in doubt, keep it. When a chosen fix or requested change puts a component BETWEEN two you keep (a queue, a cache, a proxy), route the connection through it and remove the direct edge - keeping both leaves two competing paths. List each edge once.
 
@@ -91,11 +95,11 @@ Rules, same as always:
 - Instance counts are yours to keep right, automatically. Judge each service's and database's instanceCount from the system's CURRENT scale (its workload tiers, in the model) using the tier groups below, and set it yourself as part of this rework - nobody will separately ask you to. Move it to the larger value when its tier group calls for it, and back to the smallest when the scale is lowered; give the trait a rationale that names the scale, with provenance "inferred". Do this on every rework, even when the user asked for nothing else.
 
 ${TIER_GROUP_GUIDE}
-- Scale alone never switches on a protection. Rate limiting, circuit breakers, stampede protection, dead-letter queues and health checks are exactly what the separate review step reports as risks, so leave each one as it is unless a listed fix or requested change asks for it. Only instance counts (above) move by themselves. A protection you leave off is not a mistake here.
+- Tier-driven values are yours to keep right, automatically: instance counts, consumer scaling and the baseline protections named in the tier groups above, for components you keep and components you add, in both directions as the scale is raised or lowered. Every OTHER protection (circuit breakers, stampede protection, dead-letter queues, fallbacks, versioning, locking, origin shields) stays as it is unless a listed fix or requested change asks for it - the separate review step reports those as risks. A protection you leave off is not a mistake here.
 - Keep the same top-level "id" and "name" - you are reworking this system, not renaming it.
 - Preserve every existing connection between two components you're both keeping unless you have a specific architectural reason to remove it (including routing it through a newly inserted component) - a rework that silently drops real connections produces a diagram that no longer reflects the actual system.
 - At most ${MAX_BASE_COMPONENTS} components in your own output. If the holistic review would call for more, that's a sign to fold or reconsider something already there before adding, not to grow past the limit.
-- Every trait still needs a rationale and a provenance. "stated" means the input model already had this value and you're keeping it because it's still correct - never mark something "stated" that you are choosing or changing yourself; that's "inferred" (derived from something else in the system) or "default" (your own reasonable choice, nothing in the system dictates it). Keep every rationale to one short, specific sentence of roughly 8 to 15 words; for a trait you are leaving as it was, restate its reason more briefly rather than copying it at length.
+- Every trait still needs a rationale and a provenance. "stated" means the input model already had this value and you're keeping it because it's still correct, OR a listed fix or requested change asked for exactly this value (the user stated it) - never mark something "stated" that you are choosing or changing yourself; that's "inferred" (derived from something else in the system, including the tier group) or "default" (your own reasonable choice, nothing in the system dictates it). Keep every rationale to one short, specific sentence of roughly 8 to 15 words, and make it true at the system's CURRENT scale: write it fresh every time, never copy an old one - a reason that says "starting tier", "launch" or names a smaller scale than the current one is wrong now. For a protection that is off, say plainly that it is not part of the described system (the review reports it if it matters), not that the system is at a starting tier.
 - The model must remain a DAG - never create an edge back into a component that is upstream of it.
 
 ${STRUCTURAL_SELF_CHECK}
@@ -173,6 +177,25 @@ export function formatPendingFixes(pendingFixes: PendingFixInput[]): string {
  * violation actually triggers a real repair-retry through
  * `runStructuredCall`) has its own separate test.
  */
+/**
+ * Every base component that existed before must still exist when nothing was
+ * asked. The extended step got this guard after a Re-simulate wiped six of its
+ * components; the base call had no equivalent, so a rework could drop a service
+ * or a database silently. Removing one is only ever a response to a request.
+ */
+export function checkNoDroppedBaseComponents(input: SystemModel, result: SystemModel): string | null {
+  const kept = new Set(result.components.map((c) => c.id));
+  const dropped = input.components.filter((c) => !isExtendedComponent(c) && !kept.has(c.id)).map((c) => c.id);
+  if (dropped.length === 0) return null;
+  const noun = dropped.length === 1 ? "component" : "components";
+  const them = dropped.length === 1 ? "it" : "them";
+  return (
+    `You dropped ${dropped.length} existing ${noun} without being asked to: ${dropped.map((id) => `"${id}"`).join(", ")}. ` +
+    `Every existing component must stay, with its same id and its connections - restore ${them}. ` +
+    `Removing one is only for a request that specifically asks for it.`
+  );
+}
+
 export function checkNoDroppedEdges(input: SystemModel, result: SystemModel): string | null {
   const baseIds = new Set(input.components.filter((c) => !isExtendedComponent(c)).map((c) => c.id));
   const resultIds = new Set(result.components.map((c) => c.id));
@@ -197,17 +220,6 @@ export function checkNoDroppedEdges(input: SystemModel, result: SystemModel): st
     `Every connection between two components you both kept must still exist (directly, or through a component ` +
     `you inserted between them) - restore ${them}, unless the request specifically required removing ${them}.`
   );
-}
-
-/** Each from/to pair once, first occurrence kept. */
-export function dedupeEdges<E extends { from: string; to: string }>(edges: E[]): E[] {
-  const seen = new Set<string>();
-  return edges.filter((e) => {
-    const key = `${e.from}\u0000${e.to}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 /** `reachable(a, b)`: is there a path (of one or more edges) from a to b? */
@@ -239,19 +251,23 @@ const isMitigation = (key: string) => /^has[A-Z]/.test(key);
 /**
  * Keeps the rework honest about what it changed, in code, because the prompt
  * alone wasn't enough (found live on a real project):
- * - a trait whose value is unchanged keeps its previous provenance and
- *   rationale (an instance count keeps only the provenance: its rationale names
- *   the scale, which may have moved) — the model kept re-labelling old traits "stated" a pass at a
+ * - a trait whose value is unchanged keeps its previous provenance but takes the
+ *   fresh rationale (a carried-forward reason names a scale that may have moved) — the model kept re-labelling old traits "stated" a pass at a
  *   time until nearly everything claimed to be stated, when nothing was;
- * - anything the rework itself changed or added is at most "inferred" — there
- *   is no prose here for it to have been "stated" in;
+ * - anything the rework itself changed or added is at most "inferred" when
+ *   nothing was asked — there is no prose here for it to have been "stated"
+ *   in (with a request queued, a value it asked for is stated by the user);
  * - when nothing was asked for (no queued fix or chat change), a protection
  *   (`has…` trait) that was off stays off: raising the scale once switched on
  *   rate limiting, breakers and stampede protection everywhere, which left
  *   the review step nothing to find.
  * Applied before validation, so it costs no retry.
  */
-export function reconcileWithPrevious(raw: unknown, previous: SystemModel, opts: { anythingAsked: boolean }): unknown {
+export function reconcileWithPrevious(
+  raw: unknown,
+  previous: SystemModel,
+  opts: { anythingAsked: boolean; lowestTier: boolean },
+): unknown {
   if (typeof raw !== "object" || raw === null || !Array.isArray((raw as { components?: unknown }).components)) return raw;
   const before = new Map(previous.components.map((c) => [c.id, c as unknown as Record<string, unknown>]));
   const components = (raw as { components: unknown[] }).components.map((c) => {
@@ -263,13 +279,29 @@ export function reconcileWithPrevious(raw: unknown, previous: SystemModel, opts:
       if (!isTrait(trait)) continue;
       const prev = old?.[key];
       if (isTrait(prev) && JSON.stringify(prev.value) === JSON.stringify(trait.value)) {
-        // An instance count's rationale names the scale it was judged at, so
-        // carrying the old sentence forward leaves "10,000 users" on a system
-        // now at 1,000,000 (seen live). Keep its provenance, take the fresh reason.
-        out[key] = key === "instanceCount" ? { ...trait, provenance: prev.provenance } : prev;
-      } else if (isTrait(prev) && !opts.anythingAsked && isMitigation(key) && prev.value === false && trait.value === true) {
+        // Provenance is carried forward (the model kept re-labelling old traits
+        // "stated"); the RATIONALE is the fresh one. A carried-forward reason
+        // goes stale the moment the scale moves — a project at 1,000,000 users
+        // still said "off at this starting tier" and "still single at 10k tier"
+        // (seen in the app). Falls back to the old text only if the new one is empty.
+        const fresh = typeof trait.rationale === "string" && trait.rationale.trim() !== "";
+        out[key] = { ...trait, provenance: prev.provenance, rationale: fresh ? trait.rationale : prev.rationale };
+      } else if (
+        isTrait(prev) &&
+        opts.lowestTier &&
+        isMitigation(key) &&
+        prev.value === false &&
+        trait.value === true &&
+        !(opts.anythingAsked && trait.provenance === "stated")
+      ) {
+        // At the lowest tier nothing switches on unless the user asked (a value a
+        // queued request asked for is labelled "stated"): a live run turned on
+        // gateway rate limiting during an unrelated "add a CDN". Above it,
+        // protections follow the tier group (the AI's call, see tierGuide.ts).
         out[key] = prev;
-      } else if (trait.provenance === "stated") {
+      } else if (trait.provenance === "stated" && !opts.anythingAsked) {
+        // With nothing asked there is no prose and no user to have stated it.
+        // When a fix or request is queued, a value it asked for IS stated (by the user).
         out[key] = { ...trait, provenance: "inferred" };
       }
     }
@@ -405,6 +437,17 @@ export function restoreDroppedConnections<E extends { from: string; to: string }
   return [...edges, ...restored];
 }
 
+/**
+ * At the lowest tier the system is minimal: a protection that a higher tier set,
+ * or that the AI switched on unasked (provenance "inferred"), goes back off. One
+ * the description states, or a request asked for (labelled "stated"), stays.
+ * Runs whether or not something is queued: a queued request for something else
+ * must not let an unrelated protection through.
+ */
+function settleTierValues<C extends { id: string }>(components: C[], workload: SystemModel["workload"]): C[] {
+  return startMinimal(components, workload);
+}
+
 export async function reworkModel(
   input: SystemModel,
   pendingFixes: PendingFixInput[] = [],
@@ -432,7 +475,10 @@ export async function reworkModel(
         ) as { edges?: { from: string; to: string }[] } | null;
         const deduped =
           stripped && Array.isArray(stripped.edges) ? { ...stripped, edges: dedupeEdges(stripped.edges) } : stripped;
-        return reconcileWithPrevious(deduped, model, { anythingAsked: pendingFixes.length + pendingChanges.length > 0 });
+        return reconcileWithPrevious(deduped, model, {
+          anythingAsked: pendingFixes.length + pendingChanges.length > 0,
+          lowestTier: atLowestTier(model.workload),
+        });
       },
       // With nothing queued, an edge silently dropped is a mistake and is
       // rejected. With a fix or chat change queued, edges may legitimately move
@@ -441,7 +487,10 @@ export async function reworkModel(
       // so the base-only check would reject a correct answer; the merged graph
       // is repaired below instead (`restoreDroppedConnections`). Decided by
       // whether anything was asked, not by reading the request's wording.
-      validateResult: (data) => (pendingContext !== "" ? null : checkNoDroppedEdges(model, data as SystemModel)),
+      validateResult: (data) =>
+        pendingContext !== ""
+          ? null
+          : (checkNoDroppedBaseComponents(model, data as SystemModel) ?? checkNoDroppedEdges(model, data as SystemModel)),
     },
     "reworkModel",
   );
@@ -469,6 +518,7 @@ export async function reworkModel(
     options,
     `${pendingContext}${describeScale(model.workload)}`,
     previousEdges,
+    pendingContext !== "",
   );
 
   // The extended step writes its own traits, so the same honesty rules apply
@@ -477,24 +527,34 @@ export async function reworkModel(
   // ones are at most "inferred", and a protection nobody asked for stays off.
   const reconciled = reconcileWithPrevious({ components: extended.components }, model, {
     anythingAsked: pendingFixes.length + pendingChanges.length > 0,
+    lowestTier: atLowestTier(model.workload),
   }) as { components: Component[] };
   extended.components = reconciled.components;
+
+  const allComponents = [...result.data.components, ...extended.components];
+  const mergedEdges = dedupeEdges(restoreDroppedConnections(model.edges, allComponents, [...result.data.edges, ...extended.edges]));
+  // The base and extended calls could not see each other's edges, so the merged
+  // wiring can contradict itself. The AI reviews it — the whole graph plus the
+  // queued request, so a deliberate direct call is respected; the deterministic
+  // rewrites are only the fallback when that review was skipped or failed.
+  const inputIds = new Set(model.components.map((c) => c.id));
+  const review = await reviewGraph(
+    allComponents,
+    mergedEdges,
+    { newComponentIds: allComponents.filter((c) => !inputIds.has(c.id)).map((c) => c.id), request: pendingContext },
+    options,
+  );
+  const edges = review.reviewed
+    ? dedupeEdges(review.edges)
+    : collapseParallelAsyncPaths(allComponents, mergedEdges, routableLoadBalancers(model, { components: allComponents }));
 
   return {
     model: {
       ...result.data,
       id: model.id,
       name: model.name,
-      components: [...result.data.components, ...extended.components],
-      edges: collapseParallelAsyncPaths(
-        [...result.data.components, ...extended.components],
-        restoreDroppedConnections(
-          model.edges,
-          [...result.data.components, ...extended.components],
-          [...result.data.edges, ...extended.edges],
-        ),
-        routableLoadBalancers(model, { components: [...result.data.components, ...extended.components] }),
-      ),
+      components: settleTierValues([...result.data.components, ...extended.components], model.workload),
+      edges,
       workload: { ...result.data.workload, users: model.workload.users, requests: model.workload.requests },
     },
     raw: result.raw,

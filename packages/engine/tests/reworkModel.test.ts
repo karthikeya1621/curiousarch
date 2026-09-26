@@ -9,7 +9,8 @@
 
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { baseView, checkNoDroppedEdges, dedupeEdges, dropEdgesToMentionedUnknowns, restoreDroppedConnections, describeScale, reconcileWithPrevious, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
+import { REVISE_PROMPT } from "../src/inference/extendedComponents.js";
+import { baseView, checkNoDroppedBaseComponents, checkNoDroppedEdges, dedupeEdges, dropEdgesToMentionedUnknowns, restoreDroppedConnections, describeScale, reconcileWithPrevious, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
 import { STRUCTURAL_SELF_CHECK } from "../src/inference/schema.js";
 import { checkout } from "../models/reference.js";
 import { cleanModelIdentity, unwrapIdentityText, type SystemModel } from "../src/types.js";
@@ -236,7 +237,8 @@ describe("reworkModel", () => {
     });
     await reworkModel(checkout, [], [], { client });
     expect(system).toMatch(/one short, specific sentence of roughly 8 to 15 words/);
-    expect(system).toMatch(/restate its reason more briefly/);
+    expect(system).toMatch(/write it fresh every time, never copy an old one/);
+    expect(system).toMatch(/not part of the described system/);
   });
 
   it("carries the superRefine-only self-check into the prompt — the failure classes a repair-retry costs a full extra billed call for", async () => {
@@ -395,7 +397,21 @@ describe("the base call never sees the extended components", () => {
 
   function baseCallContent(model: SystemModel, response: unknown = validReworkInput) {
     const seen: Record<string, string> = {};
-    const client = fakeClient([toolUseResponse(response), emptyExtendedResponse()], (params) => {
+    // The revise step keeps the CDN it was given (an existing extended component may not vanish).
+    const keepCdn = {
+      content: [
+        {
+          type: "tool_use",
+          id: "call_extended",
+          name: "emit_extended_components",
+          input: {
+            components: [{ id: "cdn1", label: "Media CDN", kind: "cdn", hasOriginShield: { rationale: "No shielding described for the origin.", provenance: "default", value: false } }],
+            edges: [{ from: "gw", to: "cdn1" }, { from: "cdn1", to: "svc" }],
+          },
+        },
+      ],
+    } as unknown as Anthropic.Message;
+    const client = fakeClient([toolUseResponse(response), keepCdn], (params) => {
       const tool = (params.tools?.[0] as { name?: string } | undefined)?.name ?? "";
       seen[tool] = JSON.stringify((params.messages[0] as { content: unknown }).content);
     });
@@ -467,7 +483,7 @@ describe("the base call never sees the extended components", () => {
     const result = await run();
 
     expect(result.repaired).toBe(false);
-    expect(Object.keys(seen)).toEqual(["emit_system_model", "emit_extended_components"]); // one base call, one revise
+    expect(Object.keys(seen)).toEqual(["emit_system_model", "emit_extended_components"]); // one base call, one revise (a CDN alone gives the wiring review nothing to do)
     expect(result.model.edges.some((e) => e.to === "cdn1" && e.from === "svc")).toBe(false);
   });
 
@@ -573,10 +589,15 @@ describe("reconcileWithPrevious", () => {
     ],
     edges: [],
   } as unknown as SystemModel;
-  const out = (components: unknown[]) => reconcileWithPrevious({ components, edges: [] }, prev, { anythingAsked: false }) as { components: Record<string, any>[] };
+  const out = (components: unknown[]) => reconcileWithPrevious({ components, edges: [] }, prev, { anythingAsked: false, lowestTier: true }) as { components: Record<string, any>[] };
 
-  it("keeps the previous provenance and rationale for a trait whose value didn't change", () => {
-    const gw = out([{ id: "gw", hasRateLimiting: trait(false, "stated", "Still no limiter.") }]).components[0]!;
+  it("keeps the previous PROVENANCE but takes the fresh rationale for a trait whose value didn't change (an old reason names an old scale)", () => {
+    const gw = out([{ id: "gw", hasRateLimiting: trait(false, "stated", "Not part of the described system at this scale.") }]).components[0]!;
+    expect(gw.hasRateLimiting).toEqual(trait(false, "default", "Not part of the described system at this scale."));
+  });
+
+  it("falls back to the old rationale only when the new one is empty", () => {
+    const gw = out([{ id: "gw", hasRateLimiting: trait(false, "stated", "  ") }]).components[0]!;
     expect(gw.hasRateLimiting).toEqual(trait(false, "default", "Not mentioned; typical first launch."));
   });
 
@@ -590,18 +611,27 @@ describe("reconcileWithPrevious", () => {
     expect(svc.instanceCount).toEqual(trait("multiple", "inferred", "1M users."));
   });
 
-  it("switches nothing on by itself: an off protection stays off when nothing was asked for", () => {
+  it("at the lowest tier nothing switches on by itself: an off protection stays off when nothing was asked for", () => {
     const svc = out([{ id: "gw" }, { id: "svc", hasCircuitBreaker: trait(true, "inferred", "Scale needs it.") }]).components[1]!;
     expect(svc.hasCircuitBreaker.value).toBe(false);
   });
 
-  it("allows turning a protection on when a fix or chat change was queued", () => {
+  it("above the lowest tier a protection the AI switched on (by the tier group) is left alone", () => {
     const result = reconcileWithPrevious(
-      { components: [{ id: "svc", hasCircuitBreaker: trait(true, "inferred", "Requested.") }] },
+      { components: [{ id: "svc", hasCircuitBreaker: trait(true, "inferred", "The tier group calls for it.") }] },
       prev,
-      { anythingAsked: true },
+      { anythingAsked: false, lowestTier: false },
     ) as { components: Record<string, any>[] };
     expect(result.components[0]!.hasCircuitBreaker.value).toBe(true);
+  });
+
+  it("allows turning a protection on when a fix or chat change was queued, and a value it asked for stays 'stated'", () => {
+    const result = reconcileWithPrevious(
+      { components: [{ id: "svc", hasCircuitBreaker: trait(true, "stated", "The user asked for it.") }] },
+      prev,
+      { anythingAsked: true, lowestTier: true },
+    ) as { components: Record<string, any>[] };
+    expect(result.components[0]!.hasCircuitBreaker).toEqual(trait(true, "stated", "The user asked for it."));
   });
 
   it("does not touch a brand-new component's values, only caps 'stated'", () => {
@@ -610,8 +640,9 @@ describe("reconcileWithPrevious", () => {
   });
 
   it("passes anything that isn't a model through untouched", () => {
-    expect(reconcileWithPrevious(null, prev, { anythingAsked: false })).toBeNull();
-    expect(reconcileWithPrevious({ components: "x" }, prev, { anythingAsked: false })).toEqual({ components: "x" });
+    const opts = { anythingAsked: false, lowestTier: true };
+    expect(reconcileWithPrevious(null, prev, opts)).toBeNull();
+    expect(reconcileWithPrevious({ components: "x" }, prev, opts)).toEqual({ components: "x" });
   });
 });
 
@@ -661,8 +692,10 @@ describe("extended components are held to the same honesty rules as base ones", 
     hasTimeout: { value: true, provenance: "default", rationale: "A timeout is the usual guard." },
     hasFallback: fallback,
   });
+  const lowestTier = { users: { included: true, tier: 100, target: 100 } };
   const withDep: SystemModel = {
     ...checkout,
+    workload: lowestTier,
     components: [...checkout.components, dep({ value: false, provenance: "default", rationale: "No fallback mentioned." }) as never],
     edges: [...checkout.edges, { from: "svc", to: "pay" }],
   };
@@ -674,18 +707,26 @@ describe("extended components are held to the same honesty rules as base ones", 
     }) as unknown as Anthropic.Message;
   const asked = [{ request: "give the payment provider a fallback", instruction: "Set hasFallback on pay to true." }];
 
-  it("a trait the revise step changed comes back at most 'inferred', never 'stated'", async () => {
-    const client = fakeClient([toolUseResponse(validReworkInput), reviseResponse({ value: true, provenance: "stated", rationale: "Asked for." })]);
-    const result = await reworkModel(withDep, [], asked, { client });
+  it("with nothing asked a changed trait comes back at most 'inferred', never 'stated'", async () => {
+    const above: SystemModel = { ...withDep, workload: { users: { included: true, tier: 10_000, target: 10_000 } } };
+    const client = fakeClient([toolUseResponse(validReworkInput), reviseResponse({ value: true, provenance: "stated", rationale: "The tier calls for it." })]);
+    const result = await reworkModel(above, [], [], { client });
     const pay = result.model.components.find((c) => c.id === "pay") as unknown as { hasFallback: { provenance: string; value: boolean } };
     expect(pay.hasFallback).toMatchObject({ value: true, provenance: "inferred" });
   });
 
-  it("an unchanged trait keeps its earlier provenance and rationale", async () => {
+  it("with a request queued, the value it asked for keeps 'stated' (the user stated it)", async () => {
+    const client = fakeClient([toolUseResponse(validReworkInput), reviseResponse({ value: true, provenance: "stated", rationale: "Asked for." })]);
+    const result = await reworkModel(withDep, [], asked, { client });
+    const pay = result.model.components.find((c) => c.id === "pay") as unknown as { hasFallback: { provenance: string; value: boolean } };
+    expect(pay.hasFallback).toMatchObject({ value: true, provenance: "stated" });
+  });
+
+  it("an unchanged trait keeps its earlier provenance and takes the fresh rationale", async () => {
     const client = fakeClient([toolUseResponse(validReworkInput), reviseResponse({ value: false, provenance: "stated", rationale: "Rewritten." })]);
     const result = await reworkModel(withDep, [], [], { client });
     const pay = result.model.components.find((c) => c.id === "pay") as unknown as { hasFallback: { provenance: string; rationale: string } };
-    expect(pay.hasFallback).toMatchObject({ provenance: "default", rationale: "No fallback mentioned." });
+    expect(pay.hasFallback).toMatchObject({ provenance: "default", rationale: "Rewritten." });
   });
 
   it("a protection nobody asked for stays off", async () => {
@@ -832,5 +873,110 @@ describe("load balancer routing on a Re-simulate", () => {
     const result = await reworkModel(withOldBalancer, [], [{ request: "let the gateway call the service directly", instruction: "Keep gw -> svc." }], { client });
     expect(result.model.edges.some((e) => e.from === "gw" && e.to === "svc")).toBe(true);
     expect(result.model.edges.some((e) => e.from === "gw" && e.to === "lb1")).toBe(false);
+  });
+});
+
+describe("tier-driven values follow the tier in both directions", () => {
+  const lowered = (tier: number): SystemModel => ({ ...checkout, workload: { users: { included: true, tier, target: 1_000_000 } } });
+  const svcWithBreaker = (provenance: string) => ({
+    ...validReworkInput,
+    components: validReworkInput.components.map((c) =>
+      c.id === "svc" ? { ...c, hasCircuitBreaker: { rationale: "Set by an earlier scale-up.", provenance, value: true } } : c,
+    ),
+  });
+  const modelWithOn = (tier: number, provenance: string): SystemModel => ({
+    ...lowered(tier),
+    components: checkout.components.map((c) =>
+      c.id === "svc" ? ({ ...c, hasCircuitBreaker: { rationale: "Set by an earlier scale-up.", provenance, value: true } } as never) : c,
+    ),
+  });
+
+  it("lowering the scale to the bottom rung with nothing queued returns an inferred protection to off", async () => {
+    const client = fakeClient([toolUseResponse(svcWithBreaker("inferred")), emptyExtendedResponse()]);
+    const result = await reworkModel(modelWithOn(100, "inferred"), [], [], { client });
+    const svc = result.model.components.find((c) => c.id === "svc") as unknown as { hasCircuitBreaker: { value: boolean; rationale: string } };
+    expect(svc.hasCircuitBreaker.value).toBe(false);
+  });
+
+  it("…but one the description states stays on at any scale", async () => {
+    const client = fakeClient([toolUseResponse(svcWithBreaker("stated")), emptyExtendedResponse()]);
+    const result = await reworkModel(modelWithOn(100, "stated"), [], [], { client });
+    const svc = result.model.components.find((c) => c.id === "svc") as unknown as { hasCircuitBreaker: { value: boolean } };
+    expect(svc.hasCircuitBreaker.value).toBe(true);
+  });
+
+  it("above the bottom rung the AI's tier-based protections stand", async () => {
+    const client = fakeClient([toolUseResponse(svcWithBreaker("inferred")), emptyExtendedResponse()]);
+    const result = await reworkModel(modelWithOn(1_000_000, "inferred"), [], [], { client });
+    const svc = result.model.components.find((c) => c.id === "svc") as unknown as { hasCircuitBreaker: { value: boolean } };
+    expect(svc.hasCircuitBreaker.value).toBe(true);
+  });
+
+  it("with a request queued, an inferred protection at the lowest tier still goes off (an unrelated request must not let it through)", async () => {
+    const client = fakeClient([toolUseResponse(svcWithBreaker("inferred")), emptyExtendedResponse()]);
+    const result = await reworkModel(modelWithOn(100, "inferred"), [], [{ request: "add a cache", instruction: "Add a cache." }], { client });
+    const svc = result.model.components.find((c) => c.id === "svc") as unknown as { hasCircuitBreaker: { value: boolean } };
+    expect(svc.hasCircuitBreaker.value).toBe(false);
+  });
+
+  it("…while a value the queued request asked for (labelled stated) stays on", async () => {
+    const client = fakeClient([toolUseResponse(svcWithBreaker("stated")), emptyExtendedResponse()]);
+    const result = await reworkModel(modelWithOn(100, "stated"), [], [{ request: "add a breaker", instruction: "Turn on the breaker on svc." }], { client });
+    const svc = result.model.components.find((c) => c.id === "svc") as unknown as { hasCircuitBreaker: { value: boolean } };
+    expect(svc.hasCircuitBreaker.value).toBe(true);
+  });
+
+  it("at the lowest tier a protection switched on unasked during an unrelated request is reverted by the reconcile step", () => {
+    const prev = { components: [{ id: "gw", kind: "gateway", label: "G", hasRateLimiting: { value: false, provenance: "default", rationale: "Not part of the system." } }], edges: [] } as unknown as SystemModel;
+    const on = (provenance: string) =>
+      reconcileWithPrevious({ components: [{ id: "gw", hasRateLimiting: { value: true, provenance, rationale: "Because." } }] }, prev, { anythingAsked: true, lowestTier: true }) as { components: Record<string, any>[] };
+    expect(on("inferred").components[0]!.hasRateLimiting.value).toBe(false);
+    expect(on("stated").components[0]!.hasRateLimiting.value).toBe(true);
+  });
+
+  it("both prompts carry the same protection guidance, and the base one no longer says scale never switches a protection on", async () => {
+    let system = "";
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      if ((params.tools?.[0] as { name?: string } | undefined)?.name === "emit_system_model") system = (params.system as { text: string }[]).map((b) => b.text).join("");
+    });
+    await reworkModel(checkout, [], [], { client });
+    expect(system).toMatch(/Protections follow the tier too, but only the BASELINE/);
+    expect(system).toMatch(/Tier-driven values are yours to keep right/);
+    expect(system).toMatch(/OR a listed fix or requested change asked for exactly this value \(the user stated it\)/);
+    expect(system).not.toMatch(/Scale alone never switches on a protection/);
+  });
+});
+
+describe("no component is silently dropped, and none is invented", () => {
+  it("checkNoDroppedBaseComponents names exactly the missing base ids and ignores extended ones", () => {
+    const withExt = { ...checkout, components: [...checkout.components, { id: "cdn1", kind: "cdn", label: "CDN" } as never] };
+    const minusDb = { ...checkout, components: checkout.components.filter((c) => c.id !== "db") };
+    expect(checkNoDroppedBaseComponents(withExt, minusDb)).toMatch(/dropped 1 existing component without being asked to: "db"/);
+    expect(checkNoDroppedBaseComponents(withExt, checkout)).toBeNull(); // cdn1 is not this call's to keep
+  });
+
+  it("a rework that drops a base component with nothing queued is rejected and retried", async () => {
+    const minusDb = { ...validReworkInput, components: validReworkInput.components.filter((c) => c.id !== "db"), edges: [{ from: "gw", to: "svc" }] };
+    const client = fakeClient([toolUseResponse(minusDb), toolUseResponse(validReworkInput), emptyExtendedResponse()]);
+    const result = await reworkModel(checkout, [], [], { client });
+    expect(result.repaired).toBe(true);
+    expect(result.model.components.some((c) => c.id === "db")).toBe(true);
+  });
+
+  it("with a request queued the same removal is accepted (it may be the request)", async () => {
+    const minusDb = { ...validReworkInput, components: validReworkInput.components.filter((c) => c.id !== "db"), edges: [{ from: "gw", to: "svc" }] };
+    const client = fakeClient([toolUseResponse(minusDb), emptyExtendedResponse()]);
+    const result = await reworkModel(checkout, [], [{ request: "remove the database", instruction: "Remove db." }], { client });
+    expect(result.model.components.some((c) => c.id === "db")).toBe(false);
+  });
+
+  it("both reworks are told to add a component only when asked or needed, never because such systems typically have one", async () => {
+    let base = "";
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      if ((params.tools?.[0] as { name?: string } | undefined)?.name === "emit_system_model") base = (params.system as { text: string }[]).map((b) => b.text).join("");
+    });
+    await reworkModel(checkout, [], [], { client });
+    expect(base).toMatch(/Add a NEW component only when a listed fix or requested change asks for it/);
+    expect(REVISE_PROMPT).toMatch(/Add a NEW extended component only when the description, a listed fix or a requested change calls for it/);
   });
 });

@@ -167,6 +167,17 @@ export function lintTopology(model: Pick<SystemModel, "components" | "edges">): 
   return findings;
 }
 
+/** Each from/to pair once, first occurrence kept. */
+export function dedupeEdges<E extends { from: string; to: string }>(edges: E[]): E[] {
+  const seen = new Set<string>();
+  return edges.filter((e) => {
+    const key = `${e.from}\u0000${e.to}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** AI findings first; lint findings the AI didn't already raise (same code on the same component) after them. */
 export function mergeLintFindings(ai: AiFinding[], lint: AiFinding[]): AiFinding[] {
   const have = new Set(ai.map((f) => `${f.code}\u0000${f.componentId}`));

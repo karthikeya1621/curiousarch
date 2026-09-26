@@ -10,5 +10,5 @@
     "allowImportingTsExtensions": true,
     "types": ["vitest/globals"]
   },
-  "include": ["src", "tests", "models", "bin"]
+  "include": ["src", "tests", "models", "bin", "scripts"]
 }

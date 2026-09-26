@@ -7,7 +7,8 @@
  *
  *   set -a; . ../../apps/web/.env.local; set +a   # or export ANTHROPIC_API_KEY
  *   npm run eval:live                              # every scenario
- *   EVAL_SET=large npm run eval:live               # bigger systems (small | large | all; default small)
+ *   EVAL_SET=large npm run eval:live               # bigger systems (small | large | flows | all; default small)
+ *   EVAL_SET=flows npm run eval:live               # multi-step flows: scale steps keep extended components, a chat conversation queues nothing spurious
  *   EVAL_ONLY=shortener npm run eval:live          # names containing this
  *
  * Exit code is non-zero when any scenario breaks an invariant or fails to make
@@ -21,6 +22,7 @@
 
 import { chatWithProject, fromProse, reworkModel } from "../src/server.ts";
 import { lintTopology } from "../src/inference/lintTopology.ts";
+import { atLowestTier } from "../src/inference/startMinimal.ts";
 import { computeCost, loadPrices } from "../../../apps/web/lib/usage/pricing.ts";
 import type { SystemModel } from "../src/types.ts";
 
@@ -82,8 +84,10 @@ function invariants(m: SystemModel, prev: SystemModel | null, asked: string, all
       for (const [k, v] of Object.entries(c as unknown as Record<string, unknown>)) {
         const trait = v as { value?: unknown; provenance?: string } | null;
         const before = old[k] as { value?: unknown } | undefined;
-        if (/^has[A-Z]/.test(k) && trait?.value === true && before?.value === false && !PROTECTION_WORDS.test(asked)) bad.push(`unrequested protection ${c.id}.${k}`);
-        if (trait?.provenance === "stated" && before && JSON.stringify(trait.value) !== JSON.stringify(before.value)) bad.push(`changed trait marked stated ${c.id}.${k}`);
+        // Above the lowest tier the AI sets the baseline protections from the tier group, so only the lowest tier is held to "nothing switches on unasked".
+        if (atLowestTier(m.workload) && /^has[A-Z]/.test(k) && trait?.value === true && before?.value === false && !PROTECTION_WORDS.test(asked)) bad.push(`unrequested protection ${c.id}.${k}`);
+        // With a request queued, a value it asked for IS stated (by the user); only a change nobody asked for may not claim it.
+        if (asked === "" && trait?.provenance === "stated" && before && JSON.stringify(trait.value) !== JSON.stringify(before.value)) bad.push(`changed trait marked stated ${c.id}.${k}`);
       }
     }
     if (!allowGone) {
@@ -97,11 +101,37 @@ function invariants(m: SystemModel, prev: SystemModel | null, asked: string, all
 type Outcome = { name: string; lines: string[]; problems: string[]; failedAttempts: number; calls: number; costUsd: number; wastedUsd: number; unpriced: number };
 
 const PRICES = loadPrices();
+/** Hard stop: the run aborts once the calls made so far cost more than this (USD). */
+const BUDGET = Number(process.env.EVAL_BUDGET ?? "1.0");
+let spentSoFar = 0;
+
+type CallRecord = { label: string; outcome: string; error?: string; model: string; usage?: { inputTokens: number; outputTokens: number; cacheCreationInputTokens: number; cacheReadInputTokens: number } };
+
+/** Options to hand to the engine, plus a way to turn the calls it made into an Outcome. */
+function track() {
+  const calls: { label: string; outcome: string; error?: string; cost: number | null }[] = [];
+  const options = {
+    onCall: (r: CallRecord) => {
+      const cost = computeCost(r.model, r.usage, PRICES).costUsd;
+      calls.push({ label: r.label, outcome: r.outcome, error: r.error, cost });
+      spentSoFar += cost ?? 0;
+      if (spentSoFar > BUDGET) {
+        console.log(`\nBUDGET GUARD: $${spentSoFar.toFixed(4)} spent, over the $${BUDGET.toFixed(2)} limit - aborting.`);
+        process.exit(3);
+      }
+    },
+  } as never;
+  const finish = (name: string, lines: string[], problems: string[]): Outcome => {
+    const failed = calls.filter((c) => c.outcome !== "ok");
+    for (const f of failed) lines.push(`retry: ${f.label} — ${(f.error ?? f.outcome).slice(0, 200)}`);
+    const sum = (cs: typeof calls) => cs.reduce((t, c) => t + (c.cost ?? 0), 0);
+    return { name, lines, problems, failedAttempts: failed.length, calls: calls.length, costUsd: sum(calls), wastedUsd: sum(failed), unpriced: calls.filter((c) => c.cost === null).length };
+  };
+  return { options, finish };
+}
 
 async function run(s: Scenario): Promise<Outcome> {
-  const calls: { label: string; outcome: string; error?: string; cost: number | null }[] = [];
-  const options = { onCall: (r: { label: string; outcome: string; error?: string; model: string; usage?: { inputTokens: number; outputTokens: number; cacheCreationInputTokens: number; cacheReadInputTokens: number } }) =>
-      calls.push({ label: r.label, outcome: r.outcome, error: r.error, cost: computeCost(r.model, r.usage, PRICES).costUsd }) } as never;
+  const { options, finish } = track();
   const lines: string[] = [];
   const problems: string[] = [];
 
@@ -113,7 +143,10 @@ async function run(s: Scenario): Promise<Outcome> {
   const chat = await chatWithProject(base, s.change, [], [], [], [], options);
   lines.push(`chat: ${chat.isQuestion ? `treated as a question — ${chat.reply.slice(0, 120)}` : `queued — ${(chat.instruction ?? "").slice(0, 120)}`}`);
   if (chat.isQuestion) {
-    problems.push("chat did not queue the requested change");
+    // Not queuing is right when the build already satisfies the request (the AI said "you already have one").
+    const alreadyTrue = s.expect(base, base) === null;
+    lines.push(alreadyTrue ? "note: the build already had what was asked for, so nothing to queue" : "");
+    if (!alreadyTrue) problems.push("chat did not queue the requested change, and the build does not have it");
   } else {
     const { model: after } = await reworkModel(base, [], [{ request: s.change, instruction: chat.instruction ?? s.change }], options);
     lines.push(`rework: ${after.components.length} components, ${after.edges.length} edges`);
@@ -121,18 +154,92 @@ async function run(s: Scenario): Promise<Outcome> {
     if (effect) problems.push(`change not applied: ${effect}`);
     problems.push(...invariants(after, base, s.change, s.gone ?? false).map((i) => `rework: ${i}`));
   }
-  const failed = calls.filter((c) => c.outcome !== "ok");
-  for (const f of failed) lines.push(`retry: ${f.label} — ${(f.error ?? f.outcome).slice(0, 200)}`);
-  const failedAttempts = failed.length;
-  const sum = (cs: typeof calls) => cs.reduce((t, c) => t + (c.cost ?? 0), 0);
-  return { name: s.name, lines, problems, failedAttempts, calls: calls.length, costUsd: sum(calls), wastedUsd: sum(failed), unpriced: calls.filter((c) => c.cost === null).length };
+  return finish(s.name, lines, problems);
+}
+
+const EXTENDED = new Set(["external-dependency", "load-balancer", "message-broker", "cdn", "object-storage", "scheduled-job", "config-store"]);
+const STALE_WORDING = /starting tier|at launch|launch tier|launch baseline/i;
+
+/**
+ * The gap that let a real project lose six components: scale a system that has
+ * extended components UP THE LADDER with nothing queued, and check none vanish,
+ * no reason still talks about a starting tier, and (informationally) what the AI
+ * did with instance counts and protections.
+ */
+async function runScaleKeepsExtended(): Promise<Outcome> {
+  const { options, finish } = track();
+  const lines: string[] = [];
+  const problems: string[] = [];
+  const prose = "A media platform: an API gateway behind a load balancer, a catalog service and an account service, a PostgreSQL database, uploaded recordings stored in object storage, video served through a CDN, subscriptions charged through a third-party payment provider, and a nightly job that builds reports.";
+  let { model } = await fromProse(prose, options);
+  const extendedIds = model.components.filter((c) => EXTENDED.has(c.kind)).map((c) => c.id);
+  lines.push(`build: ${model.components.length} components, ${extendedIds.length} extended (${extendedIds.join(", ")})`);
+  problems.push(...invariants(model, null, "", true).map((i) => `build: ${i}`));
+  if (extendedIds.length === 0) problems.push("build produced no extended components, so the scale steps prove nothing");
+
+  for (const tier of [10_000, 1_000_000]) {
+    const before = model;
+    const scaled = { ...model, workload: { ...model.workload, users: { ...model.workload.users!, tier } } };
+    ({ model } = await reworkModel(scaled, [], [], options));
+    const ids = new Set(model.components.map((c) => c.id));
+    const lost = extendedIds.filter((id) => !ids.has(id));
+    if (lost.length) problems.push(`at ${tier.toLocaleString()} users these extended components vanished: ${lost.join(", ")}`);
+    const baseLost = before.components.filter((c) => !EXTENDED.has(c.kind) && !ids.has(c.id)).map((c) => c.id);
+    if (baseLost.length) problems.push(`at ${tier.toLocaleString()} users these base components vanished: ${baseLost.join(", ")}`);
+    const stale = model.components.flatMap((c) =>
+      Object.entries(c as unknown as Record<string, { rationale?: string }>)
+        .filter(([, t]) => t && typeof t === "object" && typeof t.rationale === "string" && STALE_WORDING.test(t.rationale))
+        .map(([k]) => `${c.id}.${k}`),
+    );
+    if (stale.length) problems.push(`at ${tier.toLocaleString()} users these rationales still talk about a starting tier: ${stale.join(", ")}`);
+    problems.push(...invariants(model, before, "", false).filter((i) => !i.startsWith("changed trait marked stated")).map((i) => `at ${tier.toLocaleString()}: ${i}`));
+    const counts = model.components.filter((c) => "instanceCount" in c).map((c) => `${c.id}=${(c as unknown as { instanceCount: { value: string } }).instanceCount.value}`).join(", ");
+    lines.push(`${tier.toLocaleString()} users: ${model.components.length} components; instance counts: ${counts}`);
+  }
+  return finish("F-scale-keeps-extended", lines, problems);
+}
+
+/**
+ * The other gap: a conversation. A request that is already true, an answer
+ * ("No."), a request about something absent and an acknowledgement must queue
+ * NOTHING; only the real change at the end is queued.
+ */
+async function runChatConversation(): Promise<Outcome> {
+  const { options, finish } = track();
+  const lines: string[] = [];
+  const problems: string[] = [];
+  const { model } = await fromProse("An e-commerce platform: a catalog service, a cart service and an order service behind a gateway, a product database, and a call to a third-party payment provider at checkout.", options);
+  const history: { role: "user" | "assistant"; content: string }[] = [];
+  const queued: { request: string; instruction: string }[] = [];
+  const turns: [string, boolean][] = [
+    ["Add a third-party payment provider.", false],
+    ["No.", false],
+    ["Remove the search service.", false],
+    ["No. Ignore it", false],
+    ["Add rate limiting on the gateway.", true],
+  ];
+  for (const [message, shouldQueue] of turns) {
+    const c = await chatWithProject(model, message, history as never, [], [], queued, options);
+    const didQueue = !c.isQuestion;
+    lines.push(`"${message}" -> ${didQueue ? "QUEUED" : "answered"}: ${c.reply.slice(0, 100)}`);
+    if (didQueue !== shouldQueue) problems.push(`"${message}" was ${didQueue ? "queued" : "not queued"} but should ${shouldQueue ? "" : "not "}have been`);
+    if (didQueue) queued.push({ request: message, instruction: c.instruction ?? message });
+    history.push({ role: "user", content: message }, { role: "assistant", content: c.reply });
+  }
+  return finish("F-chat-conversation", lines, problems);
 }
 
 const only = process.env.EVAL_ONLY;
 const set = process.env.EVAL_SET ?? "small";
-const pool = set === "large" ? LARGE : set === "all" ? [...SCENARIOS, ...LARGE] : SCENARIOS;
-const selected = pool.filter((s) => !only || s.name.includes(only));
-const results = await Promise.allSettled(selected.map(run));
+type Job = { name: string; go: () => Promise<Outcome> };
+const asJobs = (list: Scenario[]): Job[] => list.map((s) => ({ name: s.name, go: () => run(s) }));
+const FLOWS: Job[] = [
+  { name: "F-scale-keeps-extended", go: runScaleKeepsExtended },
+  { name: "F-chat-conversation", go: runChatConversation },
+];
+const pool: Job[] = set === "large" ? asJobs(LARGE) : set === "flows" ? FLOWS : set === "all" ? [...asJobs(SCENARIOS), ...asJobs(LARGE), ...FLOWS] : asJobs(SCENARIOS);
+const selected = pool.filter((j) => !only || j.name.includes(only));
+const results = await Promise.allSettled(selected.map((j) => j.go()));
 
 let broken = 0;
 let failedAttempts = 0;
