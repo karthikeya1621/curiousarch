@@ -378,7 +378,7 @@ while `simulate()` reported the system perfectly healthy.
 Fixed: `hitLatencyMs` now feeds only the reported latency; a new `cpuTimeMs`
 parameter (server-side busy time, typically microseconds for an in-memory
 cache) feeds capacity; a `CACHE_SATURATED` finding now surfaces it when it
-happens. Full detail in `CONTEXT.md`'s bug log and `src/components.ts`.
+happens. Full detail in `docs/context/bug-log.md` and `src/components.ts`.
 Verified against a hand-derived test (`tests/cacheCapacity.test.ts`) and
 confirmed the existing golden-tested `urlShortener` narrative (service
 bottleneck at 66,667 rps) is unchanged — the fix corrects what was hidden, it

@@ -76,6 +76,7 @@ import { EXTENDED_KINDS, isExtendedComponent, reviseExtendedComponents } from ".
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { TIER_GROUP_GUIDE } from "./tierGuide.ts";
 import { atLowestTier, checkLowestTierMinimal, startMinimal } from "./startMinimal.ts";
+import { checkFinalModel, ModelGateError } from "./finalGate.ts";
 import { collapseParallelAsyncPaths, dedupeEdges, routableLoadBalancers } from "./lintTopology.ts";
 
 export { dedupeEdges };
@@ -454,12 +455,37 @@ function settleTierValues<C extends { id: string }>(components: C[], workload: S
   return startMinimal(components, workload);
 }
 
+/**
+ * Re-simulate. The result goes through `checkFinalModel` before it is returned: on a
+ * violation the whole rework is tried once more with the violations named, and if it
+ * still breaks a rule `ModelGateError` is thrown so the caller keeps the previous
+ * version and tells the user, instead of showing a wrong model.
+ */
 export async function reworkModel(
   input: SystemModel,
   pendingFixes: PendingFixInput[] = [],
   pendingChanges: PendingChangeInput[] = [],
   options: StructuredCallOptions = {},
 ): Promise<ReworkModelResult> {
+  const previous = cleanModelIdentity(input);
+  const ctx = { previous, anythingAsked: pendingFixes.length + pendingChanges.length > 0 };
+  const first = await reworkModelOnce(input, pendingFixes, pendingChanges, options);
+  const firstBad = checkFinalModel(first.model, ctx);
+  if (firstBad.length === 0) return first;
+  const second = await reworkModelOnce(input, pendingFixes, pendingChanges, options, firstBad.join("; "));
+  const secondBad = checkFinalModel(second.model, ctx);
+  if (secondBad.length > 0) throw new ModelGateError(secondBad);
+  return { ...second, repaired: true };
+}
+
+async function reworkModelOnce(
+  input: SystemModel,
+  pendingFixes: PendingFixInput[] = [],
+  pendingChanges: PendingChangeInput[] = [],
+  options: StructuredCallOptions = {},
+  hint?: string,
+): Promise<ReworkModelResult> {
+  const hintNote = hint ? `\n\nA previous attempt at this rework broke these rules - do not repeat them: ${hint}.` : "";
   // The id and name are never the AI's to change (the prompt says so), and a
   // rework once copied a JSON-wrapped name forward for good. They come from
   // the input, cleaned, and are put back over whatever the AI returned.
@@ -478,7 +504,7 @@ export async function reworkModel(
   const extendedIds = new Set(model.components.filter(isExtendedComponent).map((c) => c.id));
   const result = await runStructuredCall(
     REWORK_PROMPT,
-    `Here is the current model:\n\n${JSON.stringify(baseView(model))}${extendedNote(model)}${basePendingContext}`,
+    `Here is the current model:\n\n${JSON.stringify(baseView(model))}${extendedNote(model)}${basePendingContext}${hintNote}`,
     SystemModelSchema,
     buildTool(),
     {
@@ -534,7 +560,7 @@ export async function reworkModel(
     previousExtended,
     result.data,
     options,
-    `${pendingContext}${describeScale(model.workload)}`,
+    `${pendingContext}${describeScale(model.workload)}${hintNote}`,
     previousEdges,
     pendingContext !== "",
     pendingContext === "" ? model.workload : undefined,

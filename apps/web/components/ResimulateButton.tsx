@@ -54,7 +54,10 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
         body: JSON.stringify({ model, pendingFixes, pendingChanges, actionId, projectId: usageProjectId() }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Rework failed.");
+      if (!res.ok) {
+        if (body.code === "unsafe-result") reportOutcome(actionId, "withheld"); // paid for, but the engine refused to return it
+        throw new Error(body.error ?? "Rework failed.");
+      }
       // The result was built from the `model`, `pendingFixes` and
       // `pendingChanges` sent above. If any moved on during the wait (a tier
       // change, a newly queued fix or chat change, a different project

@@ -32,6 +32,7 @@ import { extractWorkloadParameters } from "./workloadParameters.ts";
 import { proposeExtendedComponents } from "./extendedComponents.ts";
 import { collapseParallelAsyncPaths, dedupeEdges } from "./lintTopology.ts";
 import { findUncoveredParts } from "./coverage.ts";
+import { checkFinalModel, ModelGateError } from "./finalGate.ts";
 import { startMinimal } from "./startMinimal.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { cleanModelIdentity, MAX_BASE_COMPONENTS, type SystemModel } from "../types.ts";
@@ -147,16 +148,30 @@ export interface FromProseResult {
   repaired: boolean;
 }
 
-export async function fromProse(
-  description: string,
-  options: FromProseOptions = {},
-): Promise<FromProseResult> {
+/**
+ * Build. Like Re-simulate, the result goes through `checkFinalModel` before it is
+ * returned: on a violation the build is tried once more with the violations named, and
+ * a second failure throws `ModelGateError` (nothing wrong is ever shown).
+ */
+export async function fromProse(description: string, options: FromProseOptions = {}): Promise<FromProseResult> {
+  const first = await fromProseOnce(description, options);
+  const firstBad = checkFinalModel(first.model, { anythingAsked: false });
+  if (firstBad.length === 0) return first;
+  const second = await fromProseOnce(description, options, firstBad.join("; "));
+  const secondBad = checkFinalModel(second.model, { anythingAsked: false });
+  if (secondBad.length > 0) throw new ModelGateError(secondBad);
+  return { ...second, repaired: true };
+}
+
+async function fromProseOnce(description: string, options: FromProseOptions = {}, hint?: string): Promise<FromProseResult> {
+  // The topology and extended calls see the hint; the workload and coverage calls do not.
+  const brief = hint ? `${description}\n\nA previous attempt at this system broke these rules - avoid them: ${hint}.` : description;
   // Two independent calls, not one — see workloadParameters.ts's own top
   // comment on why the topology schema had no room left for a workload
   // parameters field, discovered live. Run in parallel: the workload call
   // needs nothing from the topology call's result.
   const [firstDraft, workloadParameters] = await Promise.all([
-    runStructuredCall(SYSTEM_PROMPT, description, SystemModelSchema, buildTool(), options, "fromProse"),
+    runStructuredCall(SYSTEM_PROMPT, brief, SystemModelSchema, buildTool(), options, "fromProse"),
     extractWorkloadParameters(description, options),
   ]);
 
@@ -186,7 +201,7 @@ export async function fromProse(
   // component ids to wire edges to, so it can only run once the topology
   // call has actually resolved (see extendedComponents.ts's own top
   // comment on why this is a separate call at all).
-  const extended = await proposeExtendedComponents(description, topology.data, options);
+  const extended = await proposeExtendedComponents(brief, topology.data, options);
 
   const components = [...topology.data.components, ...extended.components];
   const workload = { ...topology.data.workload, ...workloadParameters };

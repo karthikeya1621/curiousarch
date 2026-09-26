@@ -19,7 +19,30 @@ export async function readJsonBody(request: Request): Promise<{ body: unknown } 
   }
 }
 
-/** A failure from the engine call itself (the model output never validated, the API errored) — 502, not the caller's fault. */
+/** Shown when the engine refused to return a result because it broke a rule (see the engine's finalGate.ts). */
+export const UNSAFE_RESULT_MESSAGE =
+  "We couldn't apply this safely, so nothing was changed. Please try again, or word the request a little differently.";
+
+/**
+ * A failure from the engine call itself. Two kinds, neither of which should reach a
+ * customer as raw text (the old behaviour returned the engine's message verbatim,
+ * which included truncated model JSON and provider billing errors):
+ *  - the engine's own final gate refused the result (`ModelGateError`): 422 with a
+ *    fixed message and `code: "unsafe-result"`, so the client knows nothing was
+ *    applied and can report the attempt as withheld;
+ *  - anything else (validation exhausted, the provider erroring): 502 with a
+ *    friendly message; the real error is logged here and returned as `detail` only
+ *    outside production.
+ */
 export function upstreamError(err: unknown, fallback: string): NextResponse {
-  return NextResponse.json({ error: err instanceof Error ? err.message : fallback }, { status: 502 });
+  if (err instanceof Error && err.name === "ModelGateError") {
+    console.error("[api] result withheld by the final gate:", err.message);
+    return NextResponse.json({ error: UNSAFE_RESULT_MESSAGE, code: "unsafe-result" }, { status: 422 });
+  }
+  console.error("[api] upstream failure:", err);
+  const detail = err instanceof Error ? err.message : fallback;
+  return NextResponse.json(
+    { error: `${fallback} Your project is unchanged - please try again in a moment.`, ...(process.env.NODE_ENV === "production" ? {} : { detail }) },
+    { status: 502 },
+  );
 }

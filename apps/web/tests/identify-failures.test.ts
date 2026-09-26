@@ -108,12 +108,14 @@ describe("POST /api/identify-failures", () => {
     expect(res.status).toBe(400);
   });
 
-  it("surfaces an identifyFailures failure as a 502 with its message", async () => {
+  it("turns an identifyFailures failure into a friendly 502 — the raw engine message is kept out of the customer-facing error (outside production it is in `detail`)", async () => {
     identifyFailuresMock.mockRejectedValueOnce(new Error("model output still failed validation"));
 
     const res = await POST(jsonRequest({ model: checkout }));
     expect(res.status).toBe(502);
     const body = await res.json();
-    expect(body.error).toMatch(/still failed validation/i);
+    expect(body.error).toMatch(/Your project is unchanged/);
+    expect(body.error).not.toMatch(/still failed validation/i);
+    expect(body.detail).toMatch(/still failed validation/i);
   });
 });

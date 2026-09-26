@@ -72,7 +72,7 @@ is worth building at all.
 
 Partially superseded by a deliberate product decision already made: chat
 now explicitly answers questions as well as making corrections (see
-`CONTEXT.md`'s "Decisions already made" table) — "chat is the correction
+`docs/context/findings-and-chat.md`, "Chat is for correction, not Q&A") — "chat is the correction
 channel, that is its job" is no longer the rule. What should still hold:
 
 - A question's answer should be grounded in the actual current model, not
@@ -105,7 +105,7 @@ Auth exists; usage limits do not.
 
 ## 5.5 — Credits
 
-Decided (see `CONTEXT.md`: "Credits, not subscription") but genuinely
+Decided (see `docs/context/product-decisions.md`: "Credits, not subscription") but genuinely
 unbuilt — no billing or usage-metering code exists anywhere in `apps/web`
 today.
 

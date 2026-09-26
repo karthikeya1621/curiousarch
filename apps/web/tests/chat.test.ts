@@ -210,12 +210,14 @@ describe("POST /api/chat", () => {
     expect(chatWithProjectMock).not.toHaveBeenCalled();
   });
 
-  it("surfaces a chatWithProject failure as a 502 with its message", async () => {
+  it("turns an chatWithProject failure into a friendly 502 — the raw engine message is kept out of the customer-facing error (outside production it is in `detail`)", async () => {
     chatWithProjectMock.mockRejectedValueOnce(new Error("structured output still failed validation"));
 
     const res = await POST(jsonRequest({ model: checkout, message: "add a CDN" }));
     expect(res.status).toBe(502);
     const body = await res.json();
-    expect(body.error).toMatch(/still failed validation/i);
+    expect(body.error).toMatch(/Your project is unchanged/);
+    expect(body.error).not.toMatch(/still failed validation/i);
+    expect(body.detail).toMatch(/still failed validation/i);
   });
 });

@@ -20,7 +20,7 @@ and it will look close to this app while verifying nothing. The previous
 version of this plan's answer to that was a hand-written pattern-matching
 engine whose output was provably computed, not generated — a real
 differentiator, but one that structurally couldn't keep up with what an
-AI-driven model could represent (see `CONTEXT.md`'s "Findings are
+AI-driven model could represent (see `docs/context/history-and-pivot.md`'s "Findings are
 AI-generated" for the full account of why it was deleted instead of
 extended). That answer is gone. This phase needs a different one, built on
 top of the choice that replaced it, not a return to the old one.

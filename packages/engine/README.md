@@ -27,7 +27,7 @@ see git history for their final form) and treated "findings are computed,
 never generated" as non-negotiable, precisely because an earlier LLM
 (Gemini, shown a screenshot of this app's own output) produced a fluent but
 fabricated causal story when asked to explain a failure with no computed
-evidence behind it — see `CONTEXT.md`'s "Why the pivot" for the full
+evidence behind it — see `docs/context/history-and-pivot.md` ("Why the pivot") for the full
 incident. The explicit, informed decision behind `identifyFailures.ts` was
 to accept that risk anyway — "fully AI-generated, no need verification...
 it should think how a human senior architect thinks" — rather than keep
@@ -73,7 +73,7 @@ guesses an LLM had no way to actually verify from a prose description, and
 precise math on top of a guessed number produces a confident,
 specific-sounding **wrong** answer. That's worse than an honest rough one.
 The full account, including a live demonstration of exactly this failure
-mode, is in the repo root's `CONTEXT.md` under "Why the pivot." The short
+mode, is in the repo root's `docs/context/history-and-pivot.md` under "Why the pivot." The short
 version: "does this have a read replica" is a question a sentence can
 actually answer; "what's the query time in milliseconds" never was.
 

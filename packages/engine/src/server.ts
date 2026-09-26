@@ -16,6 +16,7 @@ export type { FixRationale, ExplainFixOptions } from "./inference/explainFix.ts"
 export { reworkModel } from "./inference/reworkModel.ts";
 export type { ReworkModelOptions, ReworkModelResult, PendingFixInput, PendingChangeInput } from "./inference/reworkModel.ts";
 export { identifyFailures } from "./inference/identifyFailures.ts";
+export { checkFinalModel, ModelGateError } from "./inference/finalGate.ts";
 export { extractWorkloadParameters } from "./inference/workloadParameters.ts";
 export type { WorkloadParameters } from "./inference/workloadParameters.ts";
 export {

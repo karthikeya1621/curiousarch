@@ -4,7 +4,7 @@
  * product decision behind this file: "fully AI-generated, no need
  * verification... it should think how a human senior architect thinks" —
  * made after seeing the concrete downside (the Gemini-fabrication incident
- * CONTEXT.md documents under "Why the pivot") and choosing it anyway. The
+ * docs/context/history-and-pivot.md documents under "Why the pivot") and choosing it anyway. The
  * deterministic pattern-matching engine this superseded (`patterns.ts`/
  * `solver.ts`/`whatif.ts`/`fixes.ts`) has since been deleted outright —
  * see git history for its final form.

@@ -134,12 +134,26 @@ describe("POST /api/rework", () => {
     expect(res.status).toBe(400);
   });
 
-  it("surfaces a reworkModel failure as a 502 with its message", async () => {
+  it("turns an reworkModel failure into a friendly 502 — the raw engine message is kept out of the customer-facing error (outside production it is in `detail`)", async () => {
     reworkModelMock.mockRejectedValueOnce(new Error("model output still failed validation"));
 
     const res = await POST(jsonRequest({ model: checkout }));
     expect(res.status).toBe(502);
     const body = await res.json();
-    expect(body.error).toMatch(/still failed validation/i);
+    expect(body.error).toMatch(/Your project is unchanged/);
+    expect(body.error).not.toMatch(/still failed validation/i);
+    expect(body.detail).toMatch(/still failed validation/i);
+  });
+
+  it("a result the engine's final gate refused is a 422 with a fixed message and a code the client can act on", async () => {
+    const gate = Object.assign(new Error("The result broke 1 rule: x is not connected to anything"), { name: "ModelGateError", violations: ["x"] });
+    reworkModelMock.mockRejectedValueOnce(gate);
+
+    const res = await POST(jsonRequest({ model: checkout }));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.code).toBe("unsafe-result");
+    expect(body.error).toMatch(/nothing was changed/i);
+    expect(JSON.stringify(body)).not.toMatch(/not connected to anything/);
   });
 });

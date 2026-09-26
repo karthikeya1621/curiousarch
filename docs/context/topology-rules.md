@@ -1,0 +1,21 @@
+# Topology rules: wiring, lint and the data path
+
+> Part of the project context; the index is [`CONTEXT.md`](../../CONTEXT.md). How components are wired: CDN direction, load balancers as pass-throughs, parallel-path collapse, the lint rules, and the build prompt that names the defining data path. Read before touching `lintTopology.ts` or the merge steps in `fromProse.ts`/`reworkModel.ts`.
+
+Each section below is one decision: the heading is the decision, the text is the reason and the evidence. A decision marked ~~struck through~~ or "superseded" is kept on purpose, so the reasoning is not lost.
+
+## Shape problems are linted in code, beside the AI review
+
+An independent Opus review of the Zoom project pointed out that the double path (a service reaching another directly AND through a queue) is visible in the edges alone, yet the AI review returned nothing. `lintTopology.ts` now adds deterministic findings to `identifyFailures`' result (same shape, with a fix Re-simulate can implement): `PARALLEL_SYNC_AND_ASYNC_PATH`, `QUEUE_NO_CONSUMER`, `QUEUE_NO_PRODUCER`. Deliberately few rules — only ones unambiguous from the graph. Not done, and worth a separate design: a client/actor node so edge direction means "initiator → callee" (the CDN and TURN wiring are wrong without one).
+
+## Build names the defining data path
+
+The Zoom build had no media tier — the thing the product is — because a generic Meeting Service absorbed it. `SYSTEM_PROMPT` now asks for whatever moves the system's main payload to be its own service. Verified live on one Zoom-like and one URL-shortener description: the Zoom build gained media, chat, screenshare, recording and livestream services (10 components), the shortener stayed at 5 with no extra component. Two builds, so a sample of two.
+
+## A CDN's edge is oriented in code, not by prompt
+
+Clients reach a CDN and it pulls from its origin, so the edge is `cdn -> origin`. The prompt line alone did nothing: a live Zoom-like build still drew `livestream-service -> livestream-cdn`. `sanitizeExtendedResponse` now turns any edge into a CDN around (on build and Re-simulate, so an older project heals on its next Re-simulate), and the lint rule `CDN_BEHIND_ORIGIN` flags one in a project that hasn't been re-simulated. The canvas's Traffic node feeds every component with no incoming edge, so the CDN now shows as a second entry point beside the gateway — not yet looked at in a browser. TURN/STUN stays wired from the service (see plans/PLAN-edge-direction.md).
+
+## A load balancer is a pass-through, like a queue
+
+Seen in the app: a diagram with API Gateway → Load Balancer → Service AND a direct API Gateway → Service edge. The base call builds the direct edge; the extended step (which owns load balancers) inserts the balancer and its two legs; nothing removed the direct one, because the collapse and the lint covered queues and brokers only. `collapseParallelAsyncPaths` now treats `load-balancer` as a pass-through too (so it also heals an older project on its next Re-simulate), and `lintTopology` reports `PATH_AROUND_LOAD_BALANCER` with a one-click fix for one that has not been re-simulated. Product rule added afterwards: "if there's a load balancer, it should be in between" — so when a balancer fronts a component (L → S), every gateway or service that calls S directly is rewired to call L (`routeThroughLoadBalancers`, only gateways/services, never if it would close a cycle; queues and scheduled jobs are left alone) — but only for a balancer NEW in this build/Re-simulate, and never when the queued request says some calls go direct (`routableLoadBalancers`: "directly", "bypass", "skip the load balancer"), because a balancer that is already there, and an explicit wish for a direct call, belong to the user (the lint still suggests the fix for an existing one), the lint reports `PATH_AROUND_LOAD_BALANCER` for a caller that bypasses it, and both extended prompts say so. Unit-tested only. Known residual: after the direct edge is removed the base call, which never sees the balancer, sees the gateway and service as unconnected and may re-add the edge; the collapse removes it again on the merge, so the result is stable but that costs nothing extra only because it is done in code.

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { SystemModel } from "@archsim/engine";
 import { useAppStore, usageProjectId } from "../lib/store";
-import { newActionId } from "../lib/usageClient";
+import { newActionId, reportOutcome } from "../lib/usageClient";
 import { MAX_DESCRIPTION_LENGTH } from "../lib/limits";
 import { Card } from "./Card";
 import { SparklesIcon } from "./icons";
@@ -29,7 +29,10 @@ export function ProseInput() {
         body: JSON.stringify({ description, actionId, projectId: usageProjectId() }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Inference failed.");
+      if (!res.ok) {
+        if (body.code === "unsafe-result") reportOutcome(actionId, "withheld"); // paid for, but the engine refused to return it
+        throw new Error(body.error ?? "Inference failed.");
+      }
       setModel(body.model as SystemModel, actionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Inference failed.");

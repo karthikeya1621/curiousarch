@@ -2,12 +2,12 @@
 
 **Goal:** confirm the loop produces real insight for someone who is not the
 builder, and get an honest read on whether the AI-generated-findings bet
-(`identifyFailures.ts`, accepted knowingly — see `CONTEXT.md`'s "Findings
+(`identifyFailures.ts`, accepted knowingly — see `docs/context/history-and-pivot.md`'s "Findings
 are AI-generated" — but never measured at volume) is actually holding up.
 
 **Prerequisite:** none. Everything this phase needs already exists: auth,
 persistence, multi-project support, 12 component kinds, cost guardrails,
-584 passing tests. This is the next thing to do, not blocked on anything.
+605 passing tests. This is the next thing to do, not blocked on anything.
 
 This phase deliberately comes before PLAN-5 (shippable, monetized) for the
 same reason the old plans ordered it that way: a free tier and billing on
@@ -36,7 +36,7 @@ summary that already assumes the tool worked.
 ## 4.2 — Spot-check finding quality at volume
 
 `identifyFailures.ts` has no computed guarantee behind it — see
-`CONTEXT.md`'s "Bugs already found and fixed" for why that's a different
+`docs/context/bug-log.md` for why that's a different
 kind of risk than the deleted pattern engine had. This is the audit that
 was never done after the engine was deleted.
 
@@ -58,7 +58,7 @@ bet in "Findings are AI-generated" is working, not just accepted.
 
 ## 4.3 — Automated UI/e2e coverage
 
-All 584 tests today are unit-level (engine inference logic, `apps/web`'s
+All 605 tests today are unit-level (engine inference logic, `apps/web`'s
 store and API routes) — nothing drives the actual rendered app. The
 `.claude/skills/run-web` Playwright driver already proves this is possible
 without a logged-in session; a real login-gated flow still needs either a

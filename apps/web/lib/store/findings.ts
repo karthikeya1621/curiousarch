@@ -7,7 +7,7 @@ import type { StoreGet, StoreSet } from "./types";
 
 /**
  * Findings are AI-generated now (`identifyFailures`), not computed — see
- * packages/engine/README.md and CONTEXT.md for the explicit product
+ * packages/engine/README.md and docs/context/history-and-pivot.md for the explicit product
  * decision behind this. They live in the store, not a hook, because the
  * diagram (badge counts) and the sidebar (the actual list) both need the
  * same fetched result, and fetching is async — unlike the old
