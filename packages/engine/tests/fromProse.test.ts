@@ -17,7 +17,7 @@
  * those calls' own retry behavior independently.
  */
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
 import { fromProse } from "../src/inference/fromProse.js";
 import { SYSTEM_PROMPT } from "../src/inference/prompt.js";
@@ -72,6 +72,12 @@ function toolNameOf(args: unknown): string {
 
 const emptyExtendedComponentsInput = { components: [], edges: [] };
 
+/** What the coverage check answers in these tests: by default every named part is covered. */
+let coverageInput: unknown = { parts: [] };
+function coverageResponse(): Anthropic.Message {
+  return toolUseResponse("emit_coverage", coverageInput);
+}
+
 /**
  * Routes by which tool is being called (`emit_system_model` vs
  * `emit_workload_parameters` vs `emit_extended_components`), since
@@ -92,6 +98,7 @@ function fakeClient(topologyResponses: Anthropic.Message[]): Anthropic {
           if (!response) throw new Error("fakeClient: no more canned workload-parameters responses");
           return response;
         }
+        if (tool === "emit_coverage") return coverageResponse();
         if (tool === "emit_extended_components") {
           const response = extendedCall === 0 ? toolUseResponse("emit_extended_components", emptyExtendedComponentsInput) : undefined;
           extendedCall++;
@@ -108,6 +115,10 @@ function fakeClient(topologyResponses: Anthropic.Message[]): Anthropic {
 }
 
 describe("fromProse", () => {
+  beforeEach(() => {
+    coverageInput = { parts: [] };
+  });
+
   it("returns a model unrepaired when the first attempt validates", async () => {
     const client = fakeClient([toolUseResponse("emit_system_model", validModelInput)]);
     const result = await fromProse("a toy system", { client });
@@ -205,6 +216,7 @@ describe("fromProse", () => {
           if (tool === "emit_extended_components") {
             return toolUseResponse("emit_extended_components", emptyExtendedComponentsInput);
           }
+          if (tool === "emit_coverage") return coverageResponse();
           topologyCalls.push(args);
           return topologyCalls.length === 1
             ? toolUseResponse("emit_system_model", invalidModelInput)
@@ -265,5 +277,127 @@ describe("SYSTEM_PROMPT", () => {
     for (const word of ["placeholder", "lorem ipsum", "tbd", "n/a"]) {
       expect(text).not.toContain(word);
     }
+  });
+});
+
+describe("fromProse: the description-coverage check", () => {
+  const part = (name: string, owner: string, componentId: string) => ({ name, owner, componentId, reason: "because" });
+  const withSubscriber = {
+    ...validModelInput,
+    components: [
+      ...validModelInput.components,
+      { id: "audit", label: "Audit service", kind: "service", instanceCount: { rationale: "One instance at launch.", provenance: "default", value: "single" }, hasCircuitBreaker: { rationale: "Not part of the described system.", provenance: "default", value: false } },
+    ],
+    edges: [...validModelInput.edges, { from: "svc", to: "audit" }],
+  };
+
+  /** A client that records every topology call's user content and answers topology calls in order. */
+  function recording(topologies: unknown[]) {
+    const seen: string[] = [];
+    let topologyCall = 0;
+    const client = {
+      messages: {
+        create: async (args: { tools?: { name: string }[]; messages: { content: unknown }[] }) => {
+          const tool = args.tools?.[0]?.name ?? "";
+          if (tool === "emit_workload_parameters") return toolUseResponse("emit_workload_parameters", validWorkloadParamsInput);
+          if (tool === "emit_extended_components") return toolUseResponse("emit_extended_components", emptyExtendedComponentsInput);
+          if (tool === "emit_coverage") return coverageResponse();
+          seen.push(JSON.stringify(args.messages[0]!.content));
+          const next = topologies[topologyCall++];
+          if (!next) throw new Error("no more topology responses");
+          return toolUseResponse("emit_system_model", next);
+        },
+      },
+    } as unknown as Anthropic;
+    return { client, seen };
+  }
+
+  it("a part the draft leaves out triggers exactly one more draft that spells it out, and that draft is used", async () => {
+    coverageInput = { parts: [part("gateway", "base", "gw"), part("audit subscriber", "base", "")] };
+    const { client, seen } = recording([validModelInput, withSubscriber]);
+    const result = await fromProse("a toy system with an audit subscriber", { client });
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toContain("left out these parts");
+    expect(seen[1]).toContain("audit subscriber");
+    expect(result.model.components.map((c) => c.id)).toContain("audit");
+  });
+
+  it("when every named part is covered there is no second draft", async () => {
+    coverageInput = { parts: [part("gateway", "base", "gw"), part("service", "base", "svc"), part("a CDN", "extended", ""), part("users", "not-built", "")] };
+    const { client, seen } = recording([validModelInput]);
+    await fromProse("a toy system", { client });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("the prompt makes a named subscriber a 'base' part when nothing covers it, and reserves 'not-built' for things never built", async () => {
+    let prompt = "";
+    const client = {
+      messages: {
+        create: async (args: { tools?: { name: string }[]; system?: unknown }) => {
+          const tool = args.tools?.[0]?.name ?? "";
+          if (tool === "emit_coverage") { prompt = JSON.stringify(args.system); return coverageResponse(); }
+          if (tool === "emit_workload_parameters") return toolUseResponse("emit_workload_parameters", validWorkloadParamsInput);
+          if (tool === "emit_extended_components") return toolUseResponse("emit_extended_components", emptyExtendedComponentsInput);
+          return toolUseResponse("emit_system_model", validModelInput);
+        },
+      },
+    } as unknown as Anthropic;
+    await fromProse("a toy system", { client });
+    expect(prompt).toContain("never \\\"not-built\\\"");
+    expect(prompt).toContain("ONLY for something that is never built or run");
+  });
+
+  it("an extended or non-component part is never asked for, even with no component id", async () => {
+    coverageInput = { parts: [part("a CDN", "extended", ""), part("a million users", "not-built", "")] };
+    const { client, seen } = recording([validModelInput]);
+    await fromProse("a toy system", { client });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("a failed second draft falls back to the first, and a failed check never fails the build", async () => {
+    coverageInput = { parts: [part("audit subscriber", "base", "")] };
+    const { client } = recording([validModelInput]); // the second draft has no canned response -> throws
+    const result = await fromProse("a toy system", { client });
+    expect(result.model.components.map((c) => c.id)).toEqual(["gw", "svc"]);
+    coverageInput = { parts: [part("x", "base", "ghost-id")] }; // invalid id twice -> the check gives up
+    const again = await fromProse("a toy system", { client: recording([validModelInput]).client });
+    expect(again.model.components).toHaveLength(2);
+  });
+
+  it("is skipped when the draft is already near the component cap", async () => {
+    const big = {
+      ...validModelInput,
+      components: [
+        ...validModelInput.components,
+        ...Array.from({ length: 12 }, (_, i) => ({ id: `s${i}`, label: `S${i}`, kind: "service", instanceCount: { rationale: "One instance at launch.", provenance: "default", value: "single" }, hasCircuitBreaker: { rationale: "Not part of the described system.", provenance: "default", value: false } })),
+      ],
+      edges: [...validModelInput.edges, ...Array.from({ length: 12 }, (_, i) => ({ from: "svc", to: `s${i}` }))],
+    };
+    coverageInput = { parts: [part("audit subscriber", "base", "")] };
+    const { client, seen } = recording([big]);
+    await fromProse("a big toy system", { client });
+    expect(seen).toHaveLength(1); // 14 components: no coverage call, no second draft
+  });
+
+  it("a direct edge beside a path through a newly built load balancer is removed at build (the rewrites run on the merged graph)", async () => {
+    const lb = {
+      id: "lb1", label: "Load balancer", kind: "load-balancer",
+      instanceCount: { value: "single", provenance: "default", rationale: "One balancer at launch scale." },
+      hasHealthChecks: { value: false, provenance: "default", rationale: "No health checks described." },
+    };
+    const client = {
+      messages: {
+        create: async (args: { tools?: { name: string }[] }) => {
+          const tool = args.tools?.[0]?.name ?? "";
+          if (tool === "emit_workload_parameters") return toolUseResponse("emit_workload_parameters", validWorkloadParamsInput);
+          if (tool === "emit_coverage") return coverageResponse();
+          if (tool === "emit_extended_components") return toolUseResponse("emit_extended_components", { components: [lb], edges: [{ from: "gw", to: "lb1" }, { from: "lb1", to: "svc" }] });
+          return toolUseResponse("emit_system_model", validModelInput);
+        },
+      },
+    } as unknown as Anthropic;
+    const result = await fromProse("a toy system", { client });
+    expect(result.model.edges).not.toContainEqual({ from: "gw", to: "svc" });
+    expect(result.model.edges).toContainEqual({ from: "gw", to: "lb1" });
   });
 });

@@ -5,6 +5,7 @@ import type { AppliedFixRecord } from "../../sessionStorage";
 import { derivePending } from "../pending";
 import { refreshFindings } from "../findings";
 import { sequence } from "../sequencing";
+import { diffModels, unrequestedRemovals } from "../../modelDiff";
 import { emptySession } from "../session";
 import type { StoreGet, StoreSet } from "../types";
 
@@ -62,6 +63,13 @@ export interface ModelState {
    * match `model` again.
    */
   findingsStale: boolean;
+  /**
+   * Set by `commitRework` when the Re-simulate REMOVED components although no fix
+   * or chat change was queued that could have asked for it (a model that drops
+   * something unprompted was found on a real project). Session-only; cleared on
+   * dismissal and by anything that resets the session.
+   */
+  reworkWarning: { removed: { id: string; label: string; kind: string }[] } | null;
 }
 
 export interface ModelActions {
@@ -78,6 +86,7 @@ export interface ModelActions {
    * chat changes alone; those have their own controls.
    */
   revertParameters: () => void;
+  dismissReworkWarning: () => void;
 }
 
 export type ModelSlice = ModelState & ModelActions;
@@ -130,8 +139,13 @@ export function createModelActions(set: StoreSet, get: StoreGet): ModelActions {
       });
     },
 
+    dismissReworkWarning: () => set({ reworkWarning: null }),
     commitRework: (newModel, actionId) => {
-      const { appliedFixes, pendingFixes, chatMessages } = get();
+      const { appliedFixes, pendingFixes, pendingChanges: queuedChanges, chatMessages } = get();
+      const removed = unrequestedRemovals(
+        diffModels(get().baselineModel ?? get().model, newModel),
+        pendingFixes.length + queuedChanges.length > 0,
+      );
       const nowApplied: AppliedFixRecord[] = pendingFixes.map((p) => ({
         componentId: p.componentId,
         findingTitle: p.findingTitle,
@@ -139,6 +153,7 @@ export function createModelActions(set: StoreSet, get: StoreGet): ModelActions {
         appliedAt: Date.now(),
       }));
       set({
+        reworkWarning: removed.length > 0 ? { removed } : null,
         model: newModel,
         openComponentId: null,
         selectedFindingId: null,

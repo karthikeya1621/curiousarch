@@ -75,9 +75,8 @@ import { buildTool } from "./fromProse.ts";
 import { EXTENDED_KINDS, isExtendedComponent, reviseExtendedComponents } from "./extendedComponents.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { TIER_GROUP_GUIDE } from "./tierGuide.ts";
-import { atLowestTier, startMinimal } from "./startMinimal.ts";
+import { atLowestTier, checkLowestTierMinimal, startMinimal } from "./startMinimal.ts";
 import { collapseParallelAsyncPaths, dedupeEdges, routableLoadBalancers } from "./lintTopology.ts";
-import { reviewGraph } from "./reviewGraph.ts";
 
 export { dedupeEdges };
 import { cleanModelIdentity, MAX_BASE_COMPONENTS, type Component, type SystemModel } from "../types.ts";
@@ -507,7 +506,9 @@ export async function reworkModel(
       validateResult: (data) =>
         pendingContext !== ""
           ? null
-          : (checkNoDroppedBaseComponents(model, data as SystemModel) ?? checkNoDroppedEdges(model, data as SystemModel)),
+          : (checkNoDroppedBaseComponents(model, data as SystemModel) ??
+            checkNoDroppedEdges(model, data as SystemModel) ??
+            checkLowestTierMinimal((data as SystemModel).components, model.workload)),
     },
     "reworkModel",
   );
@@ -536,6 +537,7 @@ export async function reworkModel(
     `${pendingContext}${describeScale(model.workload)}`,
     previousEdges,
     pendingContext !== "",
+    pendingContext === "" ? model.workload : undefined,
   );
 
   // The extended step writes its own traits, so the same honesty rules apply
@@ -551,24 +553,9 @@ export async function reworkModel(
   const allComponents = [...result.data.components, ...extended.components];
   const mergedEdges = dedupeEdges(restoreDroppedConnections(model.edges, allComponents, [...result.data.edges, ...extended.edges]));
   // The base and extended calls could not see each other's edges, so the merged
-  // wiring can contradict itself. The AI reviews it — the whole graph plus the
-  // queued request — and the deterministic rewrites then run as the backstop.
-  const inputIds = new Set(model.components.map((c) => c.id));
-  const review = await reviewGraph(
-    allComponents,
-    mergedEdges,
-    { newComponentIds: allComponents.filter((c) => !inputIds.has(c.id)).map((c) => c.id), request: pendingContext },
-    options,
-  );
-  // The deterministic rewrites run AFTER the review, on whatever it returned: live
-  // runs showed the review missing the very case it exists for (a newly added
-  // balancer whose callers still reached the service directly — its answer was an
-  // empty edit list) while the rewrite got it right every time.
-  const edges = collapseParallelAsyncPaths(
-    allComponents,
-    review.reviewed ? dedupeEdges(review.edges) : mergedEdges,
-    routableLoadBalancers(model, { components: allComponents }),
-  );
+  // wiring can contradict itself: the deterministic rewrites settle it (a direct edge
+  // beside a path through a queue or balancer; callers of a newly added balancer).
+  const edges = collapseParallelAsyncPaths(allComponents, mergedEdges, routableLoadBalancers(model, { components: allComponents }));
 
   return {
     model: {

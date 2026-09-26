@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { atLowestTier, startMinimal } from "../src/inference/startMinimal.js";
+import { atLowestTier, checkLowestTierMinimal, startMinimal } from "../src/inference/startMinimal.js";
 
 const trait = (value: unknown, provenance: string, rationale = "Because.") => ({ value, provenance, rationale });
 const low = { users: { included: true, tier: 100, target: 1_000_000 }, requests: { included: false, tier: 1000, target: 1000 } };
@@ -43,5 +43,28 @@ describe("startMinimal", () => {
     expect(startMinimal(input, { ...low, users: { included: true, tier: 10_000, target: 1_000_000 } } as never)).toBe(input);
     const untouched = [input[1]!]; // its only protection is stated
     expect(startMinimal(untouched, low as never)[0]).toBe(untouched[0]);
+  });
+});
+
+describe("checkLowestTierMinimal — names what scales beyond the minimum at the lowest tier, for the AI to repair", () => {
+  const scaled = [
+    { id: "svc", kind: "service", instanceCount: trait("multiple", "inferred") },
+    { id: "db", kind: "database", instanceCount: trait("has-replicas", "inferred") },
+    { id: "q", kind: "queue", consumerScaling: trait("auto", "inferred") },
+    { id: "kept", kind: "service", instanceCount: trait("multiple", "stated") },
+    { id: "min", kind: "service", instanceCount: trait("single", "default") },
+  ];
+
+  it("lists every inferred value above the minimum, and leaves a stated one and a minimal one out", () => {
+    const problem = checkLowestTierMinimal(scaled, low as never)!;
+    expect(problem).toMatch(/svc\.instanceCount is "multiple"/);
+    expect(problem).toMatch(/db\.instanceCount is "has-replicas"/);
+    expect(problem).toMatch(/q\.consumerScaling is "auto"/);
+    expect(problem).not.toMatch(/kept|"min"/);
+  });
+
+  it("is quiet when nothing exceeds the minimum, and above the lowest tier", () => {
+    expect(checkLowestTierMinimal([scaled[3]!, scaled[4]!], low as never)).toBeNull();
+    expect(checkLowestTierMinimal(scaled, { ...low, users: { included: true, tier: 10_000, target: 1_000_000 } } as never)).toBeNull();
   });
 });

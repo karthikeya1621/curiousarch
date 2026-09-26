@@ -33,7 +33,10 @@ import {
 } from "./schema.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { TIER_GROUP_GUIDE } from "./tierGuide.ts";
-import { MAX_EXTENDED_COMPONENTS, MAX_TOTAL_COMPONENTS, type Component, type Edge } from "../types.ts";
+import { checkLowestTierMinimal } from "./startMinimal.ts";
+import { MAX_EXTENDED_COMPONENTS, MAX_TOTAL_COMPONENTS, type Component, type Edge, type SystemModel } from "../types.ts";
+
+type SystemModelWorkload = SystemModel["workload"];
 
 const ExternalDependencySchema = z.object({
   ...baseFields(),
@@ -588,6 +591,8 @@ export async function reviseExtendedComponents(
    * asked): every previous extended component must survive.
    */
   removalMayBeRequested = false,
+  /** Passed when nothing is queued: the workload, so a value above the minimum at the LOWEST tier can be named and repaired. */
+  minimalAtWorkload?: SystemModelWorkload,
 ): Promise<{ components: Component[]; edges: Edge[] }> {
   const { remaining, text: budget } = budgetLine(reworkedBaseModel.components.length);
   const baseIds = new Set(reworkedBaseModel.components.map((c) => c.id));
@@ -609,6 +614,8 @@ export async function reviseExtendedComponents(
       validateResult: (data) => {
         const merged = mergeRevision(previousExtended, data as ReviseResponse, removalMayBeRequested);
         if (merged.problem) return merged.problem;
+        const notMinimal = minimalAtWorkload ? checkLowestTierMinimal(merged.components, minimalAtWorkload) : null;
+        if (notMinimal) return notMinimal;
         return checkNoDroppedExtendedEdges(
           previousEdges,
           baseIds,

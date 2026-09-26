@@ -21,12 +21,39 @@ import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.
 import { lintTopology, mergeLintFindings } from "./lintTopology.ts";
 import type { AiFinding, SystemModel } from "../types.ts";
 import { atLowestTier } from "./startMinimal.ts";
+import { graphFacts } from "./graphFacts.ts";
 
 const AiFixSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   tradeoff: z.string().min(1, "What this costs — money, complexity, or risk. Never omitted."),
 });
+
+/**
+ * The review areas the AI must decide on, one by one, before listing findings — the
+ * same device as `proposeExtendedComponents`' per-kind decisions: it turns a
+ * checklist-only answer into one that has actually looked at each area. Found by
+ * comparing models: the deeper findings a bigger model produced (parallel event paths,
+ * a hot leaderboard key, a request-path single point of failure) sit in areas the
+ * checklist answer never visited.
+ */
+export const REVIEW_AREAS = [
+  "data-integrity",
+  "hot-keys-and-partitioning",
+  "regional-latency",
+  "shared-datastore-coupling",
+  "duplicate-or-parallel-paths",
+  "request-path-single-points",
+  "cascading-failure",
+  "durability-and-recovery",
+] as const;
+
+const AreaDecisionSchema = z.object({
+  area: z.enum(REVIEW_AREAS),
+  applies: z.boolean(),
+  evidence: z.string().min(1),
+});
+export type AreaDecision = z.infer<typeof AreaDecisionSchema>;
 
 const AiFindingSchema = z.object({
   code: z.string().min(1),
@@ -37,11 +64,47 @@ const AiFindingSchema = z.object({
   fixes: z.array(AiFixSchema).min(1),
   bitesAt: z.enum(["now", "larger-scale"]),
   aboutInstanceCount: z.boolean(),
+  area: z.enum([...REVIEW_AREAS, "other"]),
+  impact: z.enum(["high", "medium", "low"]),
 });
 
-const IdentifyFailuresResponseSchema = z.object({
-  findings: z.array(AiFindingSchema),
-});
+const IdentifyFailuresResponseSchema = z
+  .object({
+    considered: z.array(AreaDecisionSchema),
+    findings: z.array(AiFindingSchema),
+  })
+  .superRefine((val, ctx) => {
+    for (const area of REVIEW_AREAS) {
+      if (val.considered.filter((d) => d.area === area).length !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `"considered" needs exactly one entry for "${area}" - every one of the ${REVIEW_AREAS.length} areas must be decided.`,
+          path: ["considered"],
+        });
+      }
+    }
+  });
+
+/** The AI's per-area decisions must agree with the findings it listed. */
+export function checkAreasMatchFindings(data: { considered: AreaDecision[]; findings: { area: string }[] }): string | null {
+  const found = new Set(data.findings.map((f) => f.area));
+  const missing = data.considered.filter((d) => d.applies && !found.has(d.area)).map((d) => d.area);
+  const unexpected = [...found].filter((a) => a !== "other" && !data.considered.some((d) => d.area === a && d.applies));
+  const parts: string[] = [];
+  if (missing.length) parts.push(`you decided ${missing.join(", ")} applies but listed no finding in ${missing.length === 1 ? "that area" : "those areas"} - add ${missing.length === 1 ? "it" : "them"}, or set applies to false`);
+  if (unexpected.length) parts.push(`you listed findings in ${unexpected.join(", ")} without deciding ${unexpected.length === 1 ? "it applies" : "they apply"} - set applies to true or use area "other"`);
+  return parts.length ? `Your area decisions and your findings disagree: ${parts.join("; and ")}.` : null;
+}
+
+const IMPACT_ORDER = { high: 0, medium: 1, low: 2 } as const;
+const SEVERITY_ORDER = { critical: 0, warning: 1 } as const;
+
+/** Most important first: by the AI's own impact rank, then severity; otherwise the order it gave. */
+export function rankFindings<F extends { impact?: string; severity: string }>(findings: F[]): F[] {
+  const rank = (f: F) => (IMPACT_ORDER as Record<string, number>)[f.impact ?? "medium"] ?? 1;
+  const sev = (f: F) => (SEVERITY_ORDER as Record<string, number>)[f.severity] ?? 1;
+  return findings.map((f, i) => ({ f, i })).sort((a, b) => rank(a.f) - rank(b.f) || sev(a.f) - sev(b.f) || a.i - b.i).map((x) => x.f);
+}
 
 const TOOL_NAME = "emit_failures";
 
@@ -120,9 +183,22 @@ A CDN is reached by clients first and pulls from its origin, so it has no incomi
 
 Only report a risk you can point to something CONCRETE in the model for - a specific trait, a specific topology shape, a specific combination of the two. Don't invent a risk that isn't actually grounded in what's in front of you, and don't pad the list to look thorough. If the system is genuinely healthy at its current scale, say so by returning an empty findings list rather than manufacturing something to report.
 
-Output only the structured findings list. Do not add any other commentary.`;
+How to answer: FIRST decide, for EACH of the ${REVIEW_AREAS.length} review areas in "considered", whether a real risk in that area applies to THIS system (applies true or false) and give a short "evidence" - what in the diagram makes it apply, or why it does not:
+- data-integrity: money or state moved twice or lost - retries without idempotency, a write and its event that can disagree, no reconciliation.
+- hot-keys-and-partitioning: one key, row or shard taking a disproportionate share - a global leaderboard, a counter, a popular item.
+- regional-latency: users far from where the work happens - one region, cross-region calls on the request path.
+- shared-datastore-coupling: several components sharing one store, so one hurts all and it cannot scale or fail independently.
+- duplicate-or-parallel-paths: the same work reaching a component two ways, or events fanned out redundantly.
+- request-path-single-points: a component every request depends on that has no fallback, or a control-plane dependency needed at request time.
+- cascading-failure: one slow or failing dependency dragging its callers down (no timeout, breaker or bulkhead).
+- durability-and-recovery: data or work that cannot be recovered after a failure - no dead-letter handling, versioning or replay.
+Then list findings, each with its "area" (one of those, or "other" for anything else) and an "impact" of high, medium or low - how much it matters to THIS system, not how common the pattern is. A finding in an area you marked as not applying is a contradiction.
 
-function buildToolInputSchema(): Record<string, unknown> {
+You are also given "Facts from the diagram": things read off its structure (which stores several components share, how each queue or broker is wired, which components fan out widely, which parts are reached two ways). They are facts, not findings - decide what they mean at this scale.
+
+Output only the structured decisions and findings list. Do not add any other commentary.`;
+
+export function buildFindingsToolInputSchema(): Record<string, unknown> {
   const schema = zodToJsonSchema(IdentifyFailuresResponseSchema, {
     target: "jsonSchema7",
     $refStrategy: "none",
@@ -136,7 +212,7 @@ function buildTool(): Anthropic.Tool {
     name: TOOL_NAME,
     description: "Emit the failure points identified for this system.",
     strict: true,
-    input_schema: buildToolInputSchema() as Anthropic.Tool.InputSchema,
+    input_schema: buildFindingsToolInputSchema() as Anthropic.Tool.InputSchema,
   };
 }
 
@@ -146,15 +222,33 @@ export async function identifyFailures(
 ): Promise<AiFinding[]> {
   const result = await runStructuredCall(
     IDENTIFY_FAILURES_PROMPT,
-    JSON.stringify(model),
+    `${JSON.stringify(model)}\n\nFacts from the diagram:\n${graphFacts(model)}`,
     IdentifyFailuresResponseSchema,
     buildTool(),
-    options,
+    {
+      ...options,
+      // A response with no decisions or ranking (older callers, canned test
+      // responses) is read as: an area applies exactly when a finding names it.
+      normalizeOutput: (raw) => {
+        if (typeof raw !== "object" || raw === null) return raw;
+        const r = raw as { findings?: unknown; considered?: unknown };
+        const findings = (Array.isArray(r.findings) ? r.findings : []).map((f) => {
+          const g = f as { area?: string; impact?: string };
+          return { ...(f as object), area: g.area ?? "other", impact: g.impact ?? "medium" };
+        });
+        const named = new Set(findings.map((f) => (f as { area: string }).area));
+        const considered = Array.isArray(r.considered)
+          ? r.considered
+          : REVIEW_AREAS.map((area) => ({ area, applies: named.has(area), evidence: named.has(area) ? "a finding names it" : "not applicable" }));
+        return { ...(raw as object), considered, findings };
+      },
+      validateResult: (data) => checkAreasMatchFindings(data as { considered: AreaDecision[]; findings: { area: string }[] }),
+    },
     "identifyFailures",
   );
   const fromAi = dropLargerScaleFindingsWhenSmall(
     dropMisattributedFindings(dropInstanceCountFindings(result.data.findings, model), model),
     model.workload,
   );
-  return mergeLintFindings(fromAi, lintTopology(model));
+  return mergeLintFindings(rankFindings(fromAi), lintTopology(model));
 }

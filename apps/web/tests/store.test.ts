@@ -215,6 +215,42 @@ describe("commitRework", () => {
   });
 });
 
+describe("commitRework warns when it removed something nobody asked it to remove", () => {
+  const withoutDb = (): SystemModel => {
+    const m = degradedModel();
+    return { ...m, components: m.components.filter((c) => c.id !== "db"), edges: m.edges.filter((e) => e.from !== "db" && e.to !== "db") };
+  };
+
+  it("nothing queued + a component gone -> a warning naming it", () => {
+    useAppStore.setState({ model: degradedModel(), baselineModel: degradedModel(), pendingFixes: [], pendingChanges: [], reworkWarning: null });
+    useAppStore.getState().commitRework(withoutDb());
+    expect(useAppStore.getState().reworkWarning?.removed.map((c) => c.id)).toEqual(["db"]);
+  });
+
+  it("a request was queued (it may have asked for the removal) -> no warning", () => {
+    useAppStore.setState({
+      model: degradedModel(),
+      baselineModel: degradedModel(),
+      pendingFixes: [],
+      pendingChanges: [{ id: "c1", request: "remove the database", instruction: "Remove db.", queuedAt: 1 }],
+      reworkWarning: null,
+    });
+    useAppStore.getState().commitRework(withoutDb());
+    expect(useAppStore.getState().reworkWarning).toBeNull();
+  });
+
+  it("nothing removed -> no warning; and a later clean Re-simulate or a dismissal clears an earlier one", () => {
+    useAppStore.setState({ model: degradedModel(), baselineModel: degradedModel(), pendingFixes: [], pendingChanges: [], reworkWarning: null });
+    useAppStore.getState().commitRework(withoutDb());
+    expect(useAppStore.getState().reworkWarning).not.toBeNull();
+    useAppStore.getState().dismissReworkWarning();
+    expect(useAppStore.getState().reworkWarning).toBeNull();
+    useAppStore.setState({ model: degradedModel(), baselineModel: degradedModel(), reworkWarning: { removed: [{ id: "x", label: "X", kind: "cache" }] } });
+    useAppStore.getState().commitRework(degradedModel());
+    expect(useAppStore.getState().reworkWarning).toBeNull();
+  });
+});
+
 /**
  * A project whose architecture differs from its last simulation. Nothing in
  * the app can produce that any more (fixes and chat changes both queue rather

@@ -164,6 +164,44 @@ export function lintTopology(model: Pick<SystemModel, "components" | "edges">): 
     }
   }
 
+  // A pub/sub broker with nobody subscribed (events are published to no one), or nobody publishing.
+  // Found live: a description that fanned match events out to analytics, anti-cheat and
+  // notification subscribers came back with a broker that only had a publisher.
+  for (const c of model.components) {
+    if (c.kind !== "message-broker") continue;
+    if (!(out.get(c.id) ?? []).length) {
+      findings.push({
+        code: "BROKER_NO_SUBSCRIBER",
+        severity: "warning",
+        componentId: c.id,
+        title: `${c.label} has no subscribers`,
+        explanation: `Nothing subscribes to ${c.label}, so the events published to it reach no one and whatever was meant to react to them never runs.`,
+        fixes: [
+          {
+            id: "add-subscriber",
+            label: `Connect the service or services that should subscribe to "${c.id}" (edges from "${c.id}" to each subscriber)`,
+            tradeoff: "Adds the subscribing components, each of which now depends on the broker and needs its own failure handling.",
+          },
+        ],
+      });
+    } else if (!(into.get(c.id) ?? []).length) {
+      findings.push({
+        code: "BROKER_NO_PUBLISHER",
+        severity: "warning",
+        componentId: c.id,
+        title: `${c.label} has no publisher`,
+        explanation: `Nothing publishes to ${c.label}, so it never carries any events and its subscribers sit idle.`,
+        fixes: [
+          {
+            id: "add-publisher",
+            label: `Connect the service that should publish to "${c.id}" to it, or remove the broker`,
+            tradeoff: "Either wires in one more dependency or removes a component you may have wanted for later.",
+          },
+        ],
+      });
+    }
+  }
+
   return findings;
 }
 

@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 import Ajv2020 from "ajv/dist/2020.js";
 import { buildToolInputSchema } from "../src/inference/fromProse.js";
+import { buildCoverageToolInputSchema } from "../src/inference/coverage.js";
 import { buildExtendedToolInputSchema, ProposeResponseSchema, ReviseResponseSchema } from "../src/inference/extendedComponents.js";
 
 describe("tool input schema", () => {
@@ -123,5 +124,13 @@ describe("the propose step's tool input schema (considered / components / edges)
   it("every $ref points at a top-level definitions entry", () => {
     const refs = JSON.stringify(schema).match(/"\$ref":"[^"]+"/g) ?? [];
     for (const ref of refs) expect(ref).toMatch(/"\$ref":"#\/definitions\/[A-Za-z0-9_]+"/);
+  });
+});
+
+describe("the coverage check's tool input schema", () => {
+  const schema = buildCoverageToolInputSchema();
+  it("validates as JSON Schema draft 2020-12 and forbids extra properties", () => {
+    expect(() => new Ajv2020({ strict: false }).compile(schema)).not.toThrow();
+    expect((schema as { additionalProperties?: boolean }).additionalProperties).toBe(false);
   });
 });

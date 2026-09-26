@@ -31,10 +31,10 @@ import { SYSTEM_PROMPT } from "./prompt.ts";
 import { extractWorkloadParameters } from "./workloadParameters.ts";
 import { proposeExtendedComponents } from "./extendedComponents.ts";
 import { collapseParallelAsyncPaths, dedupeEdges } from "./lintTopology.ts";
-import { reviewGraph } from "./reviewGraph.ts";
+import { findUncoveredParts } from "./coverage.ts";
 import { startMinimal } from "./startMinimal.ts";
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
-import { cleanModelIdentity, type SystemModel } from "../types.ts";
+import { cleanModelIdentity, MAX_BASE_COMPONENTS, type SystemModel } from "../types.ts";
 
 const TOOL_NAME = "emit_system_model";
 
@@ -155,10 +155,32 @@ export async function fromProse(
   // comment on why the topology schema had no room left for a workload
   // parameters field, discovered live. Run in parallel: the workload call
   // needs nothing from the topology call's result.
-  const [topology, workloadParameters] = await Promise.all([
+  const [firstDraft, workloadParameters] = await Promise.all([
     runStructuredCall(SYSTEM_PROMPT, description, SystemModelSchema, buildTool(), options, "fromProse"),
     extractWorkloadParameters(description, options),
   ]);
+
+  // Does the draft cover every part the description names? When a named part is left
+  // out, ONE more draft is asked for with those parts spelled out (see coverage.ts).
+  // Skipped when the draft is already near the component cap, and never fails a build.
+  let topology = firstDraft;
+  if (firstDraft.data.components.length < MAX_BASE_COMPONENTS - 1) {
+    const uncovered = await findUncoveredParts(description, firstDraft.data.components, options);
+    if (uncovered.length > 0) {
+      try {
+        topology = await runStructuredCall(
+          SYSTEM_PROMPT,
+          `${description}\n\nA first draft of this model left out these parts the description names: ${uncovered.join("; ")}. Model each of them as a component (or fold it into an existing component only if it genuinely is one), keeping every part of the first draft and staying within ${MAX_BASE_COMPONENTS} components.`,
+          SystemModelSchema,
+          buildTool(),
+          options,
+          "fromProse:complete",
+        );
+      } catch {
+        topology = firstDraft;
+      }
+    }
+  }
 
   // Sequential, not parallel with the above — this needs real base
   // component ids to wire edges to, so it can only run once the topology
@@ -169,13 +191,10 @@ export async function fromProse(
   const components = [...topology.data.components, ...extended.components];
   const workload = { ...topology.data.workload, ...workloadParameters };
   const mergedEdges = dedupeEdges([...topology.data.edges, ...extended.edges]);
-  // The two calls above could not see each other's edges, so the merged wiring
-  // can contradict itself. The AI reviews it (seeing the whole graph and the
-  // description).
-  const review = await reviewGraph(components, mergedEdges, { newComponentIds: components.map((c) => c.id), request: description }, options);
-  // The deterministic rewrites run after the review as the backstop (live: the review
-  // missed a caller still bypassing a newly added balancer; the rewrite did not).
-  const edges = collapseParallelAsyncPaths(components, review.reviewed ? dedupeEdges(review.edges) : mergedEdges);
+  // The base and extended calls could not see each other's edges, so the merged
+  // wiring can contradict itself (a direct edge beside a path through a balancer or
+  // queue): the deterministic rewrites settle it.
+  const edges = collapseParallelAsyncPaths(components, mergedEdges);
 
   return {
     model: {

@@ -1037,3 +1037,56 @@ describe("a change that is only about extended kinds is not shown to the base ca
     expect(result.repaired).toBe(false); // no retry for the dropped edge: the request may reroute it
   });
 });
+
+describe("at the lowest tier a rework may not keep things scaled up (live: 100M -> 100 left every service multiple)", () => {
+  // A system that was scaled up earlier: its service is multiple by INFERENCE (not stated in any description).
+  const lowest = (over: object = {}): SystemModel => ({
+    ...checkout,
+    workload: { users: { included: true, tier: 100, target: 1_000_000 } },
+    components: checkout.components.map((c) =>
+      c.id === "svc" ? ({ ...c, instanceCount: { value: "multiple", provenance: "inferred", rationale: "Set when the scale was higher." } } as never) : c,
+    ),
+    ...over,
+  });
+  const svcWith = (value: string, provenance: string) => ({
+    ...validReworkInput,
+    components: validReworkInput.components.map((c) =>
+      c.id === "svc" ? { ...c, instanceCount: { rationale: "Set at the scale it had.", provenance, value } } : c,
+    ),
+  });
+
+  it("an inferred 'multiple' with nothing queued is rejected with the reason and the corrected answer accepted", async () => {
+    const client = fakeClient([toolUseResponse(svcWith("multiple", "inferred")), toolUseResponse(svcWith("single", "inferred")), emptyExtendedResponse()]);
+    const result = await reworkModel(lowest(), [], [], { client });
+    expect(result.repaired).toBe(true);
+    const svc = result.model.components.find((c) => c.id === "svc") as unknown as { instanceCount: { value: string } };
+    expect(svc.instanceCount.value).toBe("single");
+  });
+
+  it("a stated 'multiple' is left alone, and so is anything when a request is queued", async () => {
+    const stated = fakeClient([toolUseResponse(svcWith("multiple", "stated")), emptyExtendedResponse()]);
+    const statedModel: SystemModel = { ...checkout, workload: { users: { included: true, tier: 100, target: 1_000_000 } } }; // svc is multiple by the description
+    expect((await reworkModel(statedModel, [], [], { client: stated })).repaired).toBe(false);
+    const asked = fakeClient([toolUseResponse(svcWith("multiple", "inferred")), emptyExtendedResponse()]);
+    const result = await reworkModel(lowest(), [], [{ request: "add another instance", instruction: "Run svc as multiple instances." }], { client: asked });
+    expect(result.repaired).toBe(false);
+  });
+
+  it("the extended step is held to the same rule (a load balancer left multiple at the lowest tier is repaired)", async () => {
+    const lb = (value: string) => ({
+      id: "lb1", label: "Load balancer", kind: "load-balancer",
+      instanceCount: { value, provenance: "inferred", rationale: "Set at the scale it had." },
+      hasHealthChecks: { value: false, provenance: "default", rationale: "Not part of the described system." },
+    });
+    const revise = (value: string) =>
+      ({ content: [{ type: "tool_use", id: "x", name: "emit_extended_components", input: { keep: [], remove: [], components: [lb(value)], edges: [{ from: "gw", to: "lb1" }, { from: "lb1", to: "svc" }] } }] }) as unknown as Anthropic.Message;
+    const withLb: SystemModel = lowest({
+      components: [...lowest().components, lb("multiple") as never],
+      edges: [...checkout.edges, { from: "gw", to: "lb1" }, { from: "lb1", to: "svc" }],
+    });
+    const client = fakeClient([toolUseResponse(svcWith("single", "inferred")), revise("multiple"), revise("single")]);
+    const result = await reworkModel(withLb, [], [], { client });
+    const found = result.model.components.find((c) => c.id === "lb1") as unknown as { instanceCount: { value: string } };
+    expect(found.instanceCount.value).toBe("single");
+  });
+});

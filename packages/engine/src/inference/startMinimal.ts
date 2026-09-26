@@ -44,3 +44,31 @@ export function startMinimal<C extends { id: string }>(components: C[], workload
     return changed ? (out as unknown as C) : component;
   });
 }
+
+const isTraitValue = (v: unknown): v is { value?: unknown; provenance?: unknown } => typeof v === "object" && v !== null && "value" in v;
+
+/**
+ * At the lowest tier nothing the AI sets on its own scales beyond the minimum:
+ * `instanceCount` is "single" and `consumerScaling` is "fixed" unless the description
+ * states otherwise. Found live: a system scaled to 100M users and back down to 100
+ * kept every service "multiple" and the database "has-replicas" (protections went
+ * back off, because code returns them; instance counts are the AI's call and it
+ * did not). This is a CHECK, not a rewrite: the problem is named and the AI repairs
+ * it, so the value stays its own decision. Not applied when a request is queued
+ * (it may ask for an instance) — the caller decides.
+ */
+export function checkLowestTierMinimal(components: object[], workload: SystemModel["workload"]): string | null {
+  if (!atLowestTier(workload)) return null;
+  const bad: string[] = [];
+  for (const c of components as Record<string, unknown>[]) {
+    const ic = c.instanceCount;
+    if (isTraitValue(ic) && ic.provenance !== "stated" && ic.value !== "single") bad.push(`${String(c.id)}.instanceCount is "${String(ic.value)}"`);
+    const cs = c.consumerScaling;
+    if (isTraitValue(cs) && cs.provenance !== "stated" && cs.value !== "fixed") bad.push(`${String(c.id)}.consumerScaling is "${String(cs.value)}"`);
+  }
+  if (bad.length === 0) return null;
+  return (
+    `The system is at its LOWEST tier, so nothing you set yourself scales beyond the minimum: ${bad.join("; ")}. ` +
+    `Set instanceCount to "single" and consumerScaling to "fixed" (a value the description states stays) - raising the scale is what raises them, and it has been lowered.`
+  );
+}

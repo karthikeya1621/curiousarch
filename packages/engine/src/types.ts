@@ -326,6 +326,9 @@ export interface AiFinding {
   bitesAt?: "now" | "larger-scale";
   /** The AI's own flag that the concern is only "run more instances / add replicas". Optional for the same reason. */
   aboutInstanceCount?: boolean;
+  /** Which review area the finding belongs to (see identifyFailures.ts) and how much it matters, both the AI's own call. Optional: absent on older findings. */
+  area?: string;
+  impact?: "high" | "medium" | "low";
 }
 
 export interface AiFix {

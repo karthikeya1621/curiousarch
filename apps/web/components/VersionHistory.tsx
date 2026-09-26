@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "../lib/store";
+import { diffModels, summarizeDiff } from "../lib/modelDiff";
 import { ClockIcon, ChevronDownIcon } from "./icons";
 
 /**
@@ -64,6 +65,12 @@ export function VersionHistory() {
                 <span className={previewVersionId === v.id ? "text-[11px] text-slate-300 dark:text-slate-600" : "text-[11px] text-slate-400"}>
                   {new Date(v.createdAt).toLocaleString()}
                 </span>
+                {i > 0 && (
+                  // What this Re-simulate did to the model, against the version before it.
+                  <span className={previewVersionId === v.id ? "text-[11px] text-slate-300 dark:text-slate-600" : "text-[11px] text-slate-500 dark:text-slate-400"}>
+                    {summarizeDiff(diffModels(versions[i - 1]!.model, v.model))}
+                  </span>
+                )}
               </button>
             ))}
           </div>

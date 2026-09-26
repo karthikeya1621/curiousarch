@@ -14,6 +14,7 @@ import { AutoSaveIndicator } from "./AutoSaveIndicator";
 import { ProjectsCard } from "./ProjectsCard";
 import { VersionHistory } from "./VersionHistory";
 import { PreviewBanner } from "./PreviewBanner";
+import { ReworkWarning } from "./ReworkWarning";
 import { ComponentDetailModal } from "./ComponentDetailModal";
 import { AccountMenu } from "./AccountMenu";
 import { AdminUsageLink } from "./AdminUsageLink";
@@ -159,6 +160,7 @@ export function Workspace() {
             </div>
 
             <div className="order-1 flex flex-col gap-5 lg:order-2">
+              <ReworkWarning />
               <SystemDashboard model={model} showResimulate />
               <FailureSidebar model={model} />
             </div>

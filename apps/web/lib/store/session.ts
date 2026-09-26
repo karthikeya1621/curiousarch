@@ -65,6 +65,7 @@ export function emptySession() {
     findingsStatus: "idle" as const,
     findingsError: null,
     findingsStale: false,
+    reworkWarning: null,
     openComponentId: null,
     selectedFindingId: null,
     selectedFixId: null,

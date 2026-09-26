@@ -191,3 +191,19 @@ describe("only a newly added balancer is routed through — an existing one is t
   });
 
 });
+
+describe("a pub/sub broker needs subscribers and a publisher", () => {
+  const comps = [c("game", "service"), c("bus", "message-broker"), c("anti", "service")];
+  const edges = (pairs: [string, string][]) => pairs.map(([from, to]) => ({ from, to }));
+
+  it("flags a broker nobody subscribes to (the live case: match events fanned out to nobody)", () => {
+    const found = lintOf(model(comps, [["game", "bus"]]));
+    expect(found.map((f) => `${f.code}:${f.componentId}`)).toEqual(["BROKER_NO_SUBSCRIBER:bus"]);
+    expect(found[0]!.fixes[0]!.label).toMatch(/subscribe to "bus"/);
+  });
+
+  it("flags a broker nothing publishes to, and is quiet once both ends are wired", () => {
+    expect(lintOf(model(comps, [["bus", "anti"]])).map((f) => f.code)).toEqual(["BROKER_NO_PUBLISHER"]);
+    expect(lintOf(model(comps, [["game", "bus"], ["bus", "anti"]]))).toEqual([]);
+  });
+});
