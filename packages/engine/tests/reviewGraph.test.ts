@@ -61,10 +61,13 @@ const edits = (list: unknown[]) =>
 describe("reviewGraph", () => {
   it("is skipped, with no call, when the graph has nothing to review — a CDN alone is not enough", async () => {
     const seen: { tool: string; content: string }[] = [];
-    const out = await reviewGraph([comps[0]!, comps[2]!], [e("gw", "svc")], { newComponentIds: [], request: "" }, { client: fakeClient([], seen) });
+    const out = await reviewGraph([comps[0]!, comps[2]!], [e("gw", "svc")], { newComponentIds: ["gw"], request: "" }, { client: fakeClient([], seen) });
     expect(out).toEqual({ edges: [e("gw", "svc")], reviewed: false, edits: [] });
-    const withCdn = await reviewGraph([comps[0]!, comps[2]!, comps[3]!], [e("gw", "svc"), e("cdn", "svc")], { newComponentIds: [], request: "" }, { client: fakeClient([], seen) });
+    const withCdn = await reviewGraph([comps[0]!, comps[2]!, comps[3]!], [e("gw", "svc"), e("cdn", "svc")], { newComponentIds: ["cdn"], request: "" }, { client: fakeClient([], seen) });
     expect(withCdn.reviewed).toBe(false);
+    // a load balancer that was already there (not in newComponentIds) is not reviewed again either
+    const oldLb = await reviewGraph(comps, edges, { newComponentIds: [], request: "" }, { client: fakeClient([], seen) });
+    expect(oldLb.reviewed).toBe(false);
     expect(seen).toHaveLength(0);
   });
 
@@ -80,12 +83,12 @@ describe("reviewGraph", () => {
   });
 
   it("an empty list of edits is a completed review that changed nothing", async () => {
-    const out = await reviewGraph(comps, edges, { newComponentIds: [], request: "" }, { client: fakeClient([edits([])]) });
+    const out = await reviewGraph(comps, edges, { newComponentIds: ["lb"], request: "" }, { client: fakeClient([edits([])]) });
     expect(out).toMatchObject({ edges, reviewed: true, edits: [] });
   });
 
   it("an invalid answer is repaired once with the reason, and the corrected one applied", async () => {
-    const out = await reviewGraph(comps, edges, { newComponentIds: [], request: "" }, {
+    const out = await reviewGraph(comps, edges, { newComponentIds: ["lb"], request: "" }, {
       client: fakeClient([edits([edit("remove", "svc", "cdn")]), edits([edit("remove", "gw", "svc")])]),
     });
     expect(out.reviewed).toBe(true);
@@ -93,9 +96,9 @@ describe("reviewGraph", () => {
   });
 
   it("never fails the caller: an API error or a persistently invalid answer comes back as not reviewed", async () => {
-    const failed = await reviewGraph(comps, edges, { newComponentIds: [], request: "" }, { client: fakeClient([new Error("boom")]) });
+    const failed = await reviewGraph(comps, edges, { newComponentIds: ["lb"], request: "" }, { client: fakeClient([new Error("boom")]) });
     expect(failed).toEqual({ edges, reviewed: false, edits: [] });
-    const invalid = await reviewGraph(comps, edges, { newComponentIds: [], request: "" }, {
+    const invalid = await reviewGraph(comps, edges, { newComponentIds: ["lb"], request: "" }, {
       client: fakeClient([edits([edit("remove", "svc", "cdn")]), edits([edit("remove", "svc", "cdn")])]),
     });
     expect(invalid.reviewed).toBe(false);
@@ -107,7 +110,7 @@ describe("reviewGraph", () => {
     const client = {
       messages: { create: async (p: { model: string }) => { model = p.model; return edits([]); } },
     } as unknown as Anthropic;
-    await reviewGraph(comps, edges, { newComponentIds: [], request: "" }, { client });
+    await reviewGraph(comps, edges, { newComponentIds: ["lb"], request: "" }, { client });
     expect(model).not.toMatch(/haiku/i);
   });
 
@@ -126,13 +129,13 @@ describe("reviewGraph", () => {
     const client = {
       messages: { create: async (p: { system: { text: string }[] }) => { system = p.system.map((b) => b.text).join(""); return edits([]); } },
     } as unknown as Anthropic;
-    await reviewGraph(comps, edges, { newComponentIds: [], request: "" }, { client });
+    await reviewGraph(comps, edges, { newComponentIds: ["lb"], request: "" }, { client });
     expect(system).toMatch(/an edge from a load balancer TO the component it balances is CORRECT/);
     expect(system).toMatch(/Leave every CDN edge exactly as it is/);
   });
 });
 
-describe("the review replaces the hard-coded rewrites when it works, and they remain the fallback", () => {
+describe("the review runs first and the deterministic rewrites always run after it", () => {
   const lb = {
     id: "lb1", label: "Load balancer", kind: "load-balancer",
     instanceCount: { value: "single", provenance: "default", rationale: "One balancer at launch scale." },
@@ -159,20 +162,21 @@ describe("the review replaces the hard-coded rewrites when it works, and they re
     expect(seen.find((s) => s.tool === "emit_graph_edits")!.content).toContain("Add a load balancer in front of svc.");
   });
 
-  it("Re-simulate: a review that decides to LEAVE the direct edge is respected — the deterministic rewrite does not override it", async () => {
+  it("Re-simulate: a review that returns NO edits still gets the newly added balancer routed (live: it missed exactly this case)", async () => {
     const client = fakeClient([tool("emit_system_model", validRework), revise, edits([])]);
     const result = await reworkModel(checkout, [], asked, { client });
-    expect(result.model.edges).toContainEqual(e("gw", "svc"));
+    expect(result.model.edges).not.toContainEqual(e("gw", "svc"));
+    expect(result.model.edges).toContainEqual(e("gw", "lb1"));
   });
 
-  it("Re-simulate: when the review fails, the deterministic rewrite still removes the direct edge for the new balancer", async () => {
+  it("Re-simulate: when the review fails the rewrite does the same", async () => {
     const client = fakeClient([tool("emit_system_model", validRework), revise, new Error("boom")]);
     const result = await reworkModel(checkout, [], asked, { client });
     expect(result.model.edges).not.toContainEqual(e("gw", "svc"));
     expect(result.model.edges).toContainEqual(e("gw", "lb1"));
   });
 
-  it("build: the same holds for fromProse (review decides; fallback rewrites otherwise)", async () => {
+  it("build: the same holds for fromProse (review first, rewrites after)", async () => {
     const workloadInput = { users: { included: true, tier: 100, target: 100 }, requests: { included: false, tier: 1000, target: 1000 } };
     const build = (review: Anthropic.Message | Error) => {
       const responses = new Map<string, Anthropic.Message | Error>([
@@ -186,7 +190,7 @@ describe("the review replaces the hard-coded rewrites when it works, and they re
     const reviewed = await fromProse("a toy system", { client: build(edits([edit("remove", "gw", "svc")])) });
     expect(reviewed.model.edges).not.toContainEqual(e("gw", "svc"));
     const untouched = await fromProse("a toy system", { client: build(edits([])) });
-    expect(untouched.model.edges).toContainEqual(e("gw", "svc"));
+    expect(untouched.model.edges).not.toContainEqual(e("gw", "svc")); // an empty review does not stop the rewrite
     const fallback = await fromProse("a toy system", { client: build(new Error("boom")) });
     expect(fallback.model.edges).not.toContainEqual(e("gw", "svc"));
   });

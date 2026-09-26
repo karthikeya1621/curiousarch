@@ -9,8 +9,8 @@
  * request (so "keep the admin calls direct" is respected), and returns edge
  * edits that code only VALIDATES: ids exist, no cycle, nothing orphaned.
  *
- * It is small (no components in or out) and skipped when the graph has nothing
- * to review. It is never allowed to fail a build or a
+ * It is small (no components in or out) and runs only when a new queue, broker or
+ * load balancer was added. It is never allowed to fail a build or a
  * Re-simulate: on any error the caller falls back to the deterministic rewrites.
  */
 
@@ -160,7 +160,12 @@ export async function reviewGraph(
   context: { newComponentIds: string[]; request: string },
   options: StructuredCallOptions = {},
 ): Promise<ReviewGraphResult> {
-  if (!components.some((c) => REVIEWABLE_KINDS.has(c.kind))) return { edges, reviewed: false, edits: [] };
+  // Only when something NEW that traffic passes through was added: a queue, broker
+  // or load balancer that was already there was wired by an earlier pass (and by the
+  // user's own edits), and in live runs a review with nothing new either changed
+  // nothing or proposed invalid edits, at a cost per Re-simulate.
+  const fresh = new Set(context.newComponentIds);
+  if (!components.some((c) => REVIEWABLE_KINDS.has(c.kind) && fresh.has(c.id))) return { edges, reviewed: false, edits: [] };
   try {
     const result = await runStructuredCall(
       REVIEW_PROMPT,

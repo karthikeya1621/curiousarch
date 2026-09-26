@@ -822,7 +822,13 @@ describe("instance counts come from the tier groups, judged by the AI — not fr
   });
 
   it("does not change instance counts in code: a service the AI leaves single at 10K users stays single", async () => {
-    const tenK: SystemModel = { ...checkout, workload: { users: { included: true, tier: 10_000, target: 1_000_000 } } };
+    const tenK: SystemModel = {
+      ...checkout,
+      workload: { users: { included: true, tier: 10_000, target: 1_000_000 } },
+      components: checkout.components.map((c) =>
+        c.id === "svc" ? ({ ...c, instanceCount: { value: "single", provenance: "default", rationale: "One instance at launch." } } as never) : c,
+      ),
+    };
     const singleSvc = {
       ...validReworkInput,
       components: validReworkInput.components.map((c) =>
@@ -978,5 +984,56 @@ describe("no component is silently dropped, and none is invented", () => {
     await reworkModel(checkout, [], [], { client });
     expect(base).toMatch(/Add a NEW component only when a listed fix or requested change asks for it/);
     expect(REVISE_PROMPT).toMatch(/Add a NEW extended component only when the description, a listed fix or a requested change calls for it/);
+  });
+});
+
+describe("a stated value is a fact: nothing changes it unless a request asks", () => {
+  const stated = { components: [{ id: "gw", kind: "gateway", label: "G", hasRateLimiting: { value: true, provenance: "stated", rationale: "The description says per-user limits." } }], edges: [] } as unknown as SystemModel;
+  const off = (opts: { anythingAsked: boolean; lowestTier: boolean }) =>
+    reconcileWithPrevious({ components: [{ id: "gw", hasRateLimiting: { value: false, provenance: "inferred", rationale: "Second tier has no protections." } }] }, stated, opts) as { components: Record<string, any>[] };
+
+  it("an AI that switches a stated protection off at any tier is put back (live: a stated rate limit went off at 10K users)", () => {
+    for (const lowestTier of [true, false]) {
+      expect(off({ anythingAsked: false, lowestTier }).components[0]!.hasRateLimiting).toEqual({ value: true, provenance: "stated", rationale: "The description says per-user limits." });
+    }
+  });
+
+  it("…but with a request queued the change stands (the request may be to remove it)", () => {
+    expect(off({ anythingAsked: true, lowestTier: false }).components[0]!.hasRateLimiting.value).toBe(false);
+  });
+});
+
+describe("a change that is only about extended kinds is not shown to the base call", () => {
+  const seen = (input: { changes?: { request: string; instruction: string; kinds?: string[] }[]; fixes?: never[] }) => {
+    const content: Record<string, string> = {};
+    const client = fakeClient([toolUseResponse(validReworkInput), emptyExtendedResponse()], (params) => {
+      const tool = (params.tools?.[0] as { name?: string } | undefined)?.name ?? "";
+      content[tool] = JSON.stringify((params.messages[0] as { content: unknown }).content);
+    });
+    return { content, run: () => reworkModel(checkout, input.fixes ?? [], input.changes ?? [], { client }) };
+  };
+  const lbChange = { request: "add a second load balancer", instruction: "Add a load-balancer in front of svc.", kinds: ["load-balancer"] };
+
+  it("an extended-only change reaches the revise step and NOT the base call (which once improvised a base-kind stand-in)", async () => {
+    const { content, run } = seen({ changes: [lbChange] });
+    await run();
+    expect(content["emit_system_model"]).not.toContain("Add a load-balancer in front of svc.");
+    expect(content["emit_extended_components"]).toContain("Add a load-balancer in front of svc.");
+  });
+
+  it("a change that touches a base kind too goes to both, and one with no classification (queued earlier) goes to both", async () => {
+    for (const change of [{ ...lbChange, kinds: ["load-balancer", "service"] }, { request: lbChange.request, instruction: lbChange.instruction }]) {
+      const { content, run } = seen({ changes: [change] });
+      await run();
+      expect(content["emit_system_model"]).toContain("Add a load-balancer in front of svc.");
+      expect(content["emit_extended_components"]).toContain("Add a load-balancer in front of svc.");
+    }
+  });
+
+  it("a queued change still counts as 'something was asked' when it is extended-only (the checks that depend on it stand down)", async () => {
+    const dropsGwSvc = { ...validReworkInput, edges: [{ from: "svc", to: "db" }] };
+    const client = fakeClient([toolUseResponse(dropsGwSvc), emptyExtendedResponse()]);
+    const result = await reworkModel(checkout, [], [lbChange], { client });
+    expect(result.repaired).toBe(false); // no retry for the dropped edge: the request may reroute it
   });
 });

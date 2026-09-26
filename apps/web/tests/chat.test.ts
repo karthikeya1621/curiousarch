@@ -129,6 +129,18 @@ describe("POST /api/chat", () => {
     expect(body.model).toBeUndefined();
   });
 
+  it("returns the kinds the change touches, so Re-simulate can route an extended-only change to the step that owns it", async () => {
+    chatWithProjectMock.mockResolvedValueOnce({
+      isQuestion: false,
+      reply: "Adding a second load balancer.",
+      instruction: "Add a load-balancer in front of svc.",
+      kinds: ["load-balancer"],
+      repaired: false,
+    });
+    const res = await POST(jsonRequest({ model: checkout, message: "add a second load balancer" }));
+    expect((await res.json()).kinds).toEqual(["load-balancer"]);
+  });
+
   it("forwards the queued chat changes so a follow-up can build on them", async () => {
     chatWithProjectMock.mockResolvedValueOnce({ isQuestion: true, reply: "ok", repaired: false });
     const pendingChanges = [{ request: "add a CDN", instruction: 'Add a CDN before "gw".' }];

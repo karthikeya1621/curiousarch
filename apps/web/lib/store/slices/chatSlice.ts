@@ -98,7 +98,13 @@ export function createChatActions(set: StoreSet, get: StoreGet): ChatActions {
         const queueFull = wantsQueue && get().pendingChanges.length >= MAX_PENDING_CHANGES;
         const change: PendingChatChange | null =
           wantsQueue && !queueFull
-            ? { id: crypto.randomUUID(), request: message, instruction, queuedAt: Date.now() }
+            ? {
+                id: crypto.randomUUID(),
+                request: message,
+                instruction,
+                ...(Array.isArray(body.kinds) ? { kinds: (body.kinds as unknown[]).filter((k): k is string => typeof k === "string") } : {}),
+                queuedAt: Date.now(),
+              }
             : null;
         set((state) => ({
           chatMessages: [

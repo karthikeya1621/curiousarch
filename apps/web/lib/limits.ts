@@ -88,21 +88,27 @@ export function isRequestTooLarge(request: Request): boolean {
 
 /**
  * Shape check for a client-submitted queue of chat changes (`/api/chat`,
- * `/api/rework`): a bounded array of `{ request, instruction }` strings, each
+ * `/api/rework`): a bounded array of `{ request, instruction, kinds? }`, each
  * within the chat-message length cap — these go straight into a prompt, so
  * they get the same treatment `message` does. `instruction` is AI-written but
  * round-trips through the client, so it's untrusted here too.
  */
-export function parsePendingChanges(value: unknown): { request: string; instruction: string }[] | null {
+export function parsePendingChanges(value: unknown): { request: string; instruction: string; kinds?: string[] }[] | null {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > MAX_PENDING_CHANGES) return null;
-  const out: { request: string; instruction: string }[] = [];
+  const out: { request: string; instruction: string; kinds?: string[] }[] = [];
   for (const item of value) {
     if (typeof item !== "object" || item === null) return null;
-    const { request, instruction } = item as Record<string, unknown>;
+    const { request, instruction, kinds } = item as Record<string, unknown>;
     if (typeof request !== "string" || typeof instruction !== "string") return null;
     if (request.length > MAX_CHAT_MESSAGE_LENGTH || instruction.length > MAX_CHAT_MESSAGE_LENGTH) return null;
-    out.push({ request, instruction });
+    // `kinds` is optional (older queued changes lack it) and, like the rest, untrusted:
+    // a short list of short strings or it is dropped, never an error.
+    const okKinds =
+      Array.isArray(kinds) && kinds.length <= 12 && kinds.every((k) => typeof k === "string" && k.length <= 40)
+        ? (kinds as string[])
+        : undefined;
+    out.push(okKinds ? { request, instruction, kinds: okKinds } : { request, instruction });
   }
   return out;
 }

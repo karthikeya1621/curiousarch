@@ -54,6 +54,8 @@ export interface PendingChatChange {
   id: string;
   request: string;
   instruction: string;
+  /** The component kinds the chat AI classified the change as touching — routes an extended-only change to the step that owns it. Absent on a change queued before it existed. */
+  kinds?: string[];
   queuedAt: number;
 }
 

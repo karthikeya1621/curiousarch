@@ -871,6 +871,17 @@ describe("sendChatMessage", () => {
     expect(state.canResimulate).toBe(false);
   });
 
+  it("keeps the kinds the AI classified a queued change as touching (and ignores a malformed list)", async () => {
+    useAppStore.setState({ model: degradedModel(), chatMessages: [], pendingChanges: [] });
+    const reply = (kinds: unknown) => jsonResponse({ isQuestion: false, reply: "Adding.", instruction: "Add a load-balancer.", kinds });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(reply(["load-balancer"])).mockResolvedValueOnce(reply("nope")));
+    await useAppStore.getState().sendChatMessage("add a load balancer");
+    await useAppStore.getState().sendChatMessage("and another");
+    const [first, second] = useAppStore.getState().pendingChanges;
+    expect(first!.kinds).toEqual(["load-balancer"]);
+    expect(second).not.toHaveProperty("kinds");
+  });
+
   it("QUEUES a change request instead of applying it: the model stays as it is, Re-simulate turns on, no other call", async () => {
     const model = degradedModel();
     useAppStore.setState({ model, chatMessages: [] });

@@ -86,6 +86,7 @@ export async function POST(request: Request) {
       isQuestion: result.isQuestion,
       reply: result.reply,
       instruction: result.instruction,
+      kinds: result.kinds,
     });
   } catch (err) {
     return upstreamError(err, "Chat failed.");

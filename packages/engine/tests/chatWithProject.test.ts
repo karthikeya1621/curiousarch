@@ -37,13 +37,13 @@ function fakeClient(
 }
 
 const questionRoute = {
-  intent: "question",
+  intent: "question", affectsKinds: [],
   reply: "The cache has a short TTL because showtime availability changes frequently.",
   instruction: "",
 };
 
 const changeRoute = {
-  intent: "change",
+  intent: "change", affectsKinds: [],
   reply: "Adding a CDN in front of the API Gateway.",
   instruction: 'Add a CDN component between the client and the API Gateway "gw" to serve static assets.',
 };
@@ -220,7 +220,7 @@ describe("route prompt", () => {
       messages: {
         create: async (params: { system: unknown }) => {
           system = JSON.stringify(params.system).replace(/\\"/g, '"');
-          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", reply: "r", instruction: "" } }] };
+          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", affectsKinds: [], reply: "r", instruction: "" } }] };
         },
       },
     } as unknown as import("@anthropic-ai/sdk").default;
@@ -234,7 +234,7 @@ describe("only an intent of 'change' is ever queued", () => {
     ({
       messages: {
         create: async () => ({
-          content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent, reply, instruction: "Add a queue." } }],
+          content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent, affectsKinds: [], reply, instruction: "Add a queue." } }],
         }),
       },
     }) as unknown as Anthropic;
@@ -270,7 +270,7 @@ describe("only an intent of 'change' is ever queued", () => {
       messages: {
         create: async (params: { system: unknown }) => {
           system = JSON.stringify(params.system).replace(/\\"/g, '"');
-          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", reply: "r", instruction: "" } }] };
+          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", affectsKinds: [], reply: "r", instruction: "" } }] };
         },
       },
     } as unknown as Anthropic;
@@ -286,7 +286,7 @@ describe("route prompt kinds", () => {
       messages: {
         create: async (params: { system: unknown }) => {
           system = JSON.stringify(params.system).replace(/\\"/g, '"');
-          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", reply: "r", instruction: "" } }] };
+          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", affectsKinds: [], reply: "r", instruction: "" } }] };
         },
       },
     } as unknown as Anthropic;
@@ -295,5 +295,57 @@ describe("route prompt kinds", () => {
       expect(system).toContain(kind);
     }
     expect(system).toMatch(/never a made-up one/);
+  });
+});
+
+describe("the route prompt states the component limits and what the system holds", () => {
+  it("says how many base and extended components the system has against the limits, and that adding past a limit is no-change", async () => {
+    let system = "";
+    const c = {
+      messages: {
+        create: async (params: { system: unknown }) => {
+          system = JSON.stringify(params.system).replace(/\\"/g, '"');
+          return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", affectsKinds: [], reply: "r", instruction: "" } }] };
+        },
+      },
+    } as unknown as Anthropic;
+    const withCdn = { ...checkout, components: [...checkout.components, { id: "cdn1", kind: "cdn", label: "CDN" } as never] };
+    await chatWithProject(withCdn, "Add a second CDN.", [], [], [], [], { client: c });
+    expect(system).toMatch(/at most 15 base components and 6 extended ones/);
+    expect(system).toMatch(/3 base \(room for 12 more\) and 1 extended \(room for 5 more\)/);
+    expect(system).toMatch(/there is no limit per kind/);
+    expect(system).toMatch(/NO room left cannot be applied - that one is "no-change"/);
+    expect(system).toMatch(/Never cite any other limit/);
+  });
+});
+
+describe("the route reports which component kinds a change touches", () => {
+  const respond = (input: Record<string, unknown>) =>
+    ({ messages: { create: async () => ({ content: [{ type: "tool_use", id: "c", name: "route_chat_message", input }] }) } }) as unknown as Anthropic;
+
+  it("returns the AI's affectsKinds with a queued change, and no instruction or kinds for a no-change", async () => {
+    const change = await chatWithProject(checkout, "Add a second load balancer.", [], [], [], [], {
+      client: respond({ intent: "change", affectsKinds: ["load-balancer"], reply: "Adding a load balancer.", instruction: "Add a load-balancer in front of svc." }),
+    });
+    expect(change.kinds).toEqual(["load-balancer"]);
+    const none = await chatWithProject(checkout, "No.", [], [], [], [], { client: respond({ intent: "no-change", affectsKinds: [], reply: "Got it.", instruction: "" }) });
+    expect(none.kinds).toBeUndefined();
+    expect(none.instruction).toBeUndefined();
+  });
+
+  it("rejects a kind the tool doesn't know, so the AI must use the exact values", async () => {
+    await expect(
+      chatWithProject(checkout, "x", [], [], [], [], {
+        client: respond({ intent: "change", affectsKinds: ["storage"], reply: "r", instruction: "i" }),
+        maxRetries: 0,
+      }),
+    ).rejects.toThrow(/affectsKinds/);
+  });
+
+  it("the prompt defines the field with the exact kind values", async () => {
+    let system = "";
+    const c = { messages: { create: async (p: { system: unknown }) => { system = JSON.stringify(p.system); return { content: [{ type: "tool_use", id: "c", name: "route_chat_message", input: { intent: "question", affectsKinds: [], reply: "r", instruction: "" } }] }; } } } as unknown as Anthropic;
+    await chatWithProject(checkout, "hi", [], [], [], [], { client: c });
+    expect(system).toContain("affectsKinds");
   });
 });

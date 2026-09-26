@@ -171,10 +171,11 @@ export async function fromProse(
   const mergedEdges = dedupeEdges([...topology.data.edges, ...extended.edges]);
   // The two calls above could not see each other's edges, so the merged wiring
   // can contradict itself. The AI reviews it (seeing the whole graph and the
-  // description); the deterministic rewrites are only the fallback when that
-  // review was skipped or failed.
+  // description).
   const review = await reviewGraph(components, mergedEdges, { newComponentIds: components.map((c) => c.id), request: description }, options);
-  const edges = review.reviewed ? dedupeEdges(review.edges) : collapseParallelAsyncPaths(components, mergedEdges);
+  // The deterministic rewrites run after the review as the backstop (live: the review
+  // missed a caller still bypassing a newly added balancer; the rewrite did not).
+  const edges = collapseParallelAsyncPaths(components, review.reviewed ? dedupeEdges(review.edges) : mergedEdges);
 
   return {
     model: {

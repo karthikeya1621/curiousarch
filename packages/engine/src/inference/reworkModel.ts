@@ -129,6 +129,8 @@ export interface PendingFixInput {
 export interface PendingChangeInput {
   request: string;
   instruction: string;
+  /** The component kinds the chat AI classified the change as touching (see chatWithProject's `affectsKinds`). Absent on a change queued before it existed. */
+  kinds?: string[];
 }
 
 export function formatPendingChanges(pendingChanges: PendingChangeInput[]): string {
@@ -286,6 +288,11 @@ export function reconcileWithPrevious(
         // (seen in the app). Falls back to the old text only if the new one is empty.
         const fresh = typeof trait.rationale === "string" && trait.rationale.trim() !== "";
         out[key] = { ...trait, provenance: prev.provenance, rationale: fresh ? trait.rationale : prev.rationale };
+      } else if (isTrait(prev) && prev.provenance === "stated" && !opts.anythingAsked) {
+        // A stated value is a fact from the description: nothing changes it unless
+        // a request asks. Found live: a stated per-user rate limit was switched OFF
+        // at 10,000 users (the AI read "second tier: no protections" as covering it).
+        out[key] = prev;
       } else if (
         isTrait(prev) &&
         opts.lowestTier &&
@@ -459,10 +466,20 @@ export async function reworkModel(
   // the input, cleaned, and are put back over whatever the AI returned.
   const model = cleanModelIdentity(input);
   const pendingContext = `${formatPendingFixes(pendingFixes)}${formatPendingChanges(pendingChanges)}`;
+  // A change or fix that is ONLY about extended components belongs to the step that
+  // owns them. Shown to the base call anyway, it improvised a stand-in (a base-kind
+  // "lb-meeting" service when asked for a load balancer, seen live). Decided from
+  // the chat AI's own classification of the change (`kinds`) and from the kind of
+  // the component a fix is on — not from reading the request's words.
+  const extendedKindSet = new Set<string>(EXTENDED_KINDS);
+  const extendedComponentIds = new Set(model.components.filter(isExtendedComponent).map((c) => c.id));
+  const baseChanges = pendingChanges.filter((c) => !(c.kinds && c.kinds.length > 0 && c.kinds.every((k) => extendedKindSet.has(k))));
+  const baseFixes = pendingFixes.filter((f) => !extendedComponentIds.has(f.componentId));
+  const basePendingContext = `${formatPendingFixes(baseFixes)}${formatPendingChanges(baseChanges)}`;
   const extendedIds = new Set(model.components.filter(isExtendedComponent).map((c) => c.id));
   const result = await runStructuredCall(
     REWORK_PROMPT,
-    `Here is the current model:\n\n${JSON.stringify(baseView(model))}${extendedNote(model)}${pendingContext}`,
+    `Here is the current model:\n\n${JSON.stringify(baseView(model))}${extendedNote(model)}${basePendingContext}`,
     SystemModelSchema,
     buildTool(),
     {
@@ -535,8 +552,7 @@ export async function reworkModel(
   const mergedEdges = dedupeEdges(restoreDroppedConnections(model.edges, allComponents, [...result.data.edges, ...extended.edges]));
   // The base and extended calls could not see each other's edges, so the merged
   // wiring can contradict itself. The AI reviews it — the whole graph plus the
-  // queued request, so a deliberate direct call is respected; the deterministic
-  // rewrites are only the fallback when that review was skipped or failed.
+  // queued request — and the deterministic rewrites then run as the backstop.
   const inputIds = new Set(model.components.map((c) => c.id));
   const review = await reviewGraph(
     allComponents,
@@ -544,9 +560,15 @@ export async function reworkModel(
     { newComponentIds: allComponents.filter((c) => !inputIds.has(c.id)).map((c) => c.id), request: pendingContext },
     options,
   );
-  const edges = review.reviewed
-    ? dedupeEdges(review.edges)
-    : collapseParallelAsyncPaths(allComponents, mergedEdges, routableLoadBalancers(model, { components: allComponents }));
+  // The deterministic rewrites run AFTER the review, on whatever it returned: live
+  // runs showed the review missing the very case it exists for (a newly added
+  // balancer whose callers still reached the service directly — its answer was an
+  // empty edit list) while the rewrite got it right every time.
+  const edges = collapseParallelAsyncPaths(
+    allComponents,
+    review.reviewed ? dedupeEdges(review.edges) : mergedEdges,
+    routableLoadBalancers(model, { components: allComponents }),
+  );
 
   return {
     model: {

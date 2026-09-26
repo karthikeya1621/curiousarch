@@ -53,19 +53,27 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { EXTENDED_KINDS } from "./extendedComponents.ts";
+import { EXTENDED_KINDS, isExtendedComponent } from "./extendedComponents.ts";
 import { formatPendingChanges, formatPendingFixes, type PendingChangeInput, type PendingFixInput } from "./reworkModel.ts";
 import { runStructuredCall, UTILITY_MODEL, type StructuredCallOptions } from "./structuredCall.ts";
-import type { AiFinding, SystemModel } from "../types.ts";
+import { MAX_BASE_COMPONENTS, MAX_EXTENDED_COMPONENTS, type AiFinding, type SystemModel } from "../types.ts";
 
 // A fresh z.object() rather than a shared singleton — no reused object
 // identity in this schema, so no $ref-hoisting gotcha (see fromProse.ts's
 // own comment on that class of bug) applies here.
+/** Every component kind the tool knows: the five base ones and the extended set. */
+const ALL_COMPONENT_KINDS = ["gateway", "service", "cache", "database", "queue", ...EXTENDED_KINDS] as const;
+
 const RouteSchema = z.object({
   intent: z
     .enum(["change", "question", "no-change"])
     .describe(
       '"change": the message asks for the architecture to be changed and the change would actually alter the model. "question": it asks about the architecture (why, what would happen if, how does X work). "no-change": nothing should be queued - an answer to a question you asked ("No", "not required", "never mind", "ignore it"), thanks or an acknowledgement, a request that is already true of the model, one that asks for something that is not there, or one that needs clarifying first.',
+    ),
+  affectsKinds: z
+    .array(z.enum(ALL_COMPONENT_KINDS))
+    .describe(
+      'For a "change": the component kinds this change adds, modifies or removes, using the exact kind values (a request for a second load balancer affects ["load-balancer"]; one that rewires a service to a queue affects ["service", "queue"]). Empty for a question or a no-change.',
     ),
   reply: z
     .string()
@@ -125,12 +133,15 @@ A request to look at, review, analyze, or find gaps/risks/improvements in the CU
 
 "reply" is read aloud in a chat bubble, not rendered as a document - it has no markdown support at all, so any "**bold**", heading, or "1. / 2. / 3." list shows up as literal asterisks and numbers, not formatting. Write it the way you'd actually say it out loud to someone sitting next to you: plain sentences, no markdown, no headings, no numbered or bulleted lists - if you have several points, fold them into one or two short paragraphs instead of itemizing them. Keep it tight, usually 2-4 sentences; go longer only when the question genuinely can't be answered honestly in less. If you're tempted to write more than a short paragraph, that's a sign to pick the single most useful thing to say and say only that, not to organize everything you could say into a structured list.
 
+Size limits: this tool holds at most ${MAX_BASE_COMPONENTS} base components and ${MAX_EXTENDED_COMPONENTS} extended ones (${EXTENDED_KINDS.join(", ")}) - two totals, and NOTHING else: there is no limit per kind, so a second load balancer, CDN or queue is fine while the total has room. The system below has ${model.components.filter((c) => !isExtendedComponent(c)).length} base (room for ${MAX_BASE_COMPONENTS - model.components.filter((c) => !isExtendedComponent(c)).length} more) and ${model.components.filter(isExtendedComponent).length} extended (room for ${Math.max(0, MAX_EXTENDED_COMPONENTS - model.components.filter(isExtendedComponent).length)} more). Only a request to ADD a component to a group with NO room left cannot be applied - that one is "no-change": say plainly that the limit is reached and what could be removed or merged to make room. Never cite any other limit. (Found live: a second load balancer was queued on a system already holding all ${MAX_EXTENDED_COMPONENTS} extended components and silently did nothing; and once the limit was stated, the model invented a per-kind limit of two.)
+
 Decide, for the latest message, which ONE intent it has:
 - "no-change": FIRST check the message against the current model, any queued change and the conversation so far. It is "no-change" when it is an answer to something you just asked ("No", "not required", "never mind", "ignore it", "yes that's fine"), thanks or an acknowledgement, a request for something ALREADY TRUE (add a CDN when a CDN already sits there; add a queue between two components that already have one), a request about something that is not there (remove or change a component that doesn't exist), or a request that needs clarifying before anything can change. Put a short, plain "reply" - acknowledge an answer in a few words, or say plainly what is already in place or missing, naming the close match if there is one (a CDN when they said cache) and asking whether they meant that - and set "instruction" to an empty string. Nothing is queued: queuing one spends a Re-simulate for no result.
 - "question": a QUESTION about the architecture (asking "why", "what would happen if", "how does X work", or similar, without asking for an actual change). Put a clear, plain-spoken ANSWER in "reply" per the style rule above, grounded in specifics from the actual model (real component names, real traits) rather than generic textbook language, and set "instruction" to an empty string.
 - "change": a REQUEST TO CHANGE the architecture (add, remove, replace or reconfigure something) that would actually alter the model. Then:
   - put a short, one-sentence restatement of the change in "reply", in the future tense since it is applied on Re-simulate (e.g. "Adding a CDN in front of the API Gateway to absorb static asset traffic.");
   - when the instruction names a component's kind, use only these exact values: gateway, service, cache, database, queue, ${EXTENDED_KINDS.join(", ")} - never a made-up one such as "storage" or "message-queue" (use object-storage, queue or message-broker);
+  - set "affectsKinds" to the component kinds the change adds, modifies or removes (exact kind values);
   - put ONE complete, self-contained instruction in "instruction": what to change, on which components (use their real ids from the model, or from a queued change if the request builds on one), and any detail the user gave. It must make sense to someone who never saw this conversation - replace "it", "that", "the new one" and similar with what they refer to. If the request cancels or reverses a queued change, say so explicitly.
 
 If the message is ambiguous, prefer "no-change" or "question" and explain what you'd need to know to make a specific change.
@@ -151,6 +162,12 @@ export interface ChatWithProjectResult {
    * it blank). The model itself is NOT changed here.
    */
   instruction?: string;
+  /**
+   * Present with `instruction`: the component kinds the change touches, as the
+   * AI classified it. Lets Re-simulate hand a change that is only about extended
+   * kinds to the step that owns them, instead of the base call improvising.
+   */
+  kinds?: string[];
   repaired: boolean;
 }
 
@@ -192,6 +209,7 @@ export async function chatWithProject(
     // Never queue an empty instruction (strict mode can't require non-empty
     // for a change but "" for a question without a conditional).
     instruction: route.data.instruction.trim() || message,
+    kinds: route.data.affectsKinds,
     repaired: route.repaired,
   };
 }
