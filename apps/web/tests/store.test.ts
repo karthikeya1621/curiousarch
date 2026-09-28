@@ -23,7 +23,7 @@ import { useAppStore } from "../lib/store";
  * still be in the temporal dead zone the first time the mocked module is
  * actually resolved. `authState.userId: null` simulates the "not logged
  * in" path that `sessionStorage.ts` degrades on (unreachable in the real
- * app once middleware.ts gates every page, but still real defensive code —
+ * app once proxy.ts gates every page, but still real defensive code —
  * e.g. a session expiring mid-session).
  *
  * `fakeProjects` is a minimal in-memory stand-in for the `projects` table

@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { SystemModel } from "@archsim/engine";
 import { useAppStore, usageProjectId } from "../lib/store";
 import { newActionId, reportOutcome } from "../lib/usageClient";
+import { isTrialLimit, notifyTrialLimit } from "../lib/trialClient";
 import { MAX_DESCRIPTION_LENGTH } from "../lib/limits";
 import { Card } from "./Card";
 import { SparklesIcon } from "./icons";
@@ -30,6 +31,8 @@ export function ProseInput() {
       });
       const body = await res.json();
       if (!res.ok) {
+        // The banner at the top already says the trial is used up - no second message here.
+        if (isTrialLimit(body)) return notifyTrialLimit(body);
         if (body.code === "unsafe-result") reportOutcome(actionId, "withheld"); // paid for, but the engine refused to return it
         throw new Error(body.error ?? "Inference failed.");
       }

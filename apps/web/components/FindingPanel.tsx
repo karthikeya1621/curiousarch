@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { AiFinding, AiFix, SystemModel } from "@archsim/engine";
 import { useAppStore, usageProjectId } from "../lib/store";
 import { newActionId } from "../lib/usageClient";
+import { notifyTrialLimit } from "../lib/trialClient";
 import { getFixStatus } from "../lib/getFixStatus";
 import { Badge } from "./Badge";
 import { SparklesIcon, XIcon, WrenchIcon } from "./icons";
@@ -55,7 +56,10 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
         }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Failed to explain fix.");
+      if (!res.ok) {
+        notifyTrialLimit(body);
+        throw new Error(body.error ?? "Failed to explain fix.");
+      }
       setRationale(body.rationale as string);
     } catch (err) {
       setAskError(err instanceof Error ? err.message : "Failed to explain fix.");

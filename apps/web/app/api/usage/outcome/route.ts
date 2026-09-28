@@ -4,6 +4,7 @@ import { getAdminClient } from "../../../../lib/supabase/admin";
 import { isUuid } from "../../../../lib/usage/ids";
 import { readJsonBody } from "../../../../lib/apiRoute";
 import { USAGE_OUTCOME_REASONS } from "../../../../lib/usage/outcomes";
+import { releaseTrialAction } from "../../../../lib/trial/server";
 
 /**
  * Records that an AI response the user paid for never reached them — the
@@ -30,7 +31,11 @@ export async function POST(request: Request) {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (user) await admin.from("ai_action_outcomes").insert({ user_id: user.id, action_id: actionId, reason });
+      if (user) {
+        await admin.from("ai_action_outcomes").insert({ user_id: user.id, action_id: actionId, reason });
+        // A guest's result that never reached them was not a use of their trial.
+        if (user.is_anonymous && reason === "withheld") await releaseTrialAction(user.id, actionId);
+      }
     }
   } catch (err) {
     console.error("[usage] failed to record an outcome:", err);

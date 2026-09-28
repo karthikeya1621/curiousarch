@@ -32,6 +32,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
+  --font-brand: var(--font-space-grotesk);
   --font-mono: var(--font-geist-mono);
 }
 
@@ -78,4 +79,17 @@ body {
 }
 .react-flow__attribution {
   display: none;
+}
+
+/* A brief ring pulse on the trial banner each time an action is refused (GuestBanner.tsx). */
+@keyframes trial-flash {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(245 158 11 / 0); }
+  25%, 75% { box-shadow: 0 0 0 4px rgb(245 158 11 / 0.55); }
+  50% { box-shadow: 0 0 0 2px rgb(245 158 11 / 0.25); }
+}
+.trial-flash {
+  animation: trial-flash 1.1s ease-in-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .trial-flash { animation: none; }
 }

@@ -1,6 +1,7 @@
 import type { ChatMessage, PendingChatChange } from "../../sessionStorage";
 import { MAX_PENDING_CHANGES } from "../../limits";
 import { newActionId, reportOutcome } from "../../usageClient";
+import { notifyTrialLimit } from "../../trialClient";
 import { sequence } from "../sequencing";
 import { usageProjectIdOf } from "../session";
 import type { StoreGet, StoreSet } from "../types";
@@ -77,7 +78,10 @@ export function createChatActions(set: StoreSet, get: StoreGet): ChatActions {
           }),
         });
         const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? "Chat failed.");
+        if (!res.ok) {
+          notifyTrialLimit(body);
+          throw new Error(body.error ?? "Chat failed.");
+        }
         // The project was switched or reset while this was in flight — the
         // reply belongs to a session that's no longer open. (The switch
         // itself already reset chat status.) It was still billed.

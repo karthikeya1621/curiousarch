@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
  * For use in Server Components, Route Handlers, and Server Actions — reads
  * and writes the auth cookie via `next/headers`. `setAll` is wrapped in a
  * try/catch because a Server Component can call this too (needed to read
- * the session) but can't write cookies; middleware.ts is what actually
+ * the session) but can't write cookies; proxy.ts is what actually
  * refreshes the cookie on every request, so a no-op here in that context
  * is safe, not a bug.
  */

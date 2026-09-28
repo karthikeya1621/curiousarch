@@ -4,6 +4,7 @@ import type { SystemModel } from "@archsim/engine";
 import { isValidModelShape } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 import { startUsage } from "../../../lib/usage/server";
+import { reserveTrial } from "../../../lib/trial/server";
 import { describeModel } from "../../../lib/usage/context";
 
 /**
@@ -35,6 +36,9 @@ export async function POST(request: Request) {
     );
   }
 
+  // A guest's quota is counted here, before the engine runs (no-op for signed-in users).
+  const gate = await reserveTrial(request, body, "explain-fix");
+  if (gate.denied) return gate.denied;
   try {
     const usage = await startUsage(body, {
       action: "explain-fix",
@@ -43,6 +47,7 @@ export async function POST(request: Request) {
     const { rationale } = await explainFix(model as SystemModel, componentId, fixLabel, findingCode, usage);
     return NextResponse.json({ rationale });
   } catch (err) {
+    await gate.release(); // a failed or refused attempt is not counted
     return upstreamError(err, "Failed to explain fix.");
   }
 }

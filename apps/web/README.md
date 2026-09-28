@@ -17,7 +17,7 @@ from root:
 npm install
 ```
 
-Create `apps/web/.env.local` (gitignored, no example file checked in) with:
+Create `apps/web/.env.local` (gitignored; copy [`.env.example`](.env.example), which lists every variable including the production and guest-trial ones, and see [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md) for going live) with:
 
 - `ANTHROPIC_API_KEY` — required for every inference call (`fromProse`,
   `identifyFailures`, `reworkModel`, chat). Optional `AI_REASONING_MODEL`/
@@ -29,7 +29,7 @@ Create `apps/web/.env.local` (gitignored, no example file checked in) with:
 - `NEXT_PUBLIC_GOOGLE_CLIENT_ID` — for the client-side Google Identity
   Services login (`apps/web/app/login/page.tsx`).
 
-The app is gated by `middleware.ts`; without these, login won't work.
+The app is gated by `proxy.ts`; without these, login won't work.
 
 ### AI usage tracking (optional)
 
@@ -102,7 +102,7 @@ manually against a real login.
 app/                    App Router pages and API routes (one route per engine inference call)
 app/login/              Magic-link + Google Identity Services login
 app/auth/callback/      Supabase auth callback handler
-middleware.ts           Gates every page behind a logged-in session
+proxy.ts           Gates every page behind a logged-in session
 components/             UI — see FlowDiagram.tsx (the canvas), ChatWidget.tsx,
                         ProjectsCard.tsx, AutoSaveIndicator.tsx, AccountMenu.tsx
 lib/store/               The Zustand store, split into domain slices (model, queue, chat, versions, project, selection) — index.ts composes them

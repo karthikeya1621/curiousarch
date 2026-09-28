@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createClient } from "../lib/supabase/client";
+import { setLastProjectId } from "../lib/store/session";
 import { ThemeToggle } from "./ThemeToggle";
 import { LogOutIcon } from "./icons";
 
@@ -25,7 +25,6 @@ export function AccountMenu() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const router = useRouter();
 
   useEffect(() => {
     const supabase = createClient();
@@ -51,8 +50,11 @@ export function AccountMenu() {
   async function signOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
+    // A full page load, not a client-side navigation: the open project lives in the in-memory store,
+    // which a soft navigation keeps - the next person to sign in on this browser would see it.
+    setLastProjectId(null);
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a hard load on purpose (see above)
+    window.location.href = "/login";
   }
 
   const initial = email ? email[0]!.toUpperCase() : "?";

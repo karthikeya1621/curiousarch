@@ -5,6 +5,7 @@ import type { AiFinding, SystemModel } from "@archsim/engine";
 import { MAX_CHAT_MESSAGE_LENGTH, isValidModelShape, parsePendingChanges } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 import { startUsage } from "../../../lib/usage/server";
+import { reserveTrial } from "../../../lib/trial/server";
 import { describeModel } from "../../../lib/usage/context";
 
 /**
@@ -61,6 +62,9 @@ export async function POST(request: Request) {
   const currentFindings = Array.isArray(findings) ? (findings as AiFinding[]) : [];
   const currentPendingFixes = Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]) : [];
 
+  // A guest's quota is counted here, before the engine runs (no-op for signed-in users).
+  const gate = await reserveTrial(request, body, "chat");
+  if (gate.denied) return gate.denied;
   try {
     const usage = await startUsage(body, {
       action: "chat",
@@ -89,6 +93,7 @@ export async function POST(request: Request) {
       kinds: result.kinds,
     });
   } catch (err) {
+    await gate.release(); // a failed or refused attempt is not counted
     return upstreamError(err, "Chat failed.");
   }
 }

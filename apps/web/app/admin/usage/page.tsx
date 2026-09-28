@@ -7,7 +7,7 @@ import { getAdminClient } from "../../../lib/supabase/admin";
 import { DASHBOARD_RANGES, loadDashboard, parseRange, type Dashboard } from "../../../lib/usage/dashboard";
 import { fillDays, formatInt, formatMs, formatPct, formatUsd, ratioPct } from "../../../lib/usage/format";
 
-export const metadata: Metadata = { title: "AI usage · archsim", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "AI usage · CuriousArch", robots: { index: false, follow: false } };
 
 /**
  * Operator-only cost dashboard: everything `ai_calls` records, across all

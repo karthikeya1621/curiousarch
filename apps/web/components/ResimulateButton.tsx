@@ -5,6 +5,7 @@ import { MAX_TOTAL_COMPONENTS } from "@archsim/engine";
 import type { SystemModel } from "@archsim/engine";
 import { useAppStore, usageProjectId } from "../lib/store";
 import { newActionId, reportOutcome } from "../lib/usageClient";
+import { isTrialLimit, notifyTrialLimit } from "../lib/trialClient";
 
 // Warn a couple of components before the actual cap, not exactly at it —
 // by the time the count reads the hard limit itself, the next Re-simulate
@@ -55,6 +56,8 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       });
       const body = await res.json();
       if (!res.ok) {
+        // The banner at the top already says the trial is used up - no second message here.
+        if (isTrialLimit(body)) return notifyTrialLimit(body);
         if (body.code === "unsafe-result") reportOutcome(actionId, "withheld"); // paid for, but the engine refused to return it
         throw new Error(body.error ?? "Rework failed.");
       }

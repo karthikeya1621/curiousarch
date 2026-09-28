@@ -1,10 +1,19 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_TAGLINE, THEME_COLOR, siteUrl } from "../lib/site";
 import "./globals.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+});
+
+// Brand font: the wordmark only (components/Wordmark.tsx). Content stays in Geist so the name reads as
+// a logo, not as more text.
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-space-grotesk",
+  subsets: ["latin"],
+  weight: ["300", "700"],
 });
 
 const geistMono = Geist_Mono({
@@ -13,8 +22,22 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "archsim",
-  description: "A what-if capacity simulator: describe a system, find its failure points, try a fix, see the delta.",
+  metadataBase: new URL(siteUrl()),
+  title: { default: `${SITE_NAME} - ${SITE_TAGLINE}`, template: `%s · ${SITE_NAME}` },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: ["system design", "architecture simulator", "capacity planning", "failure analysis", "scalability", "learn system design"],
+  authors: [{ name: SITE_NAME }],
+  openGraph: { type: "website", siteName: SITE_NAME, title: `${SITE_NAME} - ${SITE_TAGLINE}`, description: SITE_DESCRIPTION, locale: "en_US" },
+  twitter: { card: "summary_large_image", title: `${SITE_NAME} - ${SITE_TAGLINE}`, description: SITE_DESCRIPTION },
+  // The app itself is behind login; only the pages that opt in (see app/login/layout.tsx) are indexed.
+  robots: { index: false, follow: false },
+};
+
+export const viewport: Viewport = {
+  themeColor: THEME_COLOR,
+  width: "device-width",
+  initialScale: 1,
 };
 
 // Keep this key literally in sync with THEME_KEY in lib/theme.ts — this
@@ -42,7 +65,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       // like a hydration mismatch on this exact element every time dark
       // mode (or "system" resolving to dark) is active.
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${spaceGrotesk.variable} ${geistMono.variable} h-full antialiased`}
     >
       {/* suppressHydrationWarning: browser extensions (Grammarly, etc.)
           inject attributes like data-gr-ext-installed onto <body> before

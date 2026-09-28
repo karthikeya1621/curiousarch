@@ -3,6 +3,7 @@ import { fromProse } from "@archsim/engine/server";
 import { MAX_DESCRIPTION_LENGTH } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 import { startUsage } from "../../../lib/usage/server";
+import { reserveTrial } from "../../../lib/trial/server";
 
 /**
  * Server-only: pulls in @anthropic-ai/sdk and reads ANTHROPIC_API_KEY via
@@ -31,11 +32,15 @@ export async function POST(request: Request) {
     );
   }
 
+  // A guest's quota is counted here, before the engine runs (no-op for signed-in users).
+  const gate = await reserveTrial(request, body, "build");
+  if (gate.denied) return gate.denied;
   try {
     const usage = await startUsage(body, { action: "build", context: { descriptionChars: description.length } });
     const result = await fromProse(description, usage);
     return NextResponse.json({ model: result.model });
   } catch (err) {
+    await gate.release(); // a failed or refused attempt is not counted
     return upstreamError(err, "Inference failed.");
   }
 }

@@ -4,6 +4,7 @@ import type { SystemModel } from "@archsim/engine";
 import { isValidModelShape } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 import { startUsage } from "../../../lib/usage/server";
+import { reserveTrial } from "../../../lib/trial/server";
 import { describeModel } from "../../../lib/usage/context";
 
 /**
@@ -25,11 +26,15 @@ export async function POST(request: Request) {
     );
   }
 
+  // A guest's quota is counted here, before the engine runs (no-op for signed-in users).
+  const gate = await reserveTrial(request, body, "findings");
+  if (gate.denied) return gate.denied;
   try {
     const usage = await startUsage(body, { action: "findings", context: describeModel(model as SystemModel) });
     const findings = await identifyFailures(model as SystemModel, usage);
     return NextResponse.json({ findings });
   } catch (err) {
+    await gate.release(); // a failed or refused attempt is not counted
     return upstreamError(err, "Failed to identify failures.");
   }
 }

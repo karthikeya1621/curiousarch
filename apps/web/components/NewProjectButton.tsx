@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useAppStore } from "../lib/store";
+import { useTrialStatus } from "../lib/useTrialStatus";
 import { PlusIcon } from "./icons";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -26,8 +27,23 @@ export function NewProjectButton({ onDone }: { onDone?: () => void }) {
   const saveBeforeLeaving = useAppStore((s) => s.saveBeforeLeaving);
   const isBlank = useAppStore((s) => s.model.components.length === 0);
   const [state, setState] = useState<"idle" | "saving" | "save-failed">("idle");
+  const { limited, guest } = useTrialStatus();
 
   if (isBlank) return null;
+
+  // The free quota is one build, so one project: shown but disabled, with the reason on hover.
+  if (limited) {
+    return (
+      <button
+        disabled
+        title={guest ? "The free trial covers one project. Sign in to start more." : "The free plan covers one project. More will be available with credits."}
+        className="flex cursor-not-allowed items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 opacity-60 dark:border-slate-600 dark:text-slate-300"
+      >
+        <PlusIcon className="h-3.5 w-3.5" />
+        New project
+      </button>
+    );
+  }
 
   function start() {
     setState("idle");

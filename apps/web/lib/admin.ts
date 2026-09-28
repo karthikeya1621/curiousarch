@@ -30,7 +30,7 @@ export function isAdminUser(user: Pick<User, "email" | "email_confirmed_at"> | n
 /**
  * For a server component: resolves the verified signed-in user if they're an
  * admin, otherwise a plain 404 — the page's existence isn't revealed to
- * anyone else. (middleware.ts has already required a login by this point;
+ * anyone else. (proxy.ts has already required a login by this point;
  * this is the authorization step on top of it.) Uses `getUser()`, which
  * verifies the session with Supabase rather than trusting the cookie.
  */

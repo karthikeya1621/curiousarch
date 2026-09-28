@@ -13,7 +13,7 @@ const TABLE = "projects";
  * the id is only used to tag an insert and to narrow a select/update, and
  * the `projects` table's row-level security (`auth.uid() = user_id`) is what
  * actually enforces ownership server-side — a tampered local session can
- * still only reach rows the real JWT is allowed to. (middleware.ts keeps
+ * still only reach rows the real JWT is allowed to. (proxy.ts keeps
  * using the verified `getUser()` for the page/API gate, where an unverified
  * claim would not be acceptable.)
  */

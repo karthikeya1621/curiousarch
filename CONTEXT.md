@@ -12,7 +12,7 @@ Context for AI-assisted development. **Read this index first; it is short on pur
 | Tiers, instance counts, baseline protections, the minimal start, one rung per Re-simulate | [`docs/context/scale-and-minimal.md`](docs/context/scale-and-minimal.md) |
 | Wiring: CDN direction, load balancers, parallel paths, lint rules, the data path, broker rules | [`docs/context/topology-rules.md`](docs/context/topology-rules.md) |
 | Findings (typed fields, area decisions, graph facts, ranking), chat intent classification, the Sonnet-vs-Opus decision | [`docs/context/findings-and-chat.md`](docs/context/findings-and-chat.md) |
-| Routing, login redirects, autosave, leaving a project, usage tracking and the admin dashboard | [`docs/context/web-app-decisions.md`](docs/context/web-app-decisions.md) |
+| Routing, login redirects, autosave, leaving a project, usage tracking, the admin dashboard and the guest trial | [`docs/context/web-app-decisions.md`](docs/context/web-app-decisions.md) |
 | Where the money goes and the cost levers | [`docs/context/cost-and-usage.md`](docs/context/cost-and-usage.md) |
 | What has been verified live, the eval scripts, what is still unverified | [`docs/context/live-testing-log.md`](docs/context/live-testing-log.md) |
 | Older bugs whose shape recurs (schema hoisting, strict-mode limits, React Flow edges) | [`docs/context/bug-log.md`](docs/context/bug-log.md) |
@@ -86,13 +86,13 @@ missing feature — do not propose a node palette or a blank canvas.
 The app is a working, full-loop product, not a prototype: describe a system
 in prose, get a diagram with AI-identified findings and fixes, apply fixes
 or chat free-form to queue changes to it, Re-simulate to apply everything queued, save/reopen
-multiple projects across sessions. 605 tests passing (317 engine + 288 web),
+multiple projects across sessions. 650 tests passing (317 engine + 333 web),
 typecheck clean across both workspaces, pushed to `origin/main`.
 
 **Auth + persistence.** Magic-link email and Google login (client-side
 Google Identity Services, not a redirect through Supabase's own domain —
 deliberately chosen so the consent screen shows this app's real origin),
-gated by `apps/web/middleware.ts`. Every project is a row in a Postgres
+gated by `apps/web/proxy.ts`. Every project is a row in a Postgres
 `projects` table (`apps/web/lib/sessionStorage.ts`), not localStorage.
 Multi-project support (`ProjectsCard.tsx`, save/load/list/delete) lets a
 user hold several systems at once and switch between them.

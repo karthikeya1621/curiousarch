@@ -79,13 +79,13 @@ vi.mock("../lib/supabase/server", () => ({
 }));
 const exchange = vi.fn(async () => ({ error: null }));
 
-describe("middleware: signed-out visitors", () => {
+describe("proxy (login gate): signed-out visitors", () => {
   beforeEach(() => {
     auth.user = null;
   });
   const run = async (path: string) => {
-    const { middleware } = await import("../middleware");
-    return middleware(new NextRequest(`http://localhost:3000${path}`));
+    const { proxy } = await import("../proxy");
+    return proxy(new NextRequest(`http://localhost:3000${path}`));
   };
 
   it("sends a signed-out deep link to login carrying where they were headed", async () => {

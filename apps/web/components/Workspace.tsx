@@ -17,9 +17,11 @@ import { PreviewBanner } from "./PreviewBanner";
 import { ReworkWarning } from "./ReworkWarning";
 import { ComponentDetailModal } from "./ComponentDetailModal";
 import { AccountMenu } from "./AccountMenu";
+import { GuestBanner } from "./GuestBanner";
 import { AdminUsageLink } from "./AdminUsageLink";
 import { Card } from "./Card";
-import { ActivityIcon } from "./icons";
+import { Logo } from "./Logo";
+import { Wordmark } from "./Wordmark";
 
 /**
  * The whole app: header, projects, canvas, chat. Rendered by the `(app)`
@@ -109,10 +111,10 @@ export function Workspace() {
     <main className="mx-auto w-full max-w-350 px-6 py-5 lg:px-10">
       <header className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900">
-            <ActivityIcon className="h-4 w-4" />
-          </div>
-          <h1 className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">Curious Arch</h1>
+          <Logo className="h-7 w-auto shrink-0 text-slate-900 dark:text-slate-100" />
+          <h1 className="text-lg tracking-tight text-slate-900 dark:text-slate-100">
+            <Wordmark />
+          </h1>
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <AutoSaveIndicator />
@@ -121,6 +123,7 @@ export function Workspace() {
           <AccountMenu />
         </div>
       </header>
+      <GuestBanner />
 
       {missingId !== null ? (
         <div className="mx-auto mt-10 max-w-xl">

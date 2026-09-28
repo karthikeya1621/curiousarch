@@ -5,6 +5,7 @@ import type { SystemModel } from "@archsim/engine";
 import { isValidModelShape, parsePendingChanges } from "../../../lib/limits";
 import { readJsonBody, upstreamError } from "../../../lib/apiRoute";
 import { startUsage } from "../../../lib/usage/server";
+import { reserveTrial } from "../../../lib/trial/server";
 import { describeModel } from "../../../lib/usage/context";
 
 /**
@@ -34,6 +35,9 @@ export async function POST(request: Request) {
   }
 
   const fixes = Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]) : [];
+  // A guest's quota is counted here, before the engine runs (no-op for signed-in users).
+  const gate = await reserveTrial(request, body, "rework");
+  if (gate.denied) return gate.denied;
   try {
     const usage = await startUsage(body, {
       action: "rework",
@@ -42,6 +46,7 @@ export async function POST(request: Request) {
     const result = await reworkModel(model as SystemModel, fixes, queuedChanges, usage);
     return NextResponse.json({ model: result.model });
   } catch (err) {
+    await gate.release(); // a failed or refused attempt is not counted
     return upstreamError(err, "Rework failed.");
   }
 }

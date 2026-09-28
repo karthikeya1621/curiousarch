@@ -136,6 +136,7 @@ export async function loadDashboard(admin: SupabaseClient, days: number): Promis
       try {
         const { data: res } = await admin.auth.admin.getUserById(id);
         if (res?.user?.email) emails[id] = res.user.email;
+        else if (res?.user?.is_anonymous) emails[id] = `Guest ${id.slice(0, 8)}`; // a trial account, kept apart from real users
       } catch {
         // A user who no longer exists just shows as their id.
       }

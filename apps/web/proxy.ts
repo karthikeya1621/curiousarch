@@ -12,7 +12,7 @@ import { safeNextPath } from "./lib/nextPath";
  * so a Server Component's read-only cookie access (see
  * lib/supabase/server.ts) still sees a valid, non-expired session.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -42,7 +42,12 @@ export async function middleware(request: NextRequest) {
 
   const isAuthRoute =
     request.nextUrl.pathname.startsWith("/login") ||
-    request.nextUrl.pathname.startsWith("/auth");
+    request.nextUrl.pathname.startsWith("/auth") ||
+    // Legal pages must be readable before signing in (Google sign-in and the login footer link to them).
+    request.nextUrl.pathname === "/privacy" ||
+    request.nextUrl.pathname === "/terms" ||
+    // The login page asks this before a session exists (whether to offer "Try as a guest").
+    request.nextUrl.pathname === "/api/trial/status";
 
   if (!user && !isAuthRoute) {
     const target = request.nextUrl.pathname + request.nextUrl.search;
@@ -61,5 +66,9 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  // Static assets, the crawler/manifest files and the health probe never need a session (a redirect on
+  // robots.txt or the sitemap would hide the whole site from search engines).
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|manifest.webmanifest|api/health|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
 };

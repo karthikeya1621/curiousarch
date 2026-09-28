@@ -1,5 +1,6 @@
 import type { AiFinding } from "@archsim/engine";
 import { newActionId, reportOutcome } from "../usageClient";
+import { notifyTrialLimit } from "../trialClient";
 import { derivePending } from "./pending";
 import { sequence } from "./sequencing";
 import { usageProjectIdOf } from "./session";
@@ -51,7 +52,10 @@ export async function refreshFindings(
       body: JSON.stringify({ model, actionId, projectId: usageProjectIdOf(get()) }),
     });
     const body = await res.json();
-    if (!res.ok) throw new Error(body.error ?? "Failed to identify failures.");
+    if (!res.ok) {
+      notifyTrialLimit(body);
+      throw new Error(body.error ?? "Failed to identify failures.");
+    }
     const findings = body.findings as AiFinding[];
     // The open project/build was replaced while this was in flight — its
     // findings (and version snapshot) belong to a session that's gone. The
