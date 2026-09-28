@@ -51,7 +51,8 @@ export async function refreshFindings(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model, actionId, projectId: usageProjectIdOf(get()) }),
     });
-    const body = await res.json();
+    // A host error page (502/504) is HTML, not JSON: fall back to an empty body so the friendly message shows.
+    const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       notifyTrialLimit(body);
       throw new Error(body.error ?? "Failed to identify failures.");

@@ -17,6 +17,8 @@ export function GuestBanner() {
   // Bumped on every refused action so the highlight replays even when the banner is already amber.
   const [flash, setFlash] = useState(0);
   const bannerRef = useRef<HTMLDivElement>(null);
+  // The email box stays behind a button until asked for (or the trial runs out), so the resting banner is one slim line.
+  const [showForm, setShowForm] = useState(false);
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -66,14 +68,23 @@ export function GuestBanner() {
             : `Free plan: ${TRIAL_LIMITS.build} build, ${TRIAL_LIMITS.rework} Re-simulate and ${TRIAL_LIMITS.chat} chat messages on one project. Credits for more are coming.`
           : limitHit
           ? "You've used the free trial. Your diagram stays as it is - add your email to keep it and continue."
-          : `Free trial: ${TRIAL_LIMITS.build} build, ${TRIAL_LIMITS.rework} Re-simulate and ${TRIAL_LIMITS.chat} chat messages. Add your email to keep your work.`}
+          : `Free trial · ${TRIAL_LIMITS.build} build, ${TRIAL_LIMITS.rework} Re-simulate, ${TRIAL_LIMITS.chat} chat messages`}
       </span>
       {!guest ? null : status === "sent" ? (
         <span className="text-xs">Check {email} for a confirmation link - it keeps this project.</span>
+      ) : !showForm && !limitHit ? (
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-white dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+        >
+          Save my work
+        </button>
       ) : (
         <form onSubmit={upgrade} className="flex items-center gap-2">
           <input
             type="email"
+            autoFocus={showForm}
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}

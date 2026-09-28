@@ -93,3 +93,17 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .trial-flash { animation: none; }
 }
+
+/* Login hero drawing (LoginHero.tsx): traffic dashes travelling along the traces, and the failing node pulsing. */
+@keyframes login-flow {
+  to { stroke-dashoffset: -30; }
+}
+@keyframes login-fail {
+  0%, 100% { stroke-opacity: 1; fill-opacity: 1; }
+  50% { stroke-opacity: 0.35; fill-opacity: 0.4; }
+}
+.login-flow { animation: login-flow 1.6s linear infinite; }
+.login-fail { animation: login-fail 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .login-flow, .login-fail { animation: none; }
+}

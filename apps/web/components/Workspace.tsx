@@ -9,6 +9,7 @@ import { SystemDashboard } from "./SystemDashboard";
 import { ControlPanel } from "./ControlPanel";
 import { FailureSidebar } from "./FailureSidebar";
 import { ProseInput } from "./ProseInput";
+import { EmptyStateAside } from "./EmptyStateAside";
 import { ChatWidget } from "./ChatWidget";
 import { AutoSaveIndicator } from "./AutoSaveIndicator";
 import { ProjectsCard } from "./ProjectsCard";
@@ -142,9 +143,14 @@ export function Workspace() {
           </Card>
         </div>
       ) : isBlank ? (
-        <div className="mx-auto mt-10 flex max-w-xl flex-col gap-4">
-          <ProjectsCard />
-          <ProseInput />
+        // First-run screen: the describe box leads (left), the picture of what comes next sits beside it,
+        // and the projects list only appears once there is something in it.
+        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-stretch">
+          <div className="flex flex-col gap-4">
+            <ProseInput />
+            <ProjectsCard hideWhenEmpty />
+          </div>
+          <EmptyStateAside />
         </div>
       ) : previewVersion ? (
         <div className="mt-4 flex flex-col gap-4">

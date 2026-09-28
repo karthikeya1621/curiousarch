@@ -11,6 +11,13 @@ import { reserveTrial } from "../../../lib/trial/server";
  * index.ts for why). Node runtime is the default for route handlers, which
  * is required here since the Anthropic SDK isn't Edge-compatible.
  */
+/**
+ * A build chains several model calls and a failed final gate repeats them, so the platform's default function limit
+ * would cut it off mid-flight (after the provider has already billed it, and before the quota slot could be released).
+ * Lower this if the hosting plan caps functions below it.
+ */
+export const maxDuration = 300;
+
 export async function POST(request: Request) {
   const parsed = await readJsonBody(request);
   if ("error" in parsed) return parsed.error;

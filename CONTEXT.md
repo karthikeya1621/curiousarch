@@ -16,7 +16,9 @@ Context for AI-assisted development. **Read this index first; it is short on pur
 | Where the money goes and the cost levers | [`docs/context/cost-and-usage.md`](docs/context/cost-and-usage.md) |
 | What has been verified live, the eval scripts, what is still unverified | [`docs/context/live-testing-log.md`](docs/context/live-testing-log.md) |
 | Older bugs whose shape recurs (schema hoisting, strict-mode limits, React Flow edges) | [`docs/context/bug-log.md`](docs/context/bug-log.md) |
+| Launch review: the multi-agent production-readiness pattern, the six specialist briefs, the report format, deployment steps | [`docs/orchestration/README.md`](docs/orchestration/README.md), [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) |
 | Roadmap | `plans/PLAN-4.md` onward |
+| *Optional:* resuming after a break - where work stopped, open items, tooling problems (a local, gitignored note; may not exist) | [`docs/HANDOFF.md`](docs/HANDOFF.md) |
 
 **Adding a decision:** put it in the topical file it belongs to as a new `##` section (decision as the heading, reason and evidence as the text), newest last. Only put something here if it changes the orientation below. Keep test counts current in this file, `README.md` and `plans/PLAN-4.md`.
 
@@ -86,7 +88,7 @@ missing feature — do not propose a node palette or a blank canvas.
 The app is a working, full-loop product, not a prototype: describe a system
 in prose, get a diagram with AI-identified findings and fixes, apply fixes
 or chat free-form to queue changes to it, Re-simulate to apply everything queued, save/reopen
-multiple projects across sessions. 650 tests passing (317 engine + 333 web),
+multiple projects across sessions. 658 tests passing (317 engine + 341 web),
 typecheck clean across both workspaces, pushed to `origin/main`.
 
 **Auth + persistence.** Magic-link email and Google login (client-side

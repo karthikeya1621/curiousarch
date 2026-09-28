@@ -15,7 +15,10 @@ export async function GET(request: Request) {
 
   if (code) {
     const supabase = await createClient();
-    await supabase.auth.exchangeCodeForSession(code);
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    // An expired or reused link, or one opened in a different browser than it was requested from (the sign-in
+    // uses PKCE), cannot be exchanged. Say so instead of dropping the user on a login page with no explanation.
+    if (error) return NextResponse.redirect(`${origin}/login?error=link`);
   }
 
   const next = readNextCookie(request.headers.get("cookie")) ?? safeNextPath(searchParams.get("next")) ?? "/";

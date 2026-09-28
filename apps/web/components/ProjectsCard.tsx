@@ -26,7 +26,7 @@ import { FolderIcon, TrashIcon, CheckCircleIcon } from "./icons";
  * view (see the effect below) since with enough projects it can sit below the
  * fold.
  */
-export function ProjectsCard() {
+export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolean }) {
   const projects = useAppStore((s) => s.projects);
   const projectsStatus = useAppStore((s) => s.projectsStatus);
   const refreshProjectList = useAppStore((s) => s.refreshProjectList);
@@ -76,11 +76,15 @@ export function ProjectsCard() {
     void openProject(id);
   }
 
+  // The blank home screen has nothing to say to someone with no projects: the card still fetches the
+  // list (the effects above ran) and appears once there is something in it.
+  if (hideWhenEmpty && projects.length === 0) return null;
+
   return (
     <Card padding="sm" className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-          Projects
+          {hideWhenEmpty ? "Or pick up a project" : "Projects"}
         </h3>
         <NewProjectButton />
       </div>
@@ -98,7 +102,7 @@ export function ProjectsCard() {
           <p className="px-1 py-1.5 text-xs text-slate-400">Loading…</p>
         ) : projects.length === 0 ? (
           <p className="px-1 py-1.5 text-xs text-slate-400">
-            No saved projects yet — build one and click Save.
+            Not saved yet — projects save automatically as you build.
           </p>
         ) : (
           projects.map((p) => (

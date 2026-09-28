@@ -49,11 +49,19 @@ export async function reserveTrial(request: Request, body: unknown, kind: TrialK
   if (!config.enabled && !guest) return noop;
   if (!config.enabled || !admin) return unavailable();
 
+  // The stored value is a hash of the caller's IP: with a well-known salt it could be reversed from a database dump,
+  // so in production a missing salt turns the trial off rather than quietly using a default.
+  const salt = process.env.TRIAL_IP_SALT;
+  if (!salt && process.env.NODE_ENV === "production") {
+    console.error("[trial] TRIAL_IP_SALT is not set - refusing to store IP hashes with a default salt.");
+    return unavailable();
+  }
+
   const { actionId } = readUsageIds(body);
   try {
     const { data, error } = await admin.rpc("trial_reserve", {
       p_user: userId,
-      p_ip_hash: hashIp(clientIp(request.headers), process.env.TRIAL_IP_SALT ?? "archsim-trial"),
+      p_ip_hash: hashIp(clientIp(request.headers), salt ?? "archsim-trial"),
       p_kind: kind,
       p_action: actionId,
       p_limit: TRIAL_LIMITS[kind],
@@ -61,6 +69,7 @@ export async function reserveTrial(request: Request, body: unknown, kind: TrialK
       p_budget: config.dailyBudgetUsd,
       p_needs_build: NEEDS_BUILD.includes(kind),
       p_guest: guest,
+      p_member_budget: config.memberDailyBudgetUsd,
     });
     if (error) throw new Error(error.message);
     const result = data as ReserveResult;
@@ -75,8 +84,11 @@ export async function reserveTrial(request: Request, body: unknown, kind: TrialK
 
   return {
     release: async () => {
+      // Only this route's own kind: a build and its findings share an action id, and a failed findings call
+      // must not refund the build that succeeded.
       try {
-        await admin.rpc("trial_release", { p_user: userId, p_action: actionId });
+        const { error } = await admin.rpc("trial_release", { p_user: userId, p_action: actionId, p_kind: kind });
+        if (error) throw new Error(error.message);
       } catch (err) {
         console.error("[trial] could not release a failed attempt:", err);
       }
@@ -84,14 +96,19 @@ export async function reserveTrial(request: Request, body: unknown, kind: TrialK
   };
 }
 
-/** Gives back whatever the guest's action `actionId` held (a Re-simulate result the client threw away). No-op for anyone else. */
-export async function releaseTrialAction(userId: string, actionId: string): Promise<void> {
+/**
+ * Gives back a Re-simulate whose result the client threw away (the user edited while it ran). The report comes
+ * from the client, so the database caps it: Re-simulate only, an action that is still counted, one refund per account.
+ * No-op for anyone who is not held to the quota.
+ */
+export async function refundWithheldRework(userId: string, actionId: string): Promise<void> {
   const admin = getAdminClient();
   if (!admin) return;
   try {
-    await admin.rpc("trial_release", { p_user: userId, p_action: actionId });
+    const { error } = await admin.rpc("trial_refund", { p_user: userId, p_action: actionId });
+    if (error) throw new Error(error.message);
   } catch (err) {
-    console.error("[trial] could not release a withheld attempt:", err);
+    console.error("[trial] could not refund a withheld Re-simulate:", err);
   }
 }
 

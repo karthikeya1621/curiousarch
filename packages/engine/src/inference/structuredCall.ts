@@ -192,7 +192,9 @@ export async function runStructuredCall<T>(
     );
   }
 
-  const client = options.client ?? new Anthropic({ apiKey, timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
+  // maxRetries: 1 (SDK default is 2): transport-level retries stack under this function's own repair retries, and one
+  // slow call could otherwise take 3 x the timeout.
+  const client = options.client ?? new Anthropic({ apiKey, timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxRetries: 1 });
   const model = options.model ?? REASONING_MODEL;
   const maxRetries = options.maxRetries ?? 1;
 

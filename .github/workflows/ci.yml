@@ -19,7 +19,16 @@ jobs:
 
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run lint --workspace web
       - run: npm test
+
+      # The first production build should not be Vercel's. Placeholder values, not secrets: the build only needs
+      # the NEXT_PUBLIC_* names to exist; nothing here talks to Supabase or Anthropic.
+      - run: npm run build --workspace web
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci.invalid
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+          NEXT_PUBLIC_SITE_URL: http://localhost:3000
 
       # sim/whatif's prose path hits the real Anthropic API (ANTHROPIC_API_KEY)
       # and is intentionally excluded from CI — do not add it here.

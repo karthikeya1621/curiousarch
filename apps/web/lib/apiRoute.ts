@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isRequestTooLarge } from "./limits";
+import { MAX_REQUEST_BYTES, isRequestTooLarge } from "./limits";
 
 /**
  * The parts every AI route repeats verbatim — reject an oversized body
@@ -13,7 +13,13 @@ export async function readJsonBody(request: Request): Promise<{ body: unknown } 
     return { error: NextResponse.json({ error: "Request body too large." }, { status: 413 }) };
   }
   try {
-    return { body: await request.json() };
+    // Measure what actually arrived: `content-length` above is only a cheap early exit, and a chunked request
+    // (or one that lies) skips it.
+    const text = await request.text();
+    if (text.length > MAX_REQUEST_BYTES) {
+      return { error: NextResponse.json({ error: "Request body too large." }, { status: 413 }) };
+    }
+    return { body: JSON.parse(text) as unknown };
   } catch {
     return { error: NextResponse.json({ error: "Request body must be JSON." }, { status: 400 }) };
   }

@@ -22,6 +22,7 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
   const findings = useAppStore((s) => s.findings);
   const findingsStatus = useAppStore((s) => s.findingsStatus);
   const findingsError = useAppStore((s) => s.findingsError);
+  const retryFindings = useAppStore((s) => s.retryFindings);
   const openComponentId = useAppStore((s) => s.openComponentId);
   const selectedFindingId = useAppStore((s) => s.selectedFindingId);
   const selectFinding = useAppStore((s) => s.selectFinding);
@@ -50,9 +51,19 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
 
   if (findingsError) {
     return (
-      <div className="flex items-start gap-2 rounded-xl border border-dashed border-rose-300 bg-rose-50/60 p-4 text-xs text-rose-600 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-400">
+      <div
+        role="alert"
+        className="flex items-start gap-2 rounded-xl border border-dashed border-rose-300 bg-rose-50/60 p-4 text-xs text-rose-600 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-400"
+      >
         <AlertTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>{findingsError}</span>
+        <span className="flex-1">{findingsError}</span>
+        <button
+          type="button"
+          onClick={retryFindings}
+          className="shrink-0 rounded-md border border-rose-300 px-2 py-1 font-medium text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-700 dark:text-rose-300 dark:hover:bg-rose-900/40"
+        >
+          Try again
+        </button>
       </div>
     );
   }

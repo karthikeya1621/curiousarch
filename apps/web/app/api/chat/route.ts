@@ -15,6 +15,13 @@ import { describeModel } from "../../../lib/usage/context";
  * `instruction` the client queues for the next Re-simulate (see
  * chatWithProject.ts).
  */
+/**
+ * A build chains several model calls and a failed final gate repeats them, so the platform's default function limit
+ * would cut it off mid-flight (after the provider has already billed it, and before the quota slot could be released).
+ * Lower this if the hosting plan caps functions below it.
+ */
+export const maxDuration = 300;
+
 export async function POST(request: Request) {
   const parsed = await readJsonBody(request);
   if ("error" in parsed) return parsed.error;
@@ -53,14 +60,21 @@ export async function POST(request: Request) {
   // content) without needing the SDK type here — the store is the one
   // place that builds this from `chatMessages`, already bounded to a
   // short window (see `CHAT_HISTORY_WINDOW` in lib/store/slices/chatSlice.ts).
+  // Bounded and shape-checked here too: the client only ever sends a short window, but a crafted request could
+  // send anything, and every entry goes to the model.
   const chatHistory = Array.isArray(history)
-    ? (history as { role: "user" | "assistant"; content: string }[])
+    ? history
+        .filter(
+          (m): m is { role: "user" | "assistant"; content: string } =>
+            !!m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string",
+        )
+        .slice(-16)
     : [];
   // What the dashboard is currently showing — see chatWithProject.ts's own
   // comment on why this matters (chat used to re-derive answers from the
   // raw model alone, with zero visibility into a queued-but-unapplied fix).
-  const currentFindings = Array.isArray(findings) ? (findings as AiFinding[]) : [];
-  const currentPendingFixes = Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]) : [];
+  const currentFindings = Array.isArray(findings) ? (findings as AiFinding[]).slice(0, 50) : [];
+  const currentPendingFixes = Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]).slice(0, 20) : [];
 
   // A guest's quota is counted here, before the engine runs (no-op for signed-in users).
   const gate = await reserveTrial(request, body, "chat");

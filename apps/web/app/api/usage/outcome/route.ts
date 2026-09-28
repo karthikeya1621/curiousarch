@@ -4,7 +4,7 @@ import { getAdminClient } from "../../../../lib/supabase/admin";
 import { isUuid } from "../../../../lib/usage/ids";
 import { readJsonBody } from "../../../../lib/apiRoute";
 import { USAGE_OUTCOME_REASONS } from "../../../../lib/usage/outcomes";
-import { releaseTrialAction } from "../../../../lib/trial/server";
+import { refundWithheldRework } from "../../../../lib/trial/server";
 
 /**
  * Records that an AI response the user paid for never reached them — the
@@ -33,8 +33,9 @@ export async function POST(request: Request) {
       } = await supabase.auth.getUser();
       if (user) {
         await admin.from("ai_action_outcomes").insert({ user_id: user.id, action_id: actionId, reason });
-        // A guest's result that never reached them was not a use of their trial.
-        if (user.is_anonymous && reason === "withheld") await releaseTrialAction(user.id, actionId);
+        // A Re-simulate result the user threw away by editing during the run is given back - once per account,
+        // Re-simulate only, verified in the database (the client cannot free an arbitrary action).
+        if (reason === "withheld") await refundWithheldRework(user.id, actionId);
       }
     }
   } catch (err) {

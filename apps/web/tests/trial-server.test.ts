@@ -30,7 +30,7 @@ vi.mock("../lib/supabase/admin", () => ({
       : null,
 }));
 
-const { reserveTrial, guestTrialOpen } = await import("../lib/trial/server");
+const { reserveTrial, guestTrialOpen, refundWithheldRework } = await import("../lib/trial/server");
 const ACTION = "11111111-1111-4111-8111-111111111111";
 const req = () => new Request("http://x/api/chat", { method: "POST", headers: { "x-forwarded-for": "9.9.9.9" } });
 
@@ -111,10 +111,42 @@ describe("reserveTrial", () => {
     expect((await reserveTrial(req(), {}, "build")).denied?.status).toBe(429);
   });
 
-  it("release() gives the attempt back", async () => {
-    const gate = await reserveTrial(req(), { actionId: ACTION }, "rework");
-    await gate.release();
-    expect(state.rpcCalls.at(-1)).toEqual({ fn: "trial_release", args: { p_user: "u1", p_action: ACTION } });
+  it("release() gives back only this route's own kind (a failed findings call must not refund the build)", async () => {
+    const findings = await reserveTrial(req(), { actionId: ACTION }, "findings");
+    await findings.release();
+    expect(state.rpcCalls.at(-1)).toEqual({ fn: "trial_release", args: { p_user: "u1", p_action: ACTION, p_kind: "findings" } });
+    const rework = await reserveTrial(req(), { actionId: ACTION }, "rework");
+    await rework.release();
+    expect(state.rpcCalls.at(-1)).toEqual({ fn: "trial_release", args: { p_user: "u1", p_action: ACTION, p_kind: "rework" } });
+  });
+
+  it("passes the member budget so signed-in accounts share a daily ceiling", async () => {
+    process.env.TRIAL_MEMBER_DAILY_BUDGET_USD = "7";
+    await reserveTrial(req(), { actionId: ACTION }, "chat");
+    expect(state.rpcCalls[0]!.args.p_member_budget).toBe(7);
+    delete process.env.TRIAL_MEMBER_DAILY_BUDGET_USD;
+  });
+
+  it("refuses in production when TRIAL_IP_SALT is missing, instead of hashing with a public default", async () => {
+    const env = process.env as Record<string, string | undefined>;
+    const before = { node: env.NODE_ENV, salt: env.TRIAL_IP_SALT };
+    env.NODE_ENV = "production";
+    delete env.TRIAL_IP_SALT;
+    const refused = await reserveTrial(req(), { actionId: ACTION }, "chat");
+    expect(refused.denied?.status).toBe(429);
+    expect(state.rpcCalls).toEqual([]);
+    env.TRIAL_IP_SALT = "a-long-random-salt";
+    expect((await reserveTrial(req(), { actionId: ACTION }, "chat")).denied).toBeUndefined();
+    env.NODE_ENV = before.node;
+    if (before.salt === undefined) delete env.TRIAL_IP_SALT;
+    else env.TRIAL_IP_SALT = before.salt;
+  });
+});
+
+describe("refundWithheldRework", () => {
+  it("asks the database for a capped refund of that Re-simulate only", async () => {
+    await refundWithheldRework("u1", ACTION);
+    expect(state.rpcCalls.at(-1)).toEqual({ fn: "trial_refund", args: { p_user: "u1", p_action: ACTION } });
   });
 });
 

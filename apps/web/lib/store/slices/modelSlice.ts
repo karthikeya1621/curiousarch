@@ -87,6 +87,11 @@ export interface ModelActions {
    */
   revertParameters: () => void;
   dismissReworkWarning: () => void;
+  /**
+   * Asks for the findings again after a failed refresh (a provider blip right after a successful build left the
+   * user with a diagram and no analysis, and nothing on screen to retry it). A fresh action of its own.
+   */
+  retryFindings: () => void;
 }
 
 export type ModelSlice = ModelState & ModelActions;
@@ -102,6 +107,10 @@ export function createModelActions(set: StoreSet, get: StoreGet): ModelActions {
         autosaveRevision: get().autosaveRevision + 1,
       });
       void refreshFindings(set, get, actionId);
+    },
+
+    retryFindings: () => {
+      void refreshFindings(set, get);
     },
 
     setWorkloadTier: (dimension, tier) => {

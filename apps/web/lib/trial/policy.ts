@@ -16,6 +16,8 @@ export interface TrialConfig {
   enabled: boolean;
   /** Daily (UTC) AI spend by guests after which no NEW guest can start. */
   dailyBudgetUsd: number;
+  /** Daily (UTC) AI spend by signed-in free accounts after which no NEW free account can start using the AI. */
+  memberDailyBudgetUsd: number;
   /** New guest accounts one (hashed) IP may start per day. */
   maxAccountsPerIp: number;
   /** Ask hCaptcha (via Supabase Auth → Attack Protection) before a guest account is created. */
@@ -30,6 +32,7 @@ export function trialConfig(env: Record<string, string | undefined> = process.en
   return {
     enabled: env.TRIAL_ENABLED === "true",
     dailyBudgetUsd: num(env.TRIAL_DAILY_BUDGET_USD, 2),
+    memberDailyBudgetUsd: num(env.TRIAL_MEMBER_DAILY_BUDGET_USD, 10),
     maxAccountsPerIp: Math.floor(num(env.TRIAL_MAX_ACCOUNTS_PER_IP, 3)),
     captcha: env.NEXT_PUBLIC_TRIAL_CAPTCHA === "true",
   };
@@ -58,7 +61,9 @@ export function refusal(result: Exclude<ReserveResult, "ok">, kind: TrialKind, g
     case "ip-cap":
       return { status: 429, body: { error: "Too many free trials have been started from this network today. Sign in to continue.", code: "trial-limit", reason: "ip-cap" } };
     case "budget":
-      return { status: 429, body: { error: "Today's free trials are used up. Sign in to continue.", code: "trial-limit", reason: "budget" } };
+      return { status: 429, body: { error: guest
+        ? "Today's free trials are used up. Sign in to continue."
+        : "Today's free usage is used up. Please try again tomorrow.", code: "trial-limit", reason: "budget" } };
   }
 }
 

@@ -9,8 +9,10 @@ const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
-  // Browsers ignore HSTS over plain http, so this is inert on localhost.
-  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
+  // Browsers ignore HSTS over plain http, so this is inert on localhost. Deliberately short and without
+  // includeSubDomains: a long lifetime that covers every subdomain locks browsers out of any one of them
+  // (mail, staging, a parked host) that is not on HTTPS. Raise it once the domain's hosts are all confirmed.
+  { key: "Strict-Transport-Security", value: "max-age=300" },
 ];
 
 const nextConfig: NextConfig = {

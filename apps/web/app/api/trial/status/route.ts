@@ -8,5 +8,8 @@ import { trialConfig } from "../../../../lib/trial/policy";
  * at all. Reveals only a boolean, never the spend.
  */
 export async function GET() {
-  return NextResponse.json({ available: await guestTrialOpen(), captcha: trialConfig().captcha }, { headers: { "cache-control": "no-store" } });
+  return NextResponse.json({ available: await guestTrialOpen(), captcha: trialConfig().captcha }, {
+    // The answer is the same for every visitor and costs a database aggregate, so let the CDN absorb repeat hits.
+    headers: { "cache-control": "public, s-maxage=30, stale-while-revalidate=60" },
+  });
 }

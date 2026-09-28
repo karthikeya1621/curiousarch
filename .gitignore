@@ -10,3 +10,6 @@ coverage/
 .vscode/
 .idea/
 .claude/settings.local.json
+
+# Session handoff note: local, temporary, not part of the repo
+docs/HANDOFF.md

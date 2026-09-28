@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Script from "next/script";
 import { createClient } from "../../lib/supabase/client";
 import { nextCookieString, safeNextPath } from "../../lib/nextPath";
 import { Card } from "../../components/Card";
 import { Logo } from "../../components/Logo";
+import { LoginHero } from "../../components/LoginHero";
 import { Wordmark } from "../../components/Wordmark";
 import { MailIcon, AlertTriangleIcon, CheckCircleIcon } from "../../components/icons";
 
@@ -59,6 +60,15 @@ export default function LoginPage() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [guestBusy, setGuestBusy] = useState(false);
   const captchaRef = useRef<HTMLDivElement>(null);
+
+  // /auth/callback sends a failed link here with ?error=link. Read from the URL without an effect (server render: false).
+  const linkFailed = useSyncExternalStore(
+    () => () => {},
+    () => new URLSearchParams(window.location.search).get("error") === "link",
+    () => false,
+  );
+  const shownError =
+    error ?? (linkFailed ? "That sign-in link has expired or was opened on a different device. Request a new one below." : null);
 
   useEffect(() => {
     fetch("/api/trial/status")
@@ -144,27 +154,36 @@ export default function LoginPage() {
       theme: "outline",
       size: "large",
       shape: "rectangular",
-      width: 320,
+      width: 280, // fits the grouped panel (card 344px inner minus the group's padding)
     });
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-6 py-10">
+    <main className="grid min-h-screen lg:grid-cols-[1.15fr_1fr]">
       <Script src="https://accounts.google.com/gsi/client" onLoad={onGoogleScriptLoad} />
-      <Card className="w-full max-w-sm">
-        <div className="flex flex-col items-center gap-2 text-center">
-          <Logo className="h-10 w-auto text-slate-900 dark:text-slate-100" />
-          <h1 className="text-lg tracking-tight text-slate-900 dark:text-slate-100">
-            <Wordmark />
-          </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Describe a system in plain English. See where it breaks as it grows, then try the fix. Sign in to build and save your systems.</p>
+      <LoginHero />
+      <div className="flex flex-col items-center justify-center px-6 py-10">
+        {/* Small screens have no hero panel: the brand and the one-line pitch lead instead. */}
+        <div className="mb-8 flex max-w-sm flex-col items-center gap-3 text-center lg:hidden">
+          <div className="flex items-center gap-2.5 text-slate-900 dark:text-slate-100">
+            <Logo className="h-8 w-auto" />
+            <Wordmark className="text-2xl" />
+          </div>
+          <p className="text-sm text-slate-500 dark:text-slate-400">See where your system breaks before your users do.</p>
         </div>
 
-        <div ref={googleButtonRef} className="mt-6 flex justify-center" />
+        <Card className="w-full max-w-sm">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Sign in</h2>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Save your systems and pick up where you left off.</p>
 
-        <div className="my-4 flex items-center gap-3 text-[11px] text-slate-400">
+          {/* Google and email are one group: both make a permanent account that keeps your projects. */}
+          <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/40">
+          <p className="mb-3 text-center text-[11px] font-medium uppercase tracking-wide text-slate-400">Your projects are saved</p>
+          <div ref={googleButtonRef} className="flex justify-center" />
+
+        <div className="my-3 flex items-center gap-3 text-[11px] text-slate-400">
           <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
-          or
+          or use email
           <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
         </div>
 
@@ -181,6 +200,9 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
+              aria-label="Email address"
+              autoComplete="email"
+              name="email"
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-slate-500"
             />
             <button
@@ -193,9 +215,15 @@ export default function LoginPage() {
             </button>
           </form>
         )}
+          </div>
 
         {guest.available && (
-          <div className="mt-4 border-t border-slate-100 pt-4 text-center dark:border-slate-700">
+          <div className="mt-5 text-center">
+            <div className="mb-3 flex items-center gap-3 text-[11px] text-slate-400">
+              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+              or just look around
+              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+            </div>
             {guest.captcha && <div ref={captchaRef} className="mb-2 flex justify-center" />}
             <button
               type="button"
@@ -205,22 +233,23 @@ export default function LoginPage() {
             >
               {guestBusy ? "Starting…" : "Try it as a guest"}
             </button>
-            <p className="mt-1.5 text-[11px] text-slate-400">No sign-up. One build, one Re-simulate and a few chat messages.</p>
+            <p className="mt-1.5 text-[11px] text-slate-400">No account needed. One build, one Re-simulate and a few chat messages, not saved long-term.</p>
           </div>
         )}
 
-        {error && (
-          <p className="mt-2 flex items-start gap-1.5 text-xs text-rose-600 dark:text-rose-400">
+        {shownError && (
+          <p role="alert" className="mt-2 flex items-start gap-1.5 text-xs text-rose-600 dark:text-rose-400">
             <AlertTriangleIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            {error}
+            {shownError}
           </p>
         )}
-      </Card>
-      <p className="mt-4 text-center text-[11px] text-slate-400">
-        By continuing you agree to the{" "}
-        <a href="/terms" className="underline hover:text-slate-600 dark:hover:text-slate-300">Terms</a> and{" "}
-        <a href="/privacy" className="underline hover:text-slate-600 dark:hover:text-slate-300">Privacy Policy</a>.
-      </p>
+        </Card>
+        <p className="mt-4 max-w-sm text-center text-xs text-slate-400">
+          By continuing you agree to the{" "}
+          <a href="/terms" className="underline hover:text-slate-600 dark:hover:text-slate-300">Terms</a> and{" "}
+          <a href="/privacy" className="underline hover:text-slate-600 dark:hover:text-slate-300">Privacy Policy</a>.
+        </p>
+      </div>
     </main>
   );
 }

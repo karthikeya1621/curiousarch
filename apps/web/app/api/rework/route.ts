@@ -15,6 +15,13 @@ import { describeModel } from "../../../lib/usage/context";
  * (`{ model }` on success) since it's the same category of operation —
  * produce a model, never a finding.
  */
+/**
+ * A build chains several model calls and a failed final gate repeats them, so the platform's default function limit
+ * would cut it off mid-flight (after the provider has already billed it, and before the quota slot could be released).
+ * Lower this if the hosting plan caps functions below it.
+ */
+export const maxDuration = 300;
+
 export async function POST(request: Request) {
   const parsed = await readJsonBody(request);
   if ("error" in parsed) return parsed.error;
@@ -34,7 +41,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "pendingChanges must be a short list of { request, instruction } strings." }, { status: 400 });
   }
 
-  const fixes = Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]) : [];
+  const fixes = Array.isArray(pendingFixes) ? (pendingFixes as PendingFixInput[]).slice(0, 20) : [];
   // A guest's quota is counted here, before the engine runs (no-op for signed-in users).
   const gate = await reserveTrial(request, body, "rework");
   if (gate.denied) return gate.denied;

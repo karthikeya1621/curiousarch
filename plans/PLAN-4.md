@@ -7,7 +7,7 @@ are AI-generated" — but never measured at volume) is actually holding up.
 
 **Prerequisite:** none. Everything this phase needs already exists: auth,
 persistence, multi-project support, 12 component kinds, cost guardrails,
-650 passing tests. This is the next thing to do, not blocked on anything.
+658 passing tests. This is the next thing to do, not blocked on anything.
 
 This phase deliberately comes before PLAN-5 (shippable, monetized) for the
 same reason the old plans ordered it that way: a free tier and billing on
@@ -58,7 +58,7 @@ bet in "Findings are AI-generated" is working, not just accepted.
 
 ## 4.3 — Automated UI/e2e coverage
 
-All 650 tests today are unit-level (engine inference logic, `apps/web`'s
+All 658 tests today are unit-level (engine inference logic, `apps/web`'s
 store and API routes) — nothing drives the actual rendered app. The
 `.claude/skills/run-web` Playwright driver already proves this is possible
 without a logged-in session; a real login-gated flow still needs either a
