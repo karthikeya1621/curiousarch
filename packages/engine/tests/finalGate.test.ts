@@ -19,6 +19,40 @@ describe("checkFinalModel: a sound model has no violations", () => {
   });
 });
 
+describe("checkFinalModel: a queue or broker needs both ends", () => {
+  const withQueue = (edges: [string, string][], kind = "queue") =>
+    model([comp("gw", "gateway"), comp("svc", "service"), comp("q", kind), comp("worker", "service")], edges);
+  const both: [string, string][] = [["gw", "svc"], ["svc", "q"], ["q", "worker"]];
+
+  it("accepts a queue with a producer and a consumer", () => {
+    expect(checkFinalModel(withQueue(both), { anythingAsked: false })).toEqual([]);
+  });
+
+  it("flags a queue nothing consumes, naming the rule the model can repair it by", () => {
+    const text = checkFinalModel(withQueue([["gw", "svc"], ["svc", "q"], ["svc", "worker"]]), { anythingAsked: false }).join("|");
+    expect(text).toMatch(/Q has no consumer/);
+    expect(text).toMatch(/dead-letter queue: draw the component that reprocesses or inspects its messages/);
+  });
+
+  it("flags a broker nobody subscribes to (the dead-letter queue that reached a user twice)", () => {
+    const text = checkFinalModel(withQueue([["gw", "svc"], ["svc", "q"], ["svc", "worker"]], "message-broker"), { anythingAsked: false }).join("|");
+    expect(text).toMatch(/Q has no subscribers/);
+  });
+
+  it("flags a queue nothing writes to", () => {
+    const text = checkFinalModel(withQueue([["gw", "svc"], ["q", "worker"], ["svc", "worker"]]), { anythingAsked: false }).join("|");
+    expect(text).toMatch(/Q has no producer/);
+  });
+
+  it("only counts ends the result introduces: an older project's existing dead end does not block a Re-simulate", () => {
+    const legacy = withQueue([["gw", "svc"], ["svc", "q"], ["svc", "worker"]]);
+    expect(checkFinalModel(legacy, { previous: legacy, anythingAsked: false })).toEqual([]);
+    // ...but a second one the result adds is still caught
+    const worse = model([...(legacy.components as unknown as object[]), comp("q2", "queue")], [...legacy.edges.map((e) => [e.from, e.to] as [string, string]), ["svc", "q2"]]);
+    expect(checkFinalModel(worse, { previous: legacy, anythingAsked: false }).join("|")).toMatch(/Q2 has no consumer/);
+  });
+});
+
 describe("checkFinalModel: structure and identity", () => {
   it.each([
     ["a title that is JSON", { name: '{"value":"X"}' }, /contains JSON/],

@@ -196,6 +196,8 @@ Then list findings, each with its "area" (one of those, or "other" for anything 
 
 You are also given "Facts from the diagram": things read off its structure (which stores several components share, how each queue or broker is wired, which components fan out widely, which parts are reached two ways). They are facts, not findings - decide what they mean at this scale.
 
+You may also be given "Already reported": structural problems the tool detects and shows the user on its own. Do not raise these again, and do not raise the same problem in other words (a differently worded restatement on the same component is still a duplicate - it shows up as two findings for one problem). Spend your findings on what that list does not cover.
+
 Output only the structured decisions and findings list. Do not add any other commentary.`;
 
 export function buildFindingsToolInputSchema(): Record<string, unknown> {
@@ -220,9 +222,16 @@ export async function identifyFailures(
   model: SystemModel,
   options: StructuredCallOptions = {},
 ): Promise<AiFinding[]> {
+  // Found by the graph itself and shown alongside the AI's findings. Handed to the review up front so it does not
+  // restate them: matching on the finding CODE could not catch that (the AI named its own code for the same problem on
+  // the same dead-letter queue, and the user saw it twice), and matching on wording would be a keyword heuristic.
+  const lint = lintTopology(model);
+  const alreadyReported = lint.length
+    ? `\n\nAlready reported:\n${lint.map((f) => `- ${f.componentId}: ${f.title}`).join("\n")}`
+    : "";
   const result = await runStructuredCall(
     IDENTIFY_FAILURES_PROMPT,
-    `${JSON.stringify(model)}\n\nFacts from the diagram:\n${graphFacts(model)}`,
+    `${JSON.stringify(model)}\n\nFacts from the diagram:\n${graphFacts(model)}${alreadyReported}`,
     IdentifyFailuresResponseSchema,
     buildTool(),
     {
@@ -250,5 +259,5 @@ export async function identifyFailures(
     dropMisattributedFindings(dropInstanceCountFindings(result.data.findings, model), model),
     model.workload,
   );
-  return mergeLintFindings(rankFindings(fromAi), lintTopology(model));
+  return mergeLintFindings(rankFindings(fromAi), lint);
 }

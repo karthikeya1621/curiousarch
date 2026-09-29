@@ -124,7 +124,7 @@ function DashboardView({ dashboard, days }: { dashboard: Dashboard; days: number
       <Card>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Cost per day</h2>
-          <p className="flex items-center gap-3 text-[11px] text-slate-400">
+          <p className="flex items-center gap-3 text-[11px] text-slate-500 dark:text-slate-400">
             <span className="flex items-center gap-1">
               <span className="h-2 w-2 rounded-sm bg-cyan-500 dark:bg-cyan-400" /> total
             </span>
@@ -155,7 +155,7 @@ function DashboardView({ dashboard, days }: { dashboard: Dashboard; days: number
             );
           })}
         </div>
-        <div className="mt-1 flex justify-between text-[11px] text-slate-400">
+        <div className="mt-1 flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
           <span>{daily[0]?.day}</span>
           <span>peak {formatUsd(maxDaily)}</span>
           <span>{daily.at(-1)?.day}</span>
@@ -255,7 +255,7 @@ function DashboardView({ dashboard, days }: { dashboard: Dashboard; days: number
             { header: "Action id", cell: (r) => <code className="text-[11px]">{r.action_id}</code> },
           ]}
         />
-        <p className="mt-2 text-[11px] text-slate-400">A “+” means some of that action&apos;s calls have no configured price, so its true cost is higher.</p>
+        <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">A “+” means some of that action&apos;s calls have no configured price, so its true cost is higher.</p>
       </Section>
 
       <Section title="Recent failures" note="Latest 20 failed attempts (invalid output, no tool call, request errors)">
@@ -287,7 +287,7 @@ function Kpi({ label, value, hint, tone }: { label: string; value: string; hint?
       >
         {value}
       </p>
-      {hint && <p className="mt-0.5 text-[11px] text-slate-400">{hint}</p>}
+      {hint && <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{hint}</p>}
     </Card>
   );
 }
@@ -296,7 +296,7 @@ function Section({ title, note, children }: { title: string; note?: string; chil
   return (
     <Card>
       <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
-      {note && <p className="text-[11px] text-slate-400">{note}</p>}
+      {note && <p className="text-[11px] text-slate-500 dark:text-slate-400">{note}</p>}
       <div className="mt-3 overflow-x-auto">{children}</div>
     </Card>
   );
@@ -312,7 +312,7 @@ interface Column<T> {
 }
 
 function Table<T>({ rows, columns, empty }: { rows: T[]; columns: Column<T>[]; empty: string }) {
-  if (rows.length === 0) return <p className="text-sm text-slate-400">{empty}</p>;
+  if (rows.length === 0) return <p className="text-sm text-slate-500 dark:text-slate-400">{empty}</p>;
   return (
     <table className="w-full text-left text-xs">
       <thead>

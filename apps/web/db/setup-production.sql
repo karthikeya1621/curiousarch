@@ -38,6 +38,28 @@ create policy "update own projects" on public.projects for update using (auth.ui
 drop policy if exists "delete own projects" on public.projects;
 create policy "delete own projects" on public.projects for delete using (auth.uid() = user_id);
 
+-- Abuse limits. The anon key is public and a guest is a real authenticated user, so a script can call the API
+-- directly, bypassing the app, and insert as much as row-level security allows (which is anything, for its own rows).
+-- `not valid`: checked on every new write, existing rows are left alone. 4 MB is far above a real project.
+alter table public.projects drop constraint if exists projects_data_size;
+alter table public.projects add constraint projects_data_size check (pg_column_size(data) < 4000000) not valid;
+
+-- At most 3 projects for a guest (the app allows 1), 200 for anyone else.
+create or replace function public.projects_limit_rows() returns trigger
+language plpgsql set search_path = public as $$
+declare
+  v_cap int := case when coalesce((auth.jwt() ->> 'is_anonymous')::boolean, false) then 3 else 200 end;
+begin
+  if (select count(*) from public.projects where user_id = new.user_id) >= v_cap then
+    raise exception 'project limit reached' using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists projects_limit_rows on public.projects;
+create trigger projects_limit_rows before insert on public.projects
+  for each row execute function public.projects_limit_rows();
+
 -- ======================================================================
 -- ai-usage.sql
 -- ======================================================================

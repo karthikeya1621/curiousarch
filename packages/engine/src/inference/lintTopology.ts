@@ -14,6 +14,15 @@
 
 import type { AiFinding, SystemModel } from "../types.ts";
 
+/**
+ * A queue or broker drawn with only one end is an incomplete diagram, not a design risk: nothing about the system can
+ * be judged from it. Said to every step that draws one (prompts), and enforced on the finished model (finalGate.ts).
+ */
+export const BOTH_ENDS_RULE = `Every queue and every message broker has both ends drawn: something that writes to it and at least one component that reads from it (an edge out of it to each consumer or subscriber). A queue nothing consumes is an incomplete diagram, not a risk to report. That includes a dead-letter queue: draw the component that reprocesses or inspects its messages, or leave the dead-letter queue out.`;
+
+/** The lint findings that mean the graph is incomplete (see BOTH_ENDS_RULE), not that the design has a weakness. */
+export const DEAD_END_CODES: ReadonlySet<string> = new Set(["QUEUE_NO_CONSUMER", "QUEUE_NO_PRODUCER", "BROKER_NO_SUBSCRIBER", "BROKER_NO_PUBLISHER"]);
+
 const ASYNC_KINDS = new Set<string>(["queue", "message-broker"]);
 /** A component traffic passes THROUGH: a direct edge around it is redundant. */
 const PASS_THROUGH_KINDS = new Set<string>([...ASYNC_KINDS, "load-balancer"]);

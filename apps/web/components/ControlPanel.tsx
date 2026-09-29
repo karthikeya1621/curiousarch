@@ -93,7 +93,7 @@ function TierControl({
         />
       </div>
       {value.target !== value.tier && (
-        <p className="mt-1.5 text-[11px] text-slate-400">
+        <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
           Target: {formatTier(value.target)} — from your description
         </p>
       )}

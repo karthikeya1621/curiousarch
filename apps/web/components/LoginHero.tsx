@@ -49,7 +49,7 @@ export function LoginHero() {
           <li key={s.n}>
             <span className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 text-xs text-slate-400">{s.n}</span>
             <p className="mt-2 font-medium text-slate-200">{s.title}</p>
-            <p className="mt-1 leading-snug text-slate-500">{s.body}</p>
+            <p className="mt-1 leading-snug text-slate-400">{s.body}</p>
           </li>
         ))}
       </ol>

@@ -97,7 +97,7 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
         <button
           onClick={() => selectFinding(null)}
           aria-label="Close finding"
-          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+          className="rounded-md p-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
         >
           <XIcon className="h-3.5 w-3.5" />
         </button>
@@ -110,7 +110,7 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
         </p>
       )}
       {status === "fixed" && (
-        <p className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+        <p className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
           <Badge tone="success">Fixed</Badge>
           Re-simulate to confirm and refresh this finding.
         </p>
@@ -142,7 +142,7 @@ export function FindingPanel({ model, finding }: { model: SystemModel; finding: 
               {isSelected && (
                 <div className="flex flex-col gap-2 border-t border-slate-200 px-3 py-2 dark:border-slate-600">
                   {rationale && <p className="text-xs italic text-slate-500 dark:text-slate-400">{rationale}</p>}
-                  {askError && <p className="text-[11px] text-rose-600 dark:text-rose-400">{askError}</p>}
+                  {askError && <p role="alert" className="text-[11px] text-rose-600 dark:text-rose-400">{askError}</p>}
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => askAi(fix)}

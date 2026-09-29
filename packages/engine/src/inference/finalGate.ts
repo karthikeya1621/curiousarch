@@ -14,7 +14,7 @@
  */
 
 import { isExtendedComponent } from "./extendedComponents.ts";
-import { lintTopology } from "./lintTopology.ts";
+import { BOTH_ENDS_RULE, DEAD_END_CODES, lintTopology } from "./lintTopology.ts";
 import { atLowestTier, checkLowestTierMinimal } from "./startMinimal.ts";
 import { MAX_BASE_COMPONENTS, MAX_EXTENDED_COMPONENTS, type SystemModel } from "../types.ts";
 
@@ -99,6 +99,15 @@ export function checkFinalModel(result: SystemModel, ctx: { previous?: SystemMod
 
   // A CDN is reached by clients: nothing points into one.
   for (const f of lintTopology(result)) if (f.code === "CDN_BEHIND_ORIGIN") bad.push(`${f.componentId} is drawn behind a component that calls it`);
+
+  // A queue or broker needs a producer and a consumer. One drawn with a missing end is the generator leaving the graph
+  // incomplete, so it is repaired here instead of being handed to the findings review as a "risk". Only ends the result
+  // introduces count: an older project that already has one must still be re-simulated (its own findings still show it).
+  const deadKey = (f: { code: string; componentId: string }) => `${f.code}\u0000${f.componentId}`;
+  const hadDeadEnds = new Set(ctx.previous ? lintTopology(ctx.previous).filter((f) => DEAD_END_CODES.has(f.code)).map(deadKey) : []);
+  for (const f of lintTopology(result)) {
+    if (DEAD_END_CODES.has(f.code) && !hadDeadEnds.has(deadKey(f))) bad.push(`${f.title} (${BOTH_ENDS_RULE})`);
+  }
 
   // Minimal at the lowest tier: no protection on unless it is stated, and (with nothing asked) no scaling beyond the minimum.
   if (atLowestTier(result.workload)) {

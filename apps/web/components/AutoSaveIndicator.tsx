@@ -74,14 +74,14 @@ export function AutoSaveIndicator() {
   if (isBlank) return null;
 
   return (
-    <div className="flex items-center gap-1.5 text-xs text-slate-400">
+    <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
       {status === "saving" ? (
         <>
-          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-slate-400" />
+          <span className="h-1.5 w-1.5 shrink-0 motion-safe:animate-pulse rounded-full bg-slate-400" />
           Saving…
         </>
       ) : status === "error" ? (
-        <button onClick={() => void retry()} className="flex items-center gap-1 text-rose-600 hover:underline">
+        <button role="alert" onClick={() => void retry()} className="flex items-center gap-1 text-rose-700 hover:underline dark:text-rose-400">
           <AlertTriangleIcon className="h-3.5 w-3.5 shrink-0" />
           Save failed — retry
         </button>

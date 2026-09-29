@@ -28,8 +28,20 @@ export const ComponentNode = memo(function ComponentNode({ data }: NodeProps) {
   return (
     <div
       onClick={() => openComponentDetail(component)}
-      className={`w-50 cursor-pointer rounded-xl border bg-white p-3 shadow-sm transition-shadow hover:shadow-md dark:bg-slate-800 dark:shadow-none dark:hover:shadow-[0_0_0_1px_var(--color-slate-600)] ${border}`}
+      className={`relative w-50 cursor-pointer rounded-xl border bg-white p-3 shadow-sm transition-shadow hover:shadow-md dark:bg-slate-800 dark:shadow-none dark:hover:shadow-[0_0_0_1px_var(--color-slate-600)] ${border}`}
     >
+      {/* The keyboard way in: a real button over the whole card (the mouse click above still works). The diagram's own
+          node focus is off (FlowDiagram `nodesFocusable={false}`), so each node is exactly one tab stop, and the failure
+          badge sits above this in its own stacking layer. */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          openComponentDetail(component);
+        }}
+        aria-label={`${component.label}, ${component.kind}. ${findings.length} possible ${findings.length === 1 ? "failure" : "failures"}. Open details`}
+        className="absolute inset-0 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+      />
       <Handle type="target" position={Position.Left} className="bg-slate-300! dark:bg-slate-600!" />
       <Handle type="source" position={Position.Right} className="bg-slate-300! dark:bg-slate-600!" />
       <div className="flex items-start justify-between gap-2">
@@ -43,7 +55,7 @@ export const ComponentNode = memo(function ComponentNode({ data }: NodeProps) {
             <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
               {component.label}
             </p>
-            <p className="truncate text-[11px] text-slate-400">
+            <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
               {component.id} · {component.kind}
             </p>
           </div>
@@ -51,7 +63,7 @@ export const ComponentNode = memo(function ComponentNode({ data }: NodeProps) {
         <FailureIndicator
           nodeId={component.id}
           findings={findings}
-          wrapperClassName="shrink-0"
+          wrapperClassName="relative z-10 shrink-0"
         />
       </div>
     </div>

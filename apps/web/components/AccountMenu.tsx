@@ -86,12 +86,12 @@ export function AccountMenu() {
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1.5 w-56 rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-800">
           {email && (
-            <p className="truncate border-b border-slate-100 px-2.5 py-1.5 text-xs text-slate-400 dark:border-slate-700">
+            <p className="truncate border-b border-slate-100 px-2.5 py-1.5 text-xs text-slate-500 dark:text-slate-400 dark:border-slate-700">
               {email}
             </p>
           )}
           <div className="flex items-center justify-between gap-2 px-2.5 py-2">
-            <span className="text-xs text-slate-400">Theme</span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">Theme</span>
             <ThemeToggle />
           </div>
           <button

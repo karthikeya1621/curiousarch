@@ -243,3 +243,56 @@ describe("dropLargerScaleFindingsWhenSmall — reads the AI's own bitesAt", () =
     expect(dropLargerScaleFindingsWhenSmall([named], small as never)).toEqual([named]);
   });
 });
+
+describe("identifyFailures tells the review what the tool already reports", () => {
+  function capturingClient(response: Anthropic.Message): { client: Anthropic; users: string[] } {
+    const users: string[] = [];
+    const client = {
+      messages: {
+        create: async (req: { messages: { content: unknown }[] }) => {
+          users.push(String(req.messages[0]?.content));
+          return response;
+        },
+      },
+    } as unknown as Anthropic;
+    return { client, users };
+  }
+
+  // A broker nothing subscribes to: the graph itself reports it (BROKER_NO_SUBSCRIBER). Found live: the AI reported the
+  // same dead-letter queue problem under its own code, and the user saw the one problem twice.
+  const withDeadEndBroker = {
+    ...checkout,
+    components: [...checkout.components, { id: "dlq", kind: "message-broker", label: "Dead-Letter Queue" }],
+    edges: [...checkout.edges, { from: "svc", to: "dlq" }],
+  } as never;
+
+  it("lists the structural findings under 'Already reported' so the AI does not restate them", async () => {
+    const { client, users } = capturingClient(toolUseResponse(emptyFindingsInput));
+    const found = await identifyFailures(withDeadEndBroker, { client });
+    expect(users[0]).toContain("Already reported:");
+    expect(users[0]).toContain("- dlq: Dead-Letter Queue has no subscribers");
+    // and the tool's own finding is still shown, once
+    expect(found.filter((f) => f.componentId === "dlq")).toHaveLength(1);
+  });
+
+  it("adds no such section when the graph has nothing structural to report", async () => {
+    const { client, users } = capturingClient(toolUseResponse(emptyFindingsInput));
+    await identifyFailures(checkout, { client });
+    expect(users[0]).not.toContain("Already reported");
+  });
+
+  it("the prompt says a differently worded restatement is still a duplicate", async () => {
+    let system = "";
+    const client = {
+      messages: {
+        create: async (params: { system: unknown }) => {
+          system = JSON.stringify(params.system);
+          return toolUseResponse(emptyFindingsInput);
+        },
+      },
+    } as unknown as Anthropic;
+    await identifyFailures(checkout, { client });
+    expect(system).toMatch(/Already reported/);
+    expect(system).toMatch(/same problem in other words/);
+  });
+});

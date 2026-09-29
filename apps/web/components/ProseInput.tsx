@@ -92,11 +92,11 @@ export function ProseInput() {
         onChange={(e) => setDescription(e.target.value)}
         maxLength={MAX_DESCRIPTION_LENGTH}
         placeholder="e.g. A movie booking system for 1M users..."
-        className="mt-4 w-full flex-1 min-h-48 resize-none rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-slate-500 dark:focus:bg-slate-800"
+        className="mt-4 w-full flex-1 min-h-48 resize-none rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-base text-slate-900 sm:text-sm placeholder:text-slate-500 dark:placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-slate-500 dark:focus:bg-slate-800"
       />
       {/* A starting point, and a lesson in what a good description looks like. Fills the box; never submits. */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-slate-400">Try:</span>
+        <span className="text-xs text-slate-500 dark:text-slate-400">Try:</span>
         {EXAMPLES.map((ex) => (
           <button
             key={ex.label}
@@ -109,7 +109,7 @@ export function ProseInput() {
           </button>
         ))}
       </div>
-      <p className={"mt-2 text-right text-[11px] " + (remaining < 100 ? "text-amber-600 dark:text-amber-400" : "text-slate-400")}>
+      <p className={"mt-2 text-right text-[11px] " + (remaining < 100 ? "text-amber-700 dark:text-amber-400" : "text-slate-500")}>
         {description.length} / {MAX_DESCRIPTION_LENGTH}
       </p>
       <div className="mt-1 flex items-center gap-3">
@@ -121,7 +121,7 @@ export function ProseInput() {
           {loading ? "Inferring…" : "Build model"}
         </button>
       </div>
-      {error && <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
+      {error && <p role="alert" className="mt-2 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
     </Card>
   );
 }

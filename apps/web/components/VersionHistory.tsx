@@ -39,13 +39,13 @@ export function VersionHistory() {
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
       >
-        <ClockIcon className="h-3.5 w-3.5 text-slate-400" />
+        <ClockIcon className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
         Version History
-        <ChevronDownIcon className="h-3.5 w-3.5 text-slate-400" />
+        <ChevronDownIcon className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1.5 w-64 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-800">
+        <div className="absolute right-0 top-full z-30 mt-1.5 w-64 max-w-[calc(100vw-3rem)] sm:left-0 sm:right-auto rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-800">
           <div className="flex max-h-72 flex-col gap-0.5 overflow-y-auto">
             {versions.map((v, i) => (
               <button
@@ -62,7 +62,7 @@ export function VersionHistory() {
                 }
               >
                 <span className="font-medium">Version {i + 1}</span>
-                <span className={previewVersionId === v.id ? "text-[11px] text-slate-300 dark:text-slate-600" : "text-[11px] text-slate-400"}>
+                <span className={previewVersionId === v.id ? "text-[11px] text-slate-300 dark:text-slate-600" : "text-[11px] text-slate-500"}>
                   {new Date(v.createdAt).toLocaleString()}
                 </span>
                 {i > 0 && (

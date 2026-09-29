@@ -14,6 +14,7 @@
   --rf-edge: #cbd5e1;
   --rf-edge-active: #94a3b8;
   --rf-edge-text: #64748b;
+  color-scheme: light;
 }
 
 .dark {
@@ -26,6 +27,7 @@
   --rf-edge: #475569;
   --rf-edge-active: #64748b;
   --rf-edge-text: #94a3b8;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -44,13 +46,21 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-* {
-  border-color: var(--color-slate-200);
-}
-.dark * {
-  border-color: var(--color-slate-700);
+/* The default border colour, in the base layer. It used to be unlayered, and unlayered rules beat Tailwind's utilities
+   (which live in @layer utilities), so every `border-amber-*`, `border-rose-*`, `focus:border-*` and `dark:border-*`
+   written on an element was silently ignored. In the base layer, a colour set on the element wins and this is only
+   the fallback. */
+@layer base {
+  * {
+    border-color: var(--color-slate-200);
+  }
+  .dark * {
+    border-color: var(--color-slate-700);
+  }
 }
 
+/* Deliberately NOT in a layer: unlayered, this outline wins over the `outline-none` on inputs, which is what keeps a
+   visible keyboard focus ring on them (their focus:border-* change alone is too faint). Do not move it into @layer. */
 :focus-visible {
   outline: 2px solid var(--color-blue-500);
   outline-offset: 2px;

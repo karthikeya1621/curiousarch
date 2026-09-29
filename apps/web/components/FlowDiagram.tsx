@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -25,6 +25,17 @@ import { ResimulateButton } from "./ResimulateButton";
 import { ResimulateNotes } from "./ResimulateNotes";
 
 const nodeTypes = { component: ComponentNode, traffic: TrafficNode };
+
+// Phone-width check without an effect: subscribe to the media query, read it on the client, false on the server.
+const NARROW_QUERY = "(max-width: 767px)";
+function subscribeNarrow(onChange: () => void) {
+  const mq = window.matchMedia(NARROW_QUERY);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+function isNarrow() {
+  return window.matchMedia(NARROW_QUERY).matches;
+}
 
 // Hard floor — never let interactive zoom-out go further than this,
 // regardless of how large the diagram is. Matches the fixed value this
@@ -82,6 +93,7 @@ function FlowDiagramInner({
   showResimulate?: boolean;
 }) {
   const { fitView } = useReactFlow();
+  const narrow = useSyncExternalStore(subscribeNarrow, isNarrow, () => false);
   const liveFindings = useAppStore((s) => s.findings);
   const findings = findingsOverride ?? liveFindings;
 
@@ -225,6 +237,14 @@ function FlowDiagramInner({
         edges={edges}
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
+        // Each node carries its own real button (ComponentNode.tsx) so keyboard users can open it; the library's
+        // focusable wrapper would add a second, do-nothing tab stop per node.
+        nodesFocusable={false}
+        // On a phone the 440px canvas fills the screen width, so letting it capture every drag and wheel trapped the
+        // page: one finger scrolls the page, two fingers pan/zoom the diagram (and the wheel scrolls, not zooms).
+        panOnDrag={narrow ? [1, 2] : true}
+        zoomOnScroll={!narrow}
+        preventScrolling={!narrow}
         proOptions={{ hideAttribution: true }}
         // Dynamic, not a flat constant — see computeMinZoom's own comment.
         // Originally a flat 0.1: React Flow's own default (0.5) can't fit

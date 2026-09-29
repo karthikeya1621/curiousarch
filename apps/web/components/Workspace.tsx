@@ -103,14 +103,14 @@ export function Workspace() {
   if (!hydrated) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-350 items-center justify-center px-6 py-5 lg:px-10">
-        <p className="text-sm text-slate-400">Loading your project…</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400">Loading your project…</p>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto w-full max-w-350 px-6 py-5 lg:px-10">
-      <header className="flex items-center justify-between gap-3">
+    <main className="mx-auto w-full max-w-350 px-6 py-5 pb-24 lg:px-10">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <Logo className="h-7 w-auto shrink-0 text-slate-900 dark:text-slate-100" />
           <h1 className="text-lg tracking-tight text-slate-900 dark:text-slate-100">

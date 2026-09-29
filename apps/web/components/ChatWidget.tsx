@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ProjectChat } from "./ProjectChat";
 import { ChatIcon } from "./icons";
 
@@ -23,6 +23,17 @@ import { ChatIcon } from "./icons";
  */
 export function ChatWidget() {
   const [open, setOpen] = useState(false);
+  const fabRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(false);
+
+  // Keyboard and screen-reader users: opening the chat puts focus in its input, and closing it puts focus back on
+  // the button that opened it (both were left on <body> before, because the hidden one is `inert`).
+  useEffect(() => {
+    if (open) panelRef.current?.querySelector<HTMLElement>("input, textarea")?.focus();
+    else if (wasOpen.current) fabRef.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
 
   return (
     <>
@@ -39,9 +50,10 @@ export function ChatWidget() {
             state at all). Two Tailwind-default animations, no custom
             keyframes: an outward `animate-ping` ring for motion, plus a
             static blurred gradient behind it for an ambient glow. */}
-        <span className="absolute inset-0 rounded-full bg-cyan-400 opacity-75 animate-ping" />
+        <span className="absolute inset-0 rounded-full bg-cyan-400 opacity-75 motion-safe:animate-ping" />
         <span className="absolute -inset-1 rounded-full bg-linear-to-br from-cyan-500 to-blue-500 opacity-30 blur-md" />
         <button
+          ref={fabRef}
           onClick={() => setOpen(true)}
           className="relative flex h-12 items-center gap-2 rounded-full bg-slate-900 px-5 text-white shadow-lg transition-colors hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300"
         >
@@ -51,6 +63,13 @@ export function ChatWidget() {
       </div>
 
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-label="Ask or change this system"
+        onKeyDown={(e) => {
+          // The /comp picker uses Escape to close itself (and prevents default): only an unhandled Escape closes the chat.
+          if (e.key === "Escape" && !e.defaultPrevented) setOpen(false);
+        }}
         inert={!open}
         // `overflow-hidden` is the actual fix for a long reply pushing the
         // panel off-screen with no way to scroll to it: without it, if

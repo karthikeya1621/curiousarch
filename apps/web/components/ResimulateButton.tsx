@@ -104,7 +104,7 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
         // teal (ComponentNode.tsx) — same "fresh/modern" family the user
         // picked, but a distinct enough hue that a queue/database node
         // tint is never confused with the app's primary action color.
-        className="flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors enabled:hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex items-center gap-1.5 rounded-lg bg-cyan-700 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors enabled:hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {loading ? "Re-simulating…" : "Re-simulate"}
       </button>
@@ -114,7 +114,7 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
           next Re-simulate may have little or no room to add more.
         </p>
       )}
-      {error && <p className="max-w-xs text-right text-[11px] text-rose-600 dark:text-rose-400">{error}</p>}
+      {error && <p role="alert" className="max-w-xs text-right text-[11px] text-rose-600 dark:text-rose-400">{error}</p>}
     </div>
   );
 }

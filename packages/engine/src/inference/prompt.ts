@@ -6,6 +6,7 @@
  */
 
 import { MAX_BASE_COMPONENTS } from "../types.ts";
+import { BOTH_ENDS_RULE } from "./lintTopology.ts";
 
 export const SYSTEM_PROMPT = `You are converting a plain-English description of a distributed system into a rough architectural model — the kind of model a senior engineer would sketch on a whiteboard, not a capacity-planning spreadsheet. Every field is a rough category (a boolean or a small set of choices), never a number. Do not invent numeric parameters; they don't exist in this schema.
 
@@ -36,5 +37,7 @@ Rules:
 - Include at least one component beyond the gateway — a gateway alone admits or rejects traffic but does no work, and describes nothing about the system's actual architecture.
 - At most ${MAX_BASE_COMPONENTS} components total. A rough whiteboard sketch stays legible; a bigger number is a sign you're modelling incidental detail instead of the core topology — collapse or omit before you reach the limit, don't pad up to it.
 - This schema has no workload/scale field of any kind — that's extracted by a separate call (see inference/workloadParameters.ts) and merged in afterward. Describe only the topology.
+
+${BOTH_ENDS_RULE}
 
 Output only the structured model. Do not add findings, recommendations, or commentary — a separate step decides what's wrong with the model you produce, and phrasing that yourself is exactly the boundary this tool does not cross.`;

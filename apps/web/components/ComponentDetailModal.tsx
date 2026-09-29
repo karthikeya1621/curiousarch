@@ -52,15 +52,15 @@ export function ComponentDetailModal() {
   const KindIcon = KIND_ICON[component.kind];
 
   return (
-    <Modal open={Boolean(component)} onClose={closeComponentDetail} widthClassName="max-w-lg">
+    <Modal open={Boolean(component)} onClose={closeComponentDetail} widthClassName="max-w-lg" labelledBy="component-detail-title">
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${KIND_TONE[component.kind]}`}>
             <KindIcon className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{component.label}</p>
-            <p className="truncate text-[11px] text-slate-400">
+            <p id="component-detail-title" className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{component.label}</p>
+            <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
               {component.id} · {component.kind}
             </p>
           </div>
@@ -68,7 +68,7 @@ export function ComponentDetailModal() {
         <button
           onClick={closeComponentDetail}
           aria-label="Close"
-          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+          className="rounded-md p-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
         >
           <XIcon className="h-3.5 w-3.5" />
         </button>
@@ -83,7 +83,7 @@ export function ComponentDetailModal() {
                   <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{field}</span>
                   <Badge tone={PROVENANCE_TONE[trait.provenance]}>{trait.provenance}</Badge>
                 </div>
-                <p className="text-[11px] text-slate-400">{trait.rationale}</p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">{trait.rationale}</p>
               </div>
               <span className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-300">
                 {typeof trait.value === "boolean" ? (trait.value ? "on" : "off") : String(trait.value)}
@@ -94,11 +94,11 @@ export function ComponentDetailModal() {
       )}
 
       <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-700">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           Fixes for this component
         </p>
         {fixesHere.length === 0 ? (
-          <p className="mt-1.5 text-xs text-slate-400">No fixes chosen for this component yet.</p>
+          <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">No fixes chosen for this component yet.</p>
         ) : (
           <div className="mt-1.5 flex flex-col gap-1.5">
             {fixesHere.map((f, i) => (
@@ -113,7 +113,7 @@ export function ComponentDetailModal() {
                       {f.status === "queued" ? "Queued" : "Applied"}
                     </Badge>
                   </div>
-                  <p className="text-slate-400">for: {f.findingTitle}</p>
+                  <p className="text-slate-500 dark:text-slate-400">for: {f.findingTitle}</p>
                 </div>
               </div>
             ))}

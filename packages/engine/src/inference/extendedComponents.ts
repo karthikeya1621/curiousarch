@@ -34,6 +34,7 @@ import {
 import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.ts";
 import { TIER_GROUP_GUIDE } from "./tierGuide.ts";
 import { checkLowestTierMinimal } from "./startMinimal.ts";
+import { BOTH_ENDS_RULE } from "./lintTopology.ts";
 import { MAX_EXTENDED_COMPONENTS, MAX_TOTAL_COMPONENTS, type Component, type Edge, type SystemModel } from "../types.ts";
 
 type SystemModelWorkload = SystemModel["workload"];
@@ -302,7 +303,7 @@ const KIND_GUIDE = `You may ONLY use these ${EXTENDED_KINDS.length} extended kin
 
 Most systems need zero or one of these, but a description that NAMES one (a load balancer, a CDN, object storage, a third-party provider, a scheduled job) has stated it - include it. Only include a kind the description (or the existing system) genuinely calls for. Do not add one just to have used it, and never more than ${MAX_EXTENDED_COMPONENTS} in total. Every trait needs "rationale" (one real line of roughly 8 to 15 words tied to something specific, never a generic filler word standing in for one; if there's nothing specific to point to, say that as the reason itself) and "provenance" ("stated" the description said so, "inferred" you derived it from something else, or "default" your own reasonable choice).`;
 
-const EDGE_REQUIREMENT = `Every component you emit MUST have at least one edge connecting it to something — either an id from the base topology you were given, or the id of another component you're emitting here. A component with no edge at all is a floating box on the diagram and is never correct: figure out which existing component would realistically call or depend on it (usually the service whose job description implies the connection), and wire it in. Never reference an id that doesn't exist in either set.`;
+const EDGE_REQUIREMENT = `Every component you emit MUST have at least one edge connecting it to something — either an id from the base topology you were given, or the id of another component you're emitting here. A component with no edge at all is a floating box on the diagram and is never correct: figure out which existing component would realistically call or depend on it (usually the service whose job description implies the connection), and wire it in. Never reference an id that doesn't exist in either set. ${BOTH_ENDS_RULE}`;
 
 // Exported for tests/extendedComponents.test.ts's regression coverage on
 // the "never spell out a banned rationale word" fix (see schema.ts's

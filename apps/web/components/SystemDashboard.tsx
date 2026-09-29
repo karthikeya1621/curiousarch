@@ -70,7 +70,7 @@ export function SystemDashboard({
             {healthBadge}
             {findings.length > 0 && (
               <ChevronDownIcon
-                className={"h-3.5 w-3.5 text-slate-400 transition-transform " + (expanded ? "rotate-180" : "")}
+                className={"h-3.5 w-3.5 text-slate-500 dark:text-slate-400 transition-transform " + (expanded ? "rotate-180" : "")}
               />
             )}
           </div>
@@ -109,7 +109,7 @@ export function SystemDashboard({
                     {status === "fixed" && <Badge tone="success">Fixed</Badge>}
                     <div className="min-w-0">
                       <span className="font-medium text-slate-900 dark:text-slate-100">{f.title}</span>
-                      <span className="text-slate-400"> · {f.componentId}</span>
+                      <span className="text-slate-500 dark:text-slate-400"> · {f.componentId}</span>
                       <p className="text-xs text-slate-500 dark:text-slate-400">
                         {status === "queued"
                           ? "Queued — Re-simulate to see this fix in action."

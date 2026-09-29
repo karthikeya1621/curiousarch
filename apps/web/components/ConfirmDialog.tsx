@@ -26,8 +26,8 @@ export function ConfirmDialog({
   onCancel: () => void;
 }) {
   return (
-    <Modal open={open} onClose={onCancel}>
-      <div role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-message">
+    <Modal open={open} onClose={onCancel} role="alertdialog" labelledBy="confirm-dialog-title" describedBy="confirm-dialog-message">
+      <div>
         <h2 id="confirm-dialog-title" className="text-sm font-semibold text-slate-900 dark:text-slate-100">
           {title}
         </h2>

@@ -34,9 +34,12 @@ export function FailureIndicator({
     <div className={wrapperClassName}>
       <button
         className={
-          "nodrag flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white ring-2 ring-white transition-colors dark:ring-slate-800 " +
-          (isOpen ? "bg-amber-600" : "bg-amber-400 hover:bg-amber-500")
+          // Dark text: white on amber was about 1.7:1. Selected is a stronger amber, not a darker one that would need white again.
+          "nodrag flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-slate-900 ring-2 ring-white transition-colors dark:ring-slate-800 " +
+          (isOpen ? "bg-amber-500" : "bg-amber-400 hover:bg-amber-300")
         }
+        aria-label={`${findings.length} possible ${findings.length === 1 ? "failure" : "failures"} on ${nodeId}`}
+        aria-expanded={isOpen}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           // Otherwise this bubbles up into ComponentNode's own onClick and

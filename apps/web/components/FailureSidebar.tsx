@@ -42,8 +42,8 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
 
   if (findingsStatus === "loading") {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-400">
-        <SparklesIcon className="h-4 w-4 shrink-0 text-slate-400" />
+      <div role="status" className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-400">
+        <SparklesIcon className="h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400" />
         <span>Reviewing this architecture…</span>
       </div>
     );
@@ -71,7 +71,7 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
   if (!openComponentId) {
     return (
       <div className="flex items-start gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-400">
-        <AlertTriangleIcon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+        <AlertTriangleIcon className="mt-0.5 h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400" />
         <span>Click a node&apos;s failure-count badge to see what could go wrong there.</span>
       </div>
     );
@@ -86,7 +86,7 @@ export function FailureSidebar({ model }: { model: SystemModel }) {
         <button
           onClick={() => setOpenComponentId(null)}
           aria-label="Close"
-          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+          className="rounded-md p-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
         >
           <XIcon className="h-3.5 w-3.5" />
         </button>

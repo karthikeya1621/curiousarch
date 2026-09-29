@@ -77,7 +77,7 @@ import { runStructuredCall, type StructuredCallOptions } from "./structuredCall.
 import { TIER_GROUP_GUIDE } from "./tierGuide.ts";
 import { atLowestTier, checkLowestTierMinimal, startMinimal } from "./startMinimal.ts";
 import { checkFinalModel, ModelGateError } from "./finalGate.ts";
-import { collapseParallelAsyncPaths, dedupeEdges, routableLoadBalancers } from "./lintTopology.ts";
+import { BOTH_ENDS_RULE, collapseParallelAsyncPaths, dedupeEdges, routableLoadBalancers } from "./lintTopology.ts";
 
 export { dedupeEdges };
 import { cleanModelIdentity, MAX_BASE_COMPONENTS, type Component, type SystemModel } from "../types.ts";
@@ -96,6 +96,7 @@ Rules, same as always:
 
 ${TIER_GROUP_GUIDE}
 - Tier-driven values are yours to keep right, automatically: instance counts, consumer scaling and the baseline protections named in the tier groups above, for components you keep and components you add, in both directions as the scale is raised or lowered. Every OTHER protection (circuit breakers, stampede protection, dead-letter queues, fallbacks, versioning, locking, origin shields) stays as it is unless a listed fix or requested change asks for it - the separate review step reports those as risks. A protection you leave off is not a mistake here.
+- ${BOTH_ENDS_RULE}
 - Keep the same top-level "id" and "name" - you are reworking this system, not renaming it.
 - Preserve every existing connection between two components you're both keeping unless you have a specific architectural reason to remove it (including routing it through a newly inserted component) - a rework that silently drops real connections produces a diagram that no longer reflects the actual system.
 - At most ${MAX_BASE_COMPONENTS} components in your own output. If the holistic review would call for more, that's a sign to fold or reconsider something already there before adding, not to grow past the limit.

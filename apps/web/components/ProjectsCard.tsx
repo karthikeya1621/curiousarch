@@ -99,9 +99,9 @@ export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolea
         className="relative mt-3 flex min-h-0 flex-col overflow-y-auto overscroll-contain pr-1 [scrollbar-width:thin]"
       >
         {projectsStatus === "loading" && projects.length === 0 ? (
-          <p className="px-1 py-1.5 text-xs text-slate-400">Loading…</p>
+          <p className="px-1 py-1.5 text-xs text-slate-500 dark:text-slate-400">Loading…</p>
         ) : projects.length === 0 ? (
-          <p className="px-1 py-1.5 text-xs text-slate-400">
+          <p className="px-1 py-1.5 text-xs text-slate-500 dark:text-slate-400">
             Not saved yet — projects save automatically as you build.
           </p>
         ) : (
@@ -124,7 +124,7 @@ export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolea
                 {p.id === currentProjectId ? (
                   <CheckCircleIcon className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                 ) : (
-                  <FolderIcon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <FolderIcon className="h-3.5 w-3.5 shrink-0 text-slate-500 dark:text-slate-400" />
                 )}
                 <span
                   className={
@@ -136,7 +136,7 @@ export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolea
                 >
                   {p.name || "Untitled"}
                 </span>
-                <span className="shrink-0 text-[11px] text-slate-400">
+                <span className="shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
                   {timeAgo(p.updatedAt)}
                 </span>
               </button>

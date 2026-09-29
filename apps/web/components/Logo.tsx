@@ -10,7 +10,7 @@ export function Logo({ className }: { className?: string }) {
   const shape = `logo-shape-${uid}`;
   const mask = `logo-cutouts-${uid}`;
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 280" className={className} role="img" aria-label="CuriousArch">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 280" className={className} aria-hidden="true" focusable="false">
       <defs>
         <path id={shape} d="M140 0 H420 A60 60 0 0 1 480 60 V220 A60 60 0 0 1 420 280 H140 A140 140 0 0 1 140 0 Z" />
         <mask id={mask} maskUnits="userSpaceOnUse" x="0" y="0" width="480" height="280">

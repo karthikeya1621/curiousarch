@@ -27,7 +27,7 @@ export function EmptyStateAside() {
       />
       <div className="pointer-events-none absolute -right-16 -top-10 h-64 w-64 rounded-full bg-amber-500/10 blur-3xl" />
 
-      <p className="relative text-xs font-medium uppercase tracking-wide text-slate-500">What you&apos;ll see</p>
+      <p className="relative text-xs font-medium uppercase tracking-wide text-slate-400">What you&apos;ll see</p>
       <BreakingDiagram className="relative mt-4 w-full" />
 
       <ol className="relative mt-8 space-y-4 text-sm">
@@ -38,7 +38,7 @@ export function EmptyStateAside() {
             </span>
             <span>
               <span className="font-medium text-slate-200">{s.title}</span>
-              <span className="block leading-snug text-slate-500">{s.body}</span>
+              <span className="block leading-snug text-slate-400">{s.body}</span>
             </span>
           </li>
         ))}

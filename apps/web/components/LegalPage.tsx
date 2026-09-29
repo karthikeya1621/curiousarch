@@ -14,7 +14,7 @@ export function LegalPage({ title, children }: { title: string; children: ReactN
         <Wordmark className="text-lg" />
       </Link>
       <h1 className="mt-8 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">{title}</h1>
-      <p className="mt-1 text-xs text-slate-400">Last updated {LEGAL_UPDATED}</p>
+      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Last updated {LEGAL_UPDATED}</p>
       <div className="mt-6 space-y-5 [&_h2]:mt-8 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-slate-900 dark:[&_h2]:text-slate-100 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5">
         {children}
       </div>

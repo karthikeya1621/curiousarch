@@ -34,8 +34,6 @@ export function GuestBanner() {
     return () => window.removeEventListener(TRIAL_LIMIT_EVENT, onLimit);
   }, []);
 
-  if (!limited) return null;
-
   async function upgrade(e: React.FormEvent) {
     e.preventDefault();
     if (!email || status === "sending") return;
@@ -54,11 +52,14 @@ export function GuestBanner() {
     ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
     : "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300";
 
+  // The live region itself is mounted from the first render and never re-created (a region inserted together with its
+  // text is often not announced); only the visual banner inside it is remounted to replay the flash.
   return (
+    <div role="status" aria-live="polite">
+      {limited && (
     <div
       ref={bannerRef}
       key={flash}
-      role="status"
       className={`${flash > 0 ? "trial-flash " : ""}mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${tone}`}
     >
       <span>
@@ -89,7 +90,9 @@ export function GuestBanner() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            className="w-48 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 outline-none focus:border-slate-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+            aria-label="Email address"
+            autoComplete="email"
+            className="w-48 rounded-md border border-slate-300 bg-white px-2 py-1 text-base text-slate-900 outline-none sm:text-xs focus:border-slate-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
           />
           <button
             type="submit"
@@ -100,7 +103,9 @@ export function GuestBanner() {
           </button>
         </form>
       )}
-      {error && <span className="w-full text-xs text-rose-600 dark:text-rose-400">{error}</span>}
+      {error && <span role="alert" className="w-full text-xs text-rose-600 dark:text-rose-400">{error}</span>}
+    </div>
+      )}
     </div>
   );
 }

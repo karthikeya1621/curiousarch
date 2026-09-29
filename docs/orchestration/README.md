@@ -48,7 +48,9 @@ A repeatable way to review and harden this repo before a release using one **orc
 
 ## Runs
 
-### Run 1 - Sep 28 2026 (working tree on top of 3015f46, uncommitted)
+### Run 1 - Sep 28 2026 (reviewed on top of 3015f46; fixes committed as 884ad43)
+
+Full specialist reports and the action list: [runs/2026-09-28/](runs/2026-09-28/) ([ACTION-ITEMS.md](runs/2026-09-28/ACTION-ITEMS.md)).
 
 Six specialists ran in parallel, read-only. Gate at start: typecheck, lint and 650 tests green (run by the tests-ci specialist); nothing browser-tested. Several findings were reported by 3+ specialists; those are merged. Each was re-read against the code before triage (verified: SDK default retries, client-callable quota refund, content-length-only size guard, silent auth-callback failure).
 
