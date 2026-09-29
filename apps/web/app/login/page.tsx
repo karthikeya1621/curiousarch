@@ -160,12 +160,19 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="grid min-h-screen lg:grid-cols-[1.15fr_1fr]">
+    <main className="grid min-h-screen lg:h-screen lg:grid-cols-[1.15fr_1fr] lg:overflow-hidden">
       <Script src="https://accounts.google.com/gsi/client" onLoad={onGoogleScriptLoad} />
       <LoginHero />
-      <div className="flex flex-col items-center justify-center px-6 py-10">
+      {/* `lg:h-screen lg:overflow-y-auto`: this column is capped to one viewport and scrolls on its own,
+          so it never inherits height from the hero panel next to it (see LoginHero.tsx's comment - that
+          was what pushed the card down and cut off the Terms/Privacy line below the fold). `my-auto` on
+          the inner wrapper, not `justify-center` on this flex column, is what centers the content: auto
+          margins collapse to 0 once the content is taller than the viewport, so a very short screen gets
+          a scrollbar and top-aligned content instead of clipping the bottom of the form. */}
+      <div className="flex flex-col items-center px-6 py-10 lg:h-screen lg:overflow-y-auto">
+        <div className="my-auto flex w-full max-w-sm flex-col items-center">
         {/* Small screens have no hero panel: the brand and the one-line pitch lead instead. */}
-        <div className="mb-8 flex max-w-sm flex-col items-center gap-3 text-center lg:hidden">
+        <div className="mb-8 flex flex-col items-center gap-3 text-center lg:hidden">
           <div className="flex items-center gap-2.5 text-slate-900 dark:text-slate-100">
             <Logo className="h-8 w-auto" />
             <Wordmark className="text-2xl" />
@@ -173,7 +180,7 @@ export default function LoginPage() {
           <h1 className="text-sm text-slate-500 dark:text-slate-400">See where your system breaks before your users do.</h1>
         </div>
 
-        <Card className="w-full max-w-sm">
+        <Card className="w-full">
           <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Sign in</h2>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Save your systems and pick up where you left off.</p>
 
@@ -245,11 +252,12 @@ export default function LoginPage() {
           </p>
         )}
         </Card>
-        <p className="mt-4 max-w-sm text-center text-xs text-slate-500 dark:text-slate-400">
+        <p className="mt-4 text-center text-xs text-slate-500 dark:text-slate-400">
           By continuing you agree to the{" "}
           <a href="/terms" className="underline hover:text-slate-600 dark:hover:text-slate-300">Terms</a> and{" "}
           <a href="/privacy" className="underline hover:text-slate-600 dark:hover:text-slate-300">Privacy Policy</a>.
         </p>
+        </div>
       </div>
     </main>
   );

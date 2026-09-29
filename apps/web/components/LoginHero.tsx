@@ -12,10 +12,18 @@ const STEPS = [
  * and a small architecture drawing whose one failing node tells the story (a database that runs out of
  * connections at 10K users). Decorative only - hidden from assistive tech and from small screens, where
  * the sign-in card leads and a compact brand header replaces it (see login/page.tsx).
+ *
+ * `lg:h-screen lg:overflow-y-auto`: this panel's own content (headline + paragraph + diagram + the step
+ * list) can be taller than a laptop viewport. Without a height cap, the two-column grid row in
+ * login/page.tsx stretches to fit it, dragging the sign-in card down with it (it then centers against
+ * this panel's height, not the screen's) and pushing the Terms/Privacy line off the bottom of the
+ * visible page. Capped to one viewport and scrolling independently, it can never do that; on a short
+ * screen this panel itself scrolls instead, which is the one side where that's an acceptable tradeoff
+ * (decorative, not the form the user needs to reach).
  */
 export function LoginHero() {
   return (
-    <section className="relative hidden overflow-hidden bg-slate-950 text-slate-100 lg:flex lg:flex-col lg:justify-between lg:px-14 lg:py-12">
+    <section className="relative hidden overflow-x-hidden bg-slate-950 text-slate-100 lg:flex lg:h-screen lg:flex-col lg:justify-center lg:gap-8 lg:overflow-y-auto lg:px-12 lg:py-8">
       {/* dot grid + soft glow: texture without competing with the text */}
       <div
         aria-hidden
@@ -29,27 +37,27 @@ export function LoginHero() {
       <div aria-hidden className="pointer-events-none absolute -right-24 top-1/3 h-96 w-96 rounded-full bg-amber-500/10 blur-3xl" />
 
       <div className="relative flex items-center gap-3">
-        <Logo className="h-8 w-auto text-white" />
-        <Wordmark className="text-2xl text-white" />
+        <Logo className="h-7 w-auto text-white" />
+        <Wordmark className="text-xl text-white" />
       </div>
 
       <div className="relative">
-        <h1 className="max-w-lg text-4xl font-semibold leading-[1.1] tracking-tight xl:text-5xl">
+        <h1 className="max-w-md text-2xl font-semibold leading-[1.2] tracking-tight xl:text-3xl">
           See where your system breaks <span className="text-amber-400">before your users do.</span>
         </h1>
-        <p className="mt-5 max-w-md text-base leading-relaxed text-slate-400">
+        <p className="mt-3 max-w-sm text-sm leading-relaxed text-slate-400">
           Describe an architecture in plain English. CuriousArch draws it, grows the traffic, and shows what fails first and why.
         </p>
 
-        <BreakingDiagram className="mt-10 w-full max-w-lg" />
+        <BreakingDiagram className="mt-6 w-full max-w-sm" />
       </div>
 
-      <ol className="relative grid max-w-2xl grid-cols-3 gap-6 text-sm">
+      <ol className="relative grid max-w-xl grid-cols-3 gap-6 text-sm">
         {STEPS.map((s) => (
           <li key={s.n}>
-            <span className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 text-xs text-slate-400">{s.n}</span>
-            <p className="mt-2 font-medium text-slate-200">{s.title}</p>
-            <p className="mt-1 leading-snug text-slate-400">{s.body}</p>
+            <span className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-700 text-[11px] text-slate-400">{s.n}</span>
+            <p className="mt-1.5 text-[13px] font-medium text-slate-200">{s.title}</p>
+            <p className="mt-0.5 text-xs leading-snug text-slate-400">{s.body}</p>
           </li>
         ))}
       </ol>

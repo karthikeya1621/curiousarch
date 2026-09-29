@@ -13,3 +13,7 @@ coverage/
 
 # Session handoff note: local, temporary, not part of the repo
 docs/HANDOFF.md
+
+# Local MCP server config - holds a real Supabase access token on this machine,
+# not a shareable placeholder. Never commit this file with a real value in it.
+.mcp.json
