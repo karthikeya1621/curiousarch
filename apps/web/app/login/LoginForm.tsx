@@ -60,7 +60,12 @@ export function LoginForm({ initialGuest }: { initialGuest: { available: boolean
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const googleButtonRef = useRef<HTMLDivElement>(null);
-  const [googleReady, setGoogleReady] = useState(false);
+  // Google's own docs don't publish a height for this - a plain button and the taller "Continue as
+  // [name]" card it renders instead when the browser already has an active Google session are different
+  // sizes, and guessing one fixed number caused exactly the reflow this is meant to prevent. Measured
+  // instead of guessed: null until the ResizeObserver below reports Google's real rendered height, and the
+  // button is only revealed once that's known, so the reveal itself is never a resize.
+  const [googleHeight, setGoogleHeight] = useState<number | null>(null);
   const [guest, setGuest] = useState(initialGuest);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [guestBusy, setGuestBusy] = useState(false);
@@ -167,12 +172,20 @@ export function LoginForm({ initialGuest }: { initialGuest: { available: boolean
       // As wide as the grouped panel allows (280 at most; Google accepts 200-400): a fixed 280 overflowed it on phones.
       width: Math.max(200, Math.min(280, googleButtonRef.current.clientWidth || 280)),
     });
-    // Google inserts its own DOM into the ref rather than calling back with a size, so "ready" just means
-    // "asked it to render" - the reserved slot below is sized to fit either the plain button or the taller
-    // personalized one-tap card Google shows for a browser already signed into a Google account, so nothing
-    // reflows once either version appears inside it.
-    setGoogleReady(true);
+    // Google inserts its own DOM into the ref synchronously here, but gives no callback with its size - the
+    // ResizeObserver below is what actually reveals the button, once it can measure what got rendered.
   }
+
+  useEffect(() => {
+    const el = googleButtonRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const height = Math.round(entry.contentRect.height);
+      if (height > 0) setGoogleHeight(height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <main className="grid min-h-screen lg:h-screen lg:grid-cols-[1.15fr_1fr] lg:overflow-hidden">
@@ -202,15 +215,20 @@ export function LoginForm({ initialGuest }: { initialGuest: { available: boolean
           {/* Google and email are one group: both make a permanent account that keeps your projects. */}
           <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/40">
           <p className="mb-3 text-center text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Your projects are saved</p>
-          {/* Fixed height reserved up front: Google renders its own DOM into this box asynchronously (a plain
-              button, or a taller "sign in as X" card if this browser already has a Google session), and
-              without a reserved slot the whole card grows the moment it does, shoving everything below it
-              down. min-h-15 (60px) comfortably fits either version; the skeleton fills the gap until then. */}
-          <div className="relative flex min-h-15 items-center justify-center">
-            {!googleReady && (
+          {/* Height is the MEASURED result (googleHeight), not a guess: Google renders its own DOM into this
+              box asynchronously (a plain button, or a taller "Continue as X" card if this browser already
+              has a Google session), and revealing it before knowing its real size is exactly what caused a
+              visible resize here before. The button stays in the layout but invisible until the
+              ResizeObserver above reports a height, so the wrapper is already the right size the moment it
+              appears - a skeleton fills the 40px default slot until then. */}
+          <div className="relative flex items-center justify-center" style={{ height: googleHeight ?? 40 }}>
+            {googleHeight === null && (
               <div aria-hidden className="h-10 w-full max-w-70 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
             )}
-            <div ref={googleButtonRef} className={`flex justify-center ${googleReady ? "" : "absolute opacity-0"}`} />
+            <div
+              ref={googleButtonRef}
+              className={`flex justify-center ${googleHeight === null ? "invisible absolute inset-x-0" : ""}`}
+            />
           </div>
 
         <div className="my-3 flex items-center gap-3 text-[11px] text-slate-500 dark:text-slate-400">
