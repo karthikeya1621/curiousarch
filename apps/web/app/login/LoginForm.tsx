@@ -24,10 +24,11 @@ declare global {
           initialize: (config: {
             client_id: string;
             callback: (response: { credential: string }) => void;
+            auto_select?: boolean;
           }) => void;
           renderButton: (
             parent: HTMLElement,
-            options: { theme?: string; size?: string; shape?: string; width?: number },
+            options: { theme?: string; size?: string; shape?: string; width?: number; text?: string },
           ) => void;
         };
       };
@@ -164,11 +165,23 @@ export function LoginForm({ initialGuest }: { initialGuest: { available: boolean
     window.google.accounts.id.initialize({
       client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
       callback: handleGoogleCredential,
+      // Without this, a browser already signed into a Google account gets an optimistic personalized
+      // "Continue as X" button that Google's own async session check then reverts to the generic one a
+      // couple of seconds later (confirmed live: frame-by-frame diffing a recording showed the swap
+      // confined entirely to the button box, nothing else on the page moves - so this isn't the reflow
+      // that was fixed separately, it's Google's own content changing after the fact). auto_select is
+      // documented for suppressing automatic/expedited credential selection; whether it also suppresses
+      // this specific button-level swap isn't documented, so treat this as a plausible mitigation, not a
+      // confirmed fix - it needs checking against a real signed-in-to-Google browser to know for sure.
+      auto_select: false,
     });
     window.google.accounts.id.renderButton(googleButtonRef.current, {
       theme: "outline",
       size: "large",
       shape: "rectangular",
+      // Forces the generic label explicitly rather than letting Google choose one contextually - same
+      // reasoning and same caveat as auto_select above.
+      text: "signin_with",
       // As wide as the grouped panel allows (280 at most; Google accepts 200-400): a fixed 280 overflowed it on phones.
       width: Math.max(200, Math.min(280, googleButtonRef.current.clientWidth || 280)),
     });
