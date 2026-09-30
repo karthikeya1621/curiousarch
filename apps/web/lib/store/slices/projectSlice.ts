@@ -49,7 +49,7 @@ export interface ProjectState {
   currentProjectId: string | null;
   /** The logged-in user's saved projects, for ProjectsDropdown — not kept in sync automatically; refreshProjectList() re-fetches it. */
   projects: ProjectSummary[];
-  projectsStatus: "idle" | "loading" | "done";
+  projectsStatus: "idle" | "loading" | "done" | "error";
 }
 
 export interface ProjectActions {
@@ -89,8 +89,12 @@ export interface ProjectActions {
   refreshProjectList: () => Promise<void>;
   /** Loads a saved project and makes it the live one, updating `currentProjectId` and the last-viewed pointer. Resolves `not-found` if it couldn't be loaded (missing, not this user's) and `superseded` if a newer open took over while it loaded. */
   openProject: (id: string) => Promise<OpenResult>;
-  /** Deletes a saved project. If it was the open one, resets to a blank canvas (like `startNewProject`). */
-  deleteProjectById: (id: string) => Promise<void>;
+  /**
+   * Deletes a saved project. If it was the open one, resets to a blank canvas (like `startNewProject`).
+   * Resolves false on failure (network, RLS) — the project is left in the list rather than vanishing on
+   * screen when nothing actually happened server-side; the caller shows this instead of a silent no-op.
+   */
+  deleteProjectById: (id: string) => Promise<boolean>;
 }
 
 export type ProjectSlice = ProjectState & ProjectActions;
@@ -211,7 +215,15 @@ export function createProjectActions(set: StoreSet, get: StoreGet): ProjectActio
     refreshProjectList: async () => {
       set({ projectsStatus: "loading" });
       const projects = await listProjects();
-      set({ projects: projects ?? [], projectsStatus: "done" });
+      // A failed fetch used to be stored as an empty list, identical to "you genuinely have none" - so a
+      // real outage and an empty account looked the same, and the UI always said "no projects yet" even
+      // when it just couldn't reach the database. On failure the STALE list is kept on screen (a blip
+      // shouldn't make projects that were already loaded vanish) with the status saying why.
+      if (projects === null) {
+        set({ projectsStatus: "error" });
+        return;
+      }
+      set({ projects, projectsStatus: "done" });
     },
 
     openProject: async (id) => {
@@ -232,11 +244,12 @@ export function createProjectActions(set: StoreSet, get: StoreGet): ProjectActio
 
     deleteProjectById: async (id) => {
       const ok = await deleteProject(id);
-      if (!ok) return;
+      if (!ok) return false;
       set((state) => ({ projects: state.projects.filter((p) => p.id !== id) }));
       if (get().currentProjectId === id) {
         get().startNewProject();
       }
+      return true;
     },
   };
 }

@@ -44,6 +44,10 @@ function makeQuery() {
   let payload: Record<string, unknown> | null = null;
   let orderCol: string | null = null;
   let orderAscending = true;
+  // Real Postgrest returns the affected rows from an update/delete when `.select()` is chained after it
+  // (used to tell "matched and wrote a row" apart from "matched nothing, wrote nothing") — mirrored here so
+  // that distinction is actually exercised, not silently always-successful.
+  let returning = false;
   const filters: [string, unknown][] = [];
 
   async function exec(): Promise<{ data: unknown; error: Error | null }> {
@@ -58,12 +62,22 @@ function makeQuery() {
       return { data: row, error: null };
     }
     if (op === "update") {
-      for (const row of fakeProjects.values()) if (matches(row)) Object.assign(row, payload);
-      return { data: null, error: null };
+      const matched: Record<string, unknown>[] = [];
+      for (const row of fakeProjects.values()) {
+        if (!matches(row)) continue;
+        Object.assign(row, payload);
+        matched.push(row);
+      }
+      return { data: returning ? matched : null, error: null };
     }
     if (op === "delete") {
-      for (const [id, row] of fakeProjects) if (matches(row)) fakeProjects.delete(id);
-      return { data: null, error: null };
+      const matched: Record<string, unknown>[] = [];
+      for (const [id, row] of fakeProjects) {
+        if (!matches(row)) continue;
+        matched.push(row);
+        fakeProjects.delete(id);
+      }
+      return { data: returning ? matched : null, error: null };
     }
     let rows = [...fakeProjects.values()].filter(matches);
     if (orderCol) {
@@ -93,6 +107,7 @@ function makeQuery() {
     },
     select(_cols?: string) {
       if (!op) op = "select";
+      else returning = true; // chained after update/delete: ask for RETURNING, don't change the operation
       return builder;
     },
     eq(col: string, val: unknown) {
@@ -614,6 +629,15 @@ describe("save/restore session", () => {
     expect(useAppStore.getState().model.components).toHaveLength(0);
     expect(useAppStore.getState().hydrated).toBe(true);
   });
+
+  it("a save that matches no row (the project was deleted elsewhere) reports failure, not a false 'Saved'", async () => {
+    useAppStore.setState({ model: degradedModel() });
+    await useAppStore.getState().saveToStorage(); // first save: insert, creates the row
+    const id = useAppStore.getState().currentProjectId!;
+    fakeProjects.delete(id); // simulate: gone by the time the next save's UPDATE runs
+
+    await expect(useAppStore.getState().saveToStorage()).resolves.toBe(false);
+  });
 });
 
 describe("multiple projects", () => {
@@ -656,6 +680,44 @@ describe("multiple projects", () => {
     expect(useAppStore.getState().projects.map((p) => p.id)).not.toContain(id);
     expect(useAppStore.getState().currentProjectId).toBeNull();
     expect(useAppStore.getState().model.components).toHaveLength(0);
+  });
+
+  it("deleteProjectById reports failure and leaves the project alone rather than silently no-op'ing", async () => {
+    useAppStore.setState({ model: degradedModel() });
+    await useAppStore.getState().saveToStorage();
+    const id = useAppStore.getState().currentProjectId!;
+    await useAppStore.getState().refreshProjectList();
+
+    authState.dbError = true;
+    await expect(useAppStore.getState().deleteProjectById(id)).resolves.toBe(false);
+    authState.dbError = false;
+
+    // Still there: a failed delete must not vanish from the list on screen.
+    expect(useAppStore.getState().projects.map((p) => p.id)).toContain(id);
+  });
+
+  it("deleteProjectById reports failure when the delete matches no row (already gone), not a false success", async () => {
+    useAppStore.setState({ model: degradedModel() });
+    await useAppStore.getState().saveToStorage();
+    const id = useAppStore.getState().currentProjectId!;
+    fakeProjects.delete(id); // simulate: gone before this delete's own query runs
+
+    await expect(useAppStore.getState().deleteProjectById(id)).resolves.toBe(false);
+  });
+
+  it("refreshProjectList reports 'error' and keeps the stale list, rather than looking like an empty account", async () => {
+    useAppStore.setState({ model: degradedModel() });
+    await useAppStore.getState().saveToStorage();
+    await useAppStore.getState().refreshProjectList();
+    const before = useAppStore.getState().projects;
+    expect(before.length).toBeGreaterThan(0);
+
+    authState.dbError = true;
+    await useAppStore.getState().refreshProjectList();
+    authState.dbError = false;
+
+    expect(useAppStore.getState().projectsStatus).toBe("error");
+    expect(useAppStore.getState().projects).toEqual(before); // stale list kept, not wiped to []
   });
 });
 

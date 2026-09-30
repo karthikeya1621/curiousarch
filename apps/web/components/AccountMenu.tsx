@@ -24,18 +24,25 @@ export function AccountMenu() {
   const [email, setEmail] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarFailed, setAvatarFailed] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => {
-      setEmail(data.user?.email ?? null);
-      // Google OAuth sets one of these on `user_metadata`; a magic-link
-      // user has neither, which is fine — the initial-letter circle below
-      // is the fallback either way.
-      const meta = data.user?.user_metadata as { avatar_url?: string; picture?: string } | undefined;
-      setAvatarUrl(meta?.avatar_url ?? meta?.picture ?? null);
-    });
+    supabase
+      .auth.getUser()
+      .then(({ data }) => {
+        setEmail(data.user?.email ?? null);
+        // Google OAuth sets one of these on `user_metadata`; a magic-link
+        // user has neither, which is fine — the initial-letter circle below
+        // is the fallback either way.
+        const meta = data.user?.user_metadata as { avatar_url?: string; picture?: string } | undefined;
+        setAvatarUrl(meta?.avatar_url ?? meta?.picture ?? null);
+      })
+      // Best-effort: a failed lookup just leaves the initial-letter fallback showing, same as a user
+      // with no avatar at all - not worth surfacing an error for.
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -48,8 +55,19 @@ export function AccountMenu() {
   }, [open]);
 
   async function signOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    if (signingOut) return;
+    setSigningOut(true);
+    setSignOutError(null);
+    try {
+      const { error } = await createClient().auth.signOut();
+      if (error) throw error;
+    } catch (err) {
+      // Without this, a failed sign-out (a network blip) left the button doing nothing forever, with no
+      // sign anything had gone wrong and no reason to think clicking again would help.
+      setSignOutError(err instanceof Error ? err.message : "Couldn't sign out. Try again.");
+      setSigningOut(false);
+      return;
+    }
     // A full page load, not a client-side navigation: the open project lives in the in-memory store,
     // which a soft navigation keeps - the next person to sign in on this browser would see it.
     setLastProjectId(null);
@@ -96,11 +114,17 @@ export function AccountMenu() {
           </div>
           <button
             onClick={() => void signOut()}
-            className="flex w-full items-center gap-1.5 rounded-md border-t border-slate-100 px-2.5 py-1.5 pt-2.5 text-left text-sm text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700"
+            disabled={signingOut}
+            className="flex w-full items-center gap-1.5 rounded-md border-t border-slate-100 px-2.5 py-1.5 pt-2.5 text-left text-sm text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700"
           >
             <LogOutIcon className="h-3.5 w-3.5" />
-            Sign out
+            {signingOut ? "Signing out…" : "Sign out"}
           </button>
+          {signOutError && (
+            <p role="alert" className="px-2.5 pb-1 text-xs text-rose-600 dark:text-rose-400">
+              {signOutError}
+            </p>
+          )}
         </div>
       )}
     </div>

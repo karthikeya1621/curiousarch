@@ -121,6 +121,10 @@ function FlowDiagramInner({
   const isFirstLayout = useRef(true);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [minZoom, setMinZoom] = useState(MIN_ZOOM_FLOOR);
+  // Set when ELK's layout computation (or loading its ~1.6MB chunk in the first place) throws - without
+  // this, a failure here left the canvas permanently blank with no explanation and no way to recover.
+  const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
   // The resize effect below only subscribes once ([fitView] deps, not
   // re-created on every node change) — a ref is what lets its handler see
   // the CURRENT laid-out nodes without needing to resubscribe the
@@ -191,34 +195,47 @@ function FlowDiagramInner({
   const { components, edges: modelEdges } = model;
   useEffect(() => {
     let cancelled = false;
-    layoutModel({ components, edges: modelEdges }).then(({ nodes: laidOut, edges: laidOutEdges }) => {
-      if (cancelled) return;
+    layoutModel({ components, edges: modelEdges })
+      .then(({ nodes: laidOut, edges: laidOutEdges }) => {
+        if (cancelled) return;
+        // A previous attempt's error (if any) no longer applies once a new one succeeds. Not cleared
+        // eagerly at the top of the effect (a synchronous setState in an effect body triggers an extra
+        // render for no benefit here) - this is the first point a real outcome is known.
+        setLayoutError(null);
 
-      // Computed from THIS layout, not read from state — state wouldn't
-      // update in time for the fitView call a few lines down in this same
-      // pass, so the freshly-computed value is used directly for both.
-      const nextMinZoom = wrapperRef.current ? computeMinZoom(laidOut, wrapperRef.current) : MIN_ZOOM_FLOOR;
-      setMinZoom(nextMinZoom);
+        // Computed from THIS layout, not read from state — state wouldn't
+        // update in time for the fitView call a few lines down in this same
+        // pass, so the freshly-computed value is used directly for both.
+        const nextMinZoom = wrapperRef.current ? computeMinZoom(laidOut, wrapperRef.current) : MIN_ZOOM_FLOOR;
+        setMinZoom(nextMinZoom);
 
-      if (isFirstLayout.current) {
-        setNodes(withFindings(laidOut));
-        isFirstLayout.current = false;
-        requestAnimationFrame(() => fitView({ duration: 0, padding: 0.15, minZoom: nextMinZoom }));
-      } else {
-        // Decorated per frame, not once up front: findings can change
-        // during the ~300ms animation, and a frame built from stale data
-        // would overwrite the effect below's update.
-        animateNodes(laidOut, previousPositions.current, (ns) => setNodes(withFindings(ns)), () =>
-          fitView({ duration: 200, padding: 0.15, minZoom: nextMinZoom }),
-        );
-      }
-      for (const n of laidOut) previousPositions.current.set(n.id, n.position);
-      setEdges(laidOutEdges);
-    });
+        if (isFirstLayout.current) {
+          setNodes(withFindings(laidOut));
+          isFirstLayout.current = false;
+          requestAnimationFrame(() => fitView({ duration: 0, padding: 0.15, minZoom: nextMinZoom }));
+        } else {
+          // Decorated per frame, not once up front: findings can change
+          // during the ~300ms animation, and a frame built from stale data
+          // would overwrite the effect below's update.
+          animateNodes(laidOut, previousPositions.current, (ns) => setNodes(withFindings(ns)), () =>
+            fitView({ duration: 200, padding: 0.15, minZoom: nextMinZoom }),
+          );
+        }
+        for (const n of laidOut) previousPositions.current.set(n.id, n.position);
+        setEdges(laidOutEdges);
+      })
+      .catch((err: unknown) => {
+        // ELK's layout() can genuinely reject (a topology it can't place), and the dynamic import of its
+        // ~1.6MB chunk can fail on a flaky connection - either one used to leave this canvas blank forever
+        // with nothing telling the user why, and no way to try again short of reloading the whole page.
+        if (cancelled) return;
+        console.error("[diagram] layout failed:", err);
+        setLayoutError("Couldn't draw this diagram.");
+      });
     return () => {
       cancelled = true;
     };
-  }, [components, modelEdges, withFindings, setNodes, setEdges, fitView]);
+  }, [components, modelEdges, withFindings, setNodes, setEdges, fitView, retryToken]);
 
   // Findings changed, topology didn't: just update the badge data in
   // place — no relayout, no animation, no viewport change.
@@ -232,6 +249,21 @@ function FlowDiagramInner({
       style={{ height: 440 }}
       className="relative overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800"
     >
+      {layoutError && (
+        <div
+          role="alert"
+          className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-white/95 text-center dark:bg-slate-800/95"
+        >
+          <p className="text-sm text-rose-600 dark:text-rose-400">{layoutError}</p>
+          <button
+            type="button"
+            onClick={() => setRetryToken((n) => n + 1)}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            Try again
+          </button>
+        </div>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}

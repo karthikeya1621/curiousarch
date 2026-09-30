@@ -38,6 +38,8 @@ export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolea
   const isBlank = useAppStore((s) => s.model.components.length === 0);
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -99,7 +101,15 @@ export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolea
         className="relative mt-3 flex min-h-0 flex-col overflow-y-auto overscroll-contain pr-1 [scrollbar-width:thin]"
       >
         {projectsStatus === "loading" && projects.length === 0 ? (
-          <p className="px-1 py-1.5 text-xs text-slate-500 dark:text-slate-400">Loading…</p>
+          <p role="status" className="px-1 py-1.5 text-xs text-slate-500 dark:text-slate-400">Loading…</p>
+        ) : projectsStatus === "error" && projects.length === 0 ? (
+          // Distinct from "no projects yet": a fetch failure must never look identical to an empty account.
+          <div role="alert" className="flex items-center justify-between gap-2 px-1 py-1.5 text-xs text-rose-600 dark:text-rose-400">
+            <span>Couldn&apos;t load your projects.</span>
+            <button onClick={() => void refreshProjectList()} className="shrink-0 font-medium underline hover:no-underline">
+              Try again
+            </button>
+          </div>
         ) : projects.length === 0 ? (
           <p className="px-1 py-1.5 text-xs text-slate-500 dark:text-slate-400">
             Not saved yet — projects save automatically as you build.
@@ -142,15 +152,22 @@ export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolea
               </button>
               <button
                 onClick={() => setPendingDeleteId(p.id)}
-                aria-label="Delete project"
-                className="shrink-0 rounded-md p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-600 dark:text-slate-500 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                disabled={deletingId === p.id}
+                aria-label={deletingId === p.id ? "Deleting…" : "Delete project"}
+                className="shrink-0 rounded-md p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-wait disabled:opacity-60 dark:text-slate-500 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
               >
-                <TrashIcon className="h-3.5 w-3.5" />
+                <TrashIcon className={`h-3.5 w-3.5 ${deletingId === p.id ? "motion-safe:animate-pulse" : ""}`} />
               </button>
             </div>
           ))
         )}
       </div>
+
+      {deleteError && (
+        <p role="alert" className="mt-1 px-1 text-xs text-rose-600 dark:text-rose-400">
+          {deleteError}
+        </p>
+      )}
 
       <ConfirmDialog
         open={pendingOpenId !== null}
@@ -175,7 +192,14 @@ export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolea
         onConfirm={() => {
           const id = pendingDeleteId!;
           setPendingDeleteId(null);
-          void deleteProjectById(id);
+          setDeleteError(null);
+          setDeletingId(id);
+          // Fire-and-forget used to mean a failed delete just silently left the project sitting there with
+          // no explanation - the user had no way to know their click hadn't worked.
+          void deleteProjectById(id).then((ok) => {
+            setDeletingId(null);
+            if (!ok) setDeleteError("Couldn't delete that project. Try again.");
+          });
         }}
         onCancel={() => setPendingDeleteId(null)}
       />

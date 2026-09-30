@@ -55,6 +55,7 @@ Done after the first commit (see "Second pass" below); needs a browser check and
 - **`projects.data` abuse**: size check (4 MB, new writes only) and a per-user row cap (3 for guests, 200 otherwise) in `projects.sql` and `setup-production.sql`. **Not yet applied to any database: re-run the SQL.**
 
 ### C2. First weeks
+- **Fixed Sep 30, outside this review**: diagram-layout failure with no message, silent sign-out failure, fire-and-forget project delete, a failed project-list fetch indistinguishable from an empty account, and a save matching zero rows reporting success. See docs/context/web-app-decisions.md ("Error-handling and loading-state sweep").
 - **Fail-open gate**: `reserveTrial` returns no-op if the session lookup throws (proxy already authenticated). Needs mocks in five route tests.
 - **Error monitoring**: `instrumentation.ts` `onRequestError` webhook or Sentry; a deeper health probe (Supabase, key present); build-time check that required env vars exist.
 - **Tests and CI**: SQL execution job on throwaway Postgres (branches listed in [tests-ci](tests-ci.md) #2 plus the new ones); `reserveTrial` gating test for all five routes; proxy public-path tests (`/privacy`, `/terms`, `/api/trial/status`, `/auth/callback`); `/api/trial/me`, `status`, `health`, robots/sitemap/manifest tests; UI tests (GuestBanner states, NewProjectButton, ProjectsCard, chips); browser smoke; `npm audit`; gitleaks; `permissions`/`concurrency`/`timeout` in the workflow.

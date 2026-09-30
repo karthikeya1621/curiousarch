@@ -163,8 +163,12 @@ export async function saveProject(
       if (error || !data) return null;
       return { id: data.id as string, savedAt: withTimestamp.savedAt };
     }
-    const { error } = await supabase.from(TABLE).update(row).eq("id", id).eq("user_id", userId);
-    if (error) return null;
+    // `.select("id")` is what lets a successful-but-matched-nothing update be told apart from a real save:
+    // plain `.update()` returns no error and no row count when it matches zero rows (the project was
+    // deleted elsewhere, or belongs to a different user than expected), which used to report "Saved" for a
+    // write that never happened.
+    const { data, error } = await supabase.from(TABLE).update(row).eq("id", id).eq("user_id", userId).select("id");
+    if (error || !data || data.length === 0) return null;
     return { id, savedAt: withTimestamp.savedAt };
   } catch {
     return null;
@@ -234,8 +238,10 @@ export async function deleteProject(id: string): Promise<boolean> {
   if (!userId) return false;
 
   try {
-    const { error } = await supabase.from(TABLE).delete().eq("id", id).eq("user_id", userId);
-    return !error;
+    // Same reasoning as saveProject's update: a plain `.delete()` reports no error even if it matched
+    // nothing, so without `.select("id")` this would claim success for a delete that touched no row.
+    const { data, error } = await supabase.from(TABLE).delete().eq("id", id).eq("user_id", userId).select("id");
+    return !error && !!data && data.length > 0;
   } catch {
     return false;
   }
