@@ -2,7 +2,7 @@
 
 A repeatable way to review and harden this repo before a release using one **orchestrator** (the main Claude session) and six **specialist agents**. The point is breadth without collisions: specialists look at the code from different angles in parallel and only *report*; one agent (the orchestrator) decides what is real and makes every change.
 
-> Status: written Sep 28 2026. The pattern has **not been run yet** (the agent launch was refused by the tooling on the first attempt). Run it with the `/prod-readiness` skill (`.claude/skills/prod-readiness/SKILL.md`) or by hand as below, then record the outcome under "Runs" at the bottom.
+> Status: written Sep 28 2026, run twice since (Sep 28, Oct 1). Run it with the `/prod-readiness` skill (`.claude/skills/prod-readiness/SKILL.md`) or by hand as below, then record the outcome under "Runs" at the bottom.
 
 ## Roles
 
@@ -82,4 +82,27 @@ Six specialists ran in parallel, read-only. Gate at start: typecheck, lint and 6
 **Outcome (same day):** fixed #1-6, #9-14, #16 (HSTS, `engines`, CI lint+build) and the cheap parts of #8, #18 (email input label, `role=alert` on login errors); docs updated for #3, #8, #9. Gate after fixes: typecheck clean, eslint clean, 658 tests (317 + 341, 8 new), production build OK. Mutation-checked: release-by-kind, request-size guard. NOT done: #7 (commit), the a11y pass (#17, rest of #18), #15, #19-21, SQL execution tests. The new SQL (`trial_refund`, kind-scoped `trial_release`, member budget, `is_guest` flip, cron) has never run against a database - re-run `setup-production.sql` in dev and prod before deploying this code (the app now calls the 10-argument `trial_reserve` and 3-argument `trial_release`).
 
 Deferred and why: #15 (needs mocks in five route tests; window is tiny behind the proxy), #19 beyond caching the public status, #20, SQL execution tests (need Postgres in CI), the a11y pass (~30 small edits, done as its own reviewed batch).
+
+### Run 2 - Oct 1 2026 (reviewed on top of 104e12d, live in production)
+
+Full specialist reports and the action list: [runs/2026-10-01/](runs/2026-10-01/) ([ACTION-ITEMS.md](runs/2026-10-01/ACTION-ITEMS.md)).
+
+Six specialists ran in parallel, read-only, against the live production commit — the first run reviewed after a real guest had already completed a quota-limited build end to end. Gate at start: typecheck, lint and 674 tests green. Each finding was re-verified against the code before triage.
+
+| # | Sources | Sev | Finding | Decision |
+|---|---|---|---|---|
+| 1 | security | high | `next@16.3.5` carries a critical RCE advisory (GHSA-vcvr-r3jv-pc5j), not currently reached by app code but one patch release from safe | fix now (bumped to 16.3.8) |
+| 2 | performance-cost, ops-deploy | medium | `guestTrialOpen()` called raw from the new `app/login/page.tsx` Server Component bypassed the CDN-cached `/api/trial/status` route — additive, not a replacement, to the existing client fetch | fix now (30s in-process cache) |
+| 3 | accessibility-ux | major | `role="alert"` on the `AutoSaveIndicator` retry `<button>` stripped its native button semantics | fix now |
+| 4 | correctness | medium | Google-button `ResizeObserver` never disconnects, so an unsuppressed personalized→generic swap could still snap the layout | fix now (CSS height transition) |
+| 5 | correctness | medium | `ProjectsCard`'s shared `deletingId`/`deleteError` cross-talk between concurrent deletes of different projects | fix now (Set/Map keyed by id) |
+| 6 | correctness | low | `sessionStorage.ts`'s four functions called `currentUserId()` outside their own try block, contradicting the documented "never throws" contract | fix now |
+| 7 | accessibility-ux | minor | no loading announcement for screen-reader users before the Google button renders | fix now (sr-only status); timeout/fallback for a script that never loads deferred |
+| - | tests-ci | high | `db/guest-trial.sql` still has zero execution coverage; only `/api/infer` tested for trial-reservation wiring | unchanged from run 1, deferred (needs Postgres in CI) |
+| - | performance-cost | medium | 3 sequential `getUser()` calls per AI request; no admin-status fetch dedup; no index fitting `trial_spend_today`; no per-action model-call cap; `computeCost` fails open on an unpriced model | unchanged from run 1, deferred |
+| - | security | low | unanchored proxy path matches; fail-open quota gate on `getUser()` exception; no unique constraint on `ai_action_outcomes`; IPv6 hashed on full address | unchanged from run 1, deferred |
+
+**Outcome (same day):** fixed #1-7. Gate after fixes: typecheck clean (engine + web), lint clean, **680 tests** (325 + 355, 3 new), `npm audit --omit=dev` → 0 vulnerabilities (was 1 critical), production build OK with `/login` confirmed `ƒ` (dynamic). Mutation-checked: `guestTrialOpen` caching, the `AutoSaveIndicator` role-placement regression guard, `refreshProjectList` reaching `"error"` on a thrown `getSession()`. NOT done: the full tests-ci backlog (SQL execution job, route-gating `it.each` expansion, proxy public-path tests, CI hardening, login-split jsdom tests), the run-1 deferred medium/low performance and security items (unchanged, still open), `docs/DEPLOYMENT.md` update for `/login`'s per-request cost, and the devDependency `npm audit` items (vitest v5 is a breaking change).
+
+Deferred and why: all tests-ci items need either a throwaway-Postgres CI job or `jsdom`/`@testing-library/react` as new devDependencies — real additions, not done without being asked. The run-1 performance/security backlog is unchanged in severity and was re-confirmed, not re-litigated, since nothing about going live made any of it more urgent than before. Whether `auto_select`/`text` actually suppress Google's personalized-button swap remains unverified — needs a real signed-in-to-Google browser against the live site.
 

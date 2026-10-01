@@ -81,10 +81,15 @@ export function AutoSaveIndicator() {
           Saving…
         </>
       ) : status === "error" ? (
-        <button role="alert" onClick={() => void retry()} className="flex items-center gap-1 text-rose-700 hover:underline dark:text-rose-400">
-          <AlertTriangleIcon className="h-3.5 w-3.5 shrink-0" />
-          Save failed — retry
-        </button>
+        // `role="alert"` on the wrapper, not the button: an explicit ARIA role overrides a host element's
+        // native one, so putting it directly on the <button> stripped its button semantics for assistive
+        // tech (announced as inert alert text, not as something actionable).
+        <span role="alert">
+          <button onClick={() => void retry()} className="flex items-center gap-1 text-rose-700 hover:underline dark:text-rose-400">
+            <AlertTriangleIcon className="h-3.5 w-3.5 shrink-0" />
+            Save failed — retry
+          </button>
+        </span>
       ) : (
         lastSavedAt && (
           <>

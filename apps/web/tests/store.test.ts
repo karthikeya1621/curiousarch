@@ -35,7 +35,7 @@ import { useAppStore } from "../lib/store";
  */
 const { fakeProjects, authState, nextId } = vi.hoisted(() => ({
   fakeProjects: new Map<string, Record<string, unknown>>(),
-  authState: { userId: "test-user" as string | null, dbError: false },
+  authState: { userId: "test-user" as string | null, dbError: false, getSessionThrows: false },
   nextId: { current: 1 },
 }));
 
@@ -139,7 +139,10 @@ function makeQuery() {
 vi.mock("../lib/supabase/client", () => ({
   createClient: () => ({
     auth: {
-      getSession: async () => ({ data: { session: authState.userId ? { user: { id: authState.userId } } : null } }),
+      getSession: async () => {
+        if (authState.getSessionThrows) throw new Error("storage blocked");
+        return { data: { session: authState.userId ? { user: { id: authState.userId } } : null } };
+      },
     },
     from: () => makeQuery(),
   }),
@@ -718,6 +721,19 @@ describe("multiple projects", () => {
 
     expect(useAppStore.getState().projectsStatus).toBe("error");
     expect(useAppStore.getState().projects).toEqual(before); // stale list kept, not wiped to []
+  });
+
+  it("refreshProjectList still reaches 'error' (not stuck on 'loading' forever) if the session lookup itself throws", async () => {
+    // listProjects/saveProject/loadProject/deleteProject are all documented as never throwing - the one
+    // caller that relies on that (refreshProjectList) is fire-and-forget (`void refreshProjectList()` in
+    // ProjectsCard.tsx), so a rejection here would be an unhandled promise rejection AND leave
+    // projectsStatus stuck on "loading" forever, since the "error" status this test checks for is only set
+    // in refreshProjectList's own success path.
+    authState.getSessionThrows = true;
+    await expect(useAppStore.getState().refreshProjectList()).resolves.toBeUndefined();
+    authState.getSessionThrows = false;
+
+    expect(useAppStore.getState().projectsStatus).toBe("error");
   });
 });
 

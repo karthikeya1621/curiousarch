@@ -71,3 +71,20 @@ describe("GuestBanner", () => {
     expect(html).not.toContain("Free plan");
   });
 });
+
+describe("AutoSaveIndicator source (structural, not rendered)", () => {
+  // The "Save failed - retry" control's error state lives behind an internal useState this test cannot
+  // reach without committing an effect (renderToStaticMarkup never does, and this repo has no jsdom/
+  // testing-library to `act()` one) - so this checks the one thing that actually went wrong instead: an
+  // explicit ARIA role overrides a host element's native one, and `role="alert"` was once placed directly
+  // on the retry <button>, silently stripping its button semantics for assistive tech (announced as inert
+  // alert text, not as something actionable). The fix moved the role onto a wrapping, non-interactive
+  // element. A source-text check is a blunt instrument, but it is the one that can run at all here, and it
+  // targets exactly the pattern that broke - see docs/orchestration (production-readiness review, run 2).
+  it("never puts role=\"alert\" directly on the retry <button>", async () => {
+    const fs = await import("node:fs/promises");
+    const src = await fs.readFile(new URL("../components/AutoSaveIndicator.tsx", import.meta.url), "utf8");
+    expect(src).not.toMatch(/<button[^>]*role=["']alert["']/);
+    expect(src).toMatch(/role=["']alert["']/); // the role still exists, just not on the button itself
+  });
+});

@@ -88,7 +88,7 @@ missing feature — do not propose a node palette or a blank canvas.
 The app is a working, full-loop product, not a prototype: describe a system
 in prose, get a diagram with AI-identified findings and fixes, apply fixes
 or chat free-form to queue changes to it, Re-simulate to apply everything queued, save/reopen
-multiple projects across sessions. 677 tests passing (325 engine + 352 web),
+multiple projects across sessions. 680 tests passing (325 engine + 355 web),
 typecheck clean across both workspaces, pushed to `origin/main`.
 
 **Auth + persistence.** Magic-link email and Google login (client-side

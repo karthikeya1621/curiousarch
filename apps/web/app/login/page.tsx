@@ -3,8 +3,10 @@ import { trialConfig } from "../../lib/trial/policy";
 import { LoginForm } from "./LoginForm";
 
 // The guest budget can change through the day - never let this page be built once and frozen with a
-// stale answer. Same total load on Supabase as before: this replaces the client-side fetch that used to
-// run after mount, at the same frequency, just earlier (before the HTML is sent) instead of after.
+// stale answer. This does NOT replace the client-side recheck in LoginForm.tsx (kept deliberately, for the
+// rare case the budget changes in the few seconds between this render and hydration) - it runs alongside
+// it. guestTrialOpen() has its own short cache for exactly this reason: called directly rather than through
+// the CDN-cached /api/trial/status route, it would otherwise hit Supabase on every single page view.
 export const dynamic = "force-dynamic";
 
 /**

@@ -234,9 +234,24 @@ export function LoginForm({ initialGuest }: { initialGuest: { available: boolean
               visible resize here before. The button stays in the layout but invisible until the
               ResizeObserver above reports a height, so the wrapper is already the right size the moment it
               appears - a skeleton fills the 40px default slot until then. */}
-          <div className="relative flex items-center justify-center" style={{ height: googleHeight ?? 40 }}>
+          {/* motion-safe:transition-[height]: the ResizeObserver keeps watching after the first reveal (it
+              is never disconnected, on purpose - a later genuine size change should still be tracked), and
+              Google's own async session check can swap the personalized card for the generic button a
+              couple of seconds after load (auto_select/text above are an unverified attempt to suppress
+              that). If it still happens, this turns that swap's height change into a smooth resize instead
+              of a snap, rather than reproducing the jump the initial measurement was built to prevent. */}
+          <div
+            className="relative flex items-center justify-center motion-safe:transition-[height] motion-safe:duration-200"
+            style={{ height: googleHeight ?? 40 }}
+          >
             {googleHeight === null && (
-              <div aria-hidden className="h-10 w-full max-w-70 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+              <>
+                <div aria-hidden className="h-10 w-full max-w-70 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                {/* The skeleton above is aria-hidden and the button div below is invisible until measured -
+                    without this, a screen-reader user who reaches this region before Google's script has
+                    rendered gets no signal at all that a sign-in option exists here. */}
+                <span className="sr-only" role="status">Loading sign-in options…</span>
+              </>
             )}
             <div
               ref={googleButtonRef}

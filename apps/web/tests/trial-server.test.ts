@@ -30,7 +30,7 @@ vi.mock("../lib/supabase/admin", () => ({
       : null,
 }));
 
-const { reserveTrial, guestTrialOpen, refundWithheldRework } = await import("../lib/trial/server");
+const { reserveTrial, guestTrialOpen, refundWithheldRework, __resetGuestOpenCacheForTests } = await import("../lib/trial/server");
 const ACTION = "11111111-1111-4111-8111-111111111111";
 const req = () => new Request("http://x/api/chat", { method: "POST", headers: { "x-forwarded-for": "9.9.9.9" } });
 
@@ -42,6 +42,7 @@ beforeEach(() => {
   state.hasAdmin = true;
   process.env.TRIAL_ENABLED = "true";
   delete process.env.ADMIN_EMAILS;
+  __resetGuestOpenCacheForTests();
 });
 
 describe("reserveTrial", () => {
@@ -165,5 +166,23 @@ describe("guestTrialOpen", () => {
     state.rpcResult = { data: true, error: null };
     expect(await guestTrialOpen()).toBe(true);
     expect(state.rpcCalls.at(-1)).toEqual({ fn: "trial_budget_open", args: { p_budget: 2 } });
+  });
+
+  // Called directly from a Server Component (app/login/page.tsx), this bypasses the CDN cache
+  // /api/trial/status has - without its own cache it ran the budget RPC on every single /login render.
+  it("caches its answer briefly instead of hitting the database on every call", async () => {
+    state.rpcResult = { data: true, error: null };
+    expect(await guestTrialOpen()).toBe(true);
+    const callsAfterFirst = state.rpcCalls.length;
+
+    // The budget "changes" here, but a second call within the cache window must still see the FIRST answer -
+    // proving it didn't re-query - not because the new value happens to match.
+    state.rpcResult = { data: false, error: null };
+    expect(await guestTrialOpen()).toBe(true);
+    expect(state.rpcCalls.length).toBe(callsAfterFirst); // no new rpc call
+
+    __resetGuestOpenCacheForTests();
+    expect(await guestTrialOpen()).toBe(false); // now reflects the changed value
+    expect(state.rpcCalls.length).toBeGreaterThan(callsAfterFirst);
   });
 });

@@ -112,15 +112,35 @@ export async function refundWithheldRework(userId: string, actionId: string): Pr
   }
 }
 
+// `guestTrialOpen` is called directly from a Server Component (app/login/page.tsx, `force-dynamic` so it
+// never gets baked into a static build) rather than through the HTTP route that wraps the same question
+// (`/api/trial/status`, `s-maxage=30`) - a bare function call bypasses that CDN cache entirely, so without
+// this it ran the budget RPC against Supabase on every single /login render, several times more often than
+// before the login page became a Server Component (the client-side recheck in LoginForm.tsx was kept for a
+// different reason: catching the rare case where the budget crosses the threshold in the few seconds
+// between the server render and hydration, not as this call's only cache). A short in-process memo matches
+// the same freshness window the HTTP cache already promises; it resets on a cold start, which only means an
+// extra DB hit then, never a wrong answer.
+let guestOpenCache: { value: boolean; at: number } | null = null;
+const GUEST_OPEN_CACHE_MS = 30_000;
+
+/** Test-only: this module-level cache otherwise outlives any one test case within the same file. */
+export function __resetGuestOpenCacheForTests(): void {
+  guestOpenCache = null;
+}
+
 /** Is the guest option open for new visitors right now? Never throws. */
 export async function guestTrialOpen(): Promise<boolean> {
   const config = trialConfig();
   if (!config.enabled) return false;
+  if (guestOpenCache && Date.now() - guestOpenCache.at < GUEST_OPEN_CACHE_MS) return guestOpenCache.value;
   const admin = getAdminClient();
   if (!admin) return false;
   try {
     const { data, error } = await admin.rpc("trial_budget_open", { p_budget: config.dailyBudgetUsd });
-    return !error && data === true;
+    const value = !error && data === true;
+    guestOpenCache = { value, at: Date.now() };
+    return value;
   } catch {
     return false;
   }

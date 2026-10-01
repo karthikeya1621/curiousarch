@@ -38,8 +38,11 @@ export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolea
   const isBlank = useAppStore((s) => s.model.components.length === 0);
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // A Set/Map, not a single id/message: deleting two projects in quick succession with a single shared
+  // value meant the second delete's `onConfirm` overwrote the first's in-flight state, so the first row's
+  // spinner cleared early and its error (or success) could stomp on the second one's.
+  const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set());
+  const [deleteErrors, setDeleteErrors] = useState<ReadonlyMap<string, string>>(new Map());
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -151,22 +154,40 @@ export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolea
                 </span>
               </button>
               <button
-                onClick={() => setPendingDeleteId(p.id)}
-                disabled={deletingId === p.id}
-                aria-label={deletingId === p.id ? "Deleting…" : "Delete project"}
+                onClick={() => {
+                  // Starting a fresh attempt on this row: its own stale error (if any) from a previous
+                  // failed delete must not keep showing once the user is trying again.
+                  setDeleteErrors((prev) => {
+                    if (!prev.has(p.id)) return prev;
+                    const next = new Map(prev);
+                    next.delete(p.id);
+                    return next;
+                  });
+                  setPendingDeleteId(p.id);
+                }}
+                disabled={deletingIds.has(p.id)}
+                aria-label={deletingIds.has(p.id) ? "Deleting…" : "Delete project"}
                 className="shrink-0 rounded-md p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-wait disabled:opacity-60 dark:text-slate-500 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
               >
-                <TrashIcon className={`h-3.5 w-3.5 ${deletingId === p.id ? "motion-safe:animate-pulse" : ""}`} />
+                <TrashIcon className={`h-3.5 w-3.5 ${deletingIds.has(p.id) ? "motion-safe:animate-pulse" : ""}`} />
               </button>
             </div>
           ))
         )}
       </div>
 
-      {deleteError && (
-        <p role="alert" className="mt-1 px-1 text-xs text-rose-600 dark:text-rose-400">
-          {deleteError}
-        </p>
+      {/* Below the fixed-height row list, not inside a row (a row's height is fixed for the "3.5 rows"
+          scroll cue elsewhere in this card - wrapped error text wouldn't fit inside it). Named per project
+          so two concurrent failed deletes are both visible and unambiguous, not just the last one. */}
+      {deleteErrors.size > 0 && (
+        <div className="mt-1 flex flex-col gap-0.5">
+          {[...deleteErrors].map(([id, message]) => (
+            <p key={id} role="alert" className="px-1 text-xs text-rose-600 dark:text-rose-400">
+              {(projects.find((p) => p.id === id)?.name || "Untitled") + ": "}
+              {message}
+            </p>
+          ))}
+        </div>
       )}
 
       <ConfirmDialog
@@ -192,13 +213,19 @@ export function ProjectsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolea
         onConfirm={() => {
           const id = pendingDeleteId!;
           setPendingDeleteId(null);
-          setDeleteError(null);
-          setDeletingId(id);
+          setDeletingIds((prev) => new Set(prev).add(id));
           // Fire-and-forget used to mean a failed delete just silently left the project sitting there with
-          // no explanation - the user had no way to know their click hadn't worked.
+          // no explanation - the user had no way to know their click hadn't worked. Each delete tracks only
+          // its OWN id, so two running at once never clear or overwrite each other's state.
           void deleteProjectById(id).then((ok) => {
-            setDeletingId(null);
-            if (!ok) setDeleteError("Couldn't delete that project. Try again.");
+            setDeletingIds((prev) => {
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+            if (!ok) {
+              setDeleteErrors((prev) => new Map(prev).set(id, "Couldn't delete that project. Try again."));
+            }
           });
         }}
         onCancel={() => setPendingDeleteId(null)}

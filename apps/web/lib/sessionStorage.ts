@@ -141,19 +141,21 @@ export async function saveProject(
   // already filed under it before the project existed.
   newId?: string,
 ): Promise<{ id: string; savedAt: number } | null> {
-  const supabase = createClient();
-  const userId = await currentUserId(supabase);
-  if (!userId) return null;
-
-  const withTimestamp: SavedSession = { ...session, savedAt: Date.now() };
-  const row = {
-    user_id: userId,
-    name: session.model.name,
-    data: withTimestamp,
-    updated_at: new Date().toISOString(),
-  };
-
   try {
+    const supabase = createClient();
+    // Inside the try, not before it: a saved "never throws" contract (lib/store/findings.ts and others rely
+    // on it to never need their own .catch()) that getSession() itself could break if it ever throws.
+    const userId = await currentUserId(supabase);
+    if (!userId) return null;
+
+    const withTimestamp: SavedSession = { ...session, savedAt: Date.now() };
+    const row = {
+      user_id: userId,
+      name: session.model.name,
+      data: withTimestamp,
+      updated_at: new Date().toISOString(),
+    };
+
     if (id === null) {
       const { data, error } = await supabase
         .from(TABLE)
@@ -171,7 +173,7 @@ export async function saveProject(
     if (error || !data || data.length === 0) return null;
     return { id, savedAt: withTimestamp.savedAt };
   } catch {
-    return null;
+    return null; // includes getSession() itself throwing - this function must never reject
   }
 }
 
@@ -192,11 +194,10 @@ export function healSession(session: SavedSession): SavedSession {
 }
 
 export async function loadProject(id: string): Promise<SavedSession | null> {
-  const supabase = createClient();
-  const userId = await currentUserId(supabase);
-  if (!userId) return null;
-
   try {
+    const supabase = createClient();
+    const userId = await currentUserId(supabase); // inside the try - see saveProject's comment on why
+    if (!userId) return null;
     const { data, error } = await supabase
       .from(TABLE)
       .select("data")
@@ -211,11 +212,10 @@ export async function loadProject(id: string): Promise<SavedSession | null> {
 }
 
 export async function listProjects(): Promise<ProjectSummary[] | null> {
-  const supabase = createClient();
-  const userId = await currentUserId(supabase);
-  if (!userId) return null;
-
   try {
+    const supabase = createClient();
+    const userId = await currentUserId(supabase); // inside the try - see saveProject's comment on why
+    if (!userId) return null;
     const { data, error } = await supabase
       .from(TABLE)
       .select("id, name, updated_at")
@@ -228,16 +228,15 @@ export async function listProjects(): Promise<ProjectSummary[] | null> {
       updatedAt: new Date(row.updated_at as string).getTime(),
     }));
   } catch {
-    return null;
+    return null; // a caller (refreshProjectList) relies on this never rejecting, to reach projectsStatus "error"
   }
 }
 
 export async function deleteProject(id: string): Promise<boolean> {
-  const supabase = createClient();
-  const userId = await currentUserId(supabase);
-  if (!userId) return false;
-
   try {
+    const supabase = createClient();
+    const userId = await currentUserId(supabase); // inside the try - see saveProject's comment on why
+    if (!userId) return false;
     // Same reasoning as saveProject's update: a plain `.delete()` reports no error even if it matched
     // nothing, so without `.select("id")` this would claim success for a delete that touched no row.
     const { data, error } = await supabase.from(TABLE).delete().eq("id", id).eq("user_id", userId).select("id");
