@@ -1,6 +1,6 @@
 ---
 name: run-web
-description: Build, run, and drive archsim's Next.js web app (apps/web). Use when asked to start the web app, take a screenshot of it, click through its UI, or verify a UI change actually works in the browser.
+description: Build, run, and drive CuriousArch's Next.js web app (apps/web). Use when asked to start the web app, take a screenshot of it, click through its UI, or verify a UI change actually works in the browser.
 ---
 
 `apps/web` is a Next.js 16 App Router app (Turbopack) in an npm-workspaces
@@ -81,13 +81,13 @@ which also works fine (see Gotchas) and needs no extra tooling either way.
 | command | what it does |
 |---|---|
 | `launch [url]` | launch headless Chromium, navigate, wait ~500ms for hydration to settle (default url `http://localhost:3000`) — also auto-accepts any `window.confirm`/`alert` dialog (e.g. "New Project"'s reset confirmation), since Playwright otherwise auto-dismisses them |
-| `reload` | reload the current page in the same browser context (unlike `launch`, a no-op once a browser exists) - use this to verify anything backed by localStorage, e.g. archsim's saved-session restore |
-| `resize <width> <height>` | resize the viewport - use for checking archsim's responsive breakpoints (lg=1024px, xl=1280px) |
+| `reload` | reload the current page in the same browser context (unlike `launch`, a no-op once a browser exists) - use this to verify anything backed by localStorage, e.g. CuriousArch's saved-session restore |
+| `resize <width> <height>` | resize the viewport - use for checking CuriousArch's responsive breakpoints (lg=1024px, xl=1280px) |
 | `ss [name]` | full-page screenshot → `$SCREENSHOT_DIR/<name>.png` |
 | `click <css-sel>` | click via Playwright's normal click pipeline |
 | `type <css-sel> <text...>` | fill a controlled input/textarea via Playwright's real `fill()` — see Gotchas, a raw eval `el.value = x` doesn't register with React |
 | `click-text <text>` | click the first `button`/`a`/`[role=button]` whose text is or contains `<text>` |
-| `click-node-badge <text>` | archsim-specific — see Gotchas: click the amber failure-count badge on the flow-diagram node whose text contains `<text>` |
+| `click-node-badge <text>` | CuriousArch-specific — see Gotchas: click the amber failure-count badge on the flow-diagram node whose text contains `<text>` |
 | `wait <css-sel>` | wait up to 10s for a selector |
 | `wait-text <text>` | wait up to 45s for `document.body.innerText` to contain `<text>` |
 | `wait-gone <text>` | wait up to 45s for `document.body.innerText` to stop containing `<text>` — use for "Reviewing..." to actually detect findings finished loading, since the page header's own static copy permanently contains phrases like "possible failure" |

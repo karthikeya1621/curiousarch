@@ -1,6 +1,10 @@
 {
-  "name": "archsim",
+  "name": "curiousarch",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/karthikeya1621/curiousarch.git"
+  },
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
     "test": "npm test --workspaces --if-present",

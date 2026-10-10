@@ -14,7 +14,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/karthikeya1621/archsim.git",
+    "url": "git+https://github.com/karthikeya1621/curiousarch.git",
     "directory": "packages/engine"
   },
   "scripts": {

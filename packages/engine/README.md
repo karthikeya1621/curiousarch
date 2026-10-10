@@ -1,6 +1,6 @@
-# archsim
+# @archsim/engine
 
-Headless architecture-modelling engine. No React, no DOM.
+CuriousArch's headless architecture-modelling engine. No React, no DOM.
 
 ```bash
 npm install

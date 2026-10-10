@@ -22,7 +22,7 @@ const COMMANDS = {
     });
     page.on("pageerror", (err) => console.log("[page error]", err.message));
     // Playwright auto-dismisses window.confirm/alert by default (returns
-    // false) unless a page has its own handler - archsim's "New Project"
+    // false) unless a page has its own handler - CuriousArch's "New Project"
     // button gates a real reset behind window.confirm, so leaving this
     // unhandled would make every click silently no-op instead of clicking
     // through, same as a real user hitting OK.
@@ -37,7 +37,7 @@ const COMMANDS = {
   },
 
   // `<width> <height>` - resizes the viewport, for checking responsive
-  // breakpoints (archsim's layout has lg=1024px/xl=1280px breakpoints).
+  // breakpoints (CuriousArch's layout has lg=1024px/xl=1280px breakpoints).
   async resize(rest) {
     if (!page) return console.log("ERROR: launch first");
     const [w, h] = rest.split(/\s+/).map(Number);
@@ -47,7 +47,7 @@ const COMMANDS = {
 
   // Reloads the current page in the SAME browser context - unlike calling
   // `launch` again (a no-op once a browser exists), this is how to verify
-  // anything backed by localStorage (e.g. archsim's saved-session restore),
+  // anything backed by localStorage (e.g. CuriousArch's saved-session restore),
   // since localStorage is scoped to the context/origin, not a single page.
   async reload() {
     if (!page) return console.log("ERROR: launch first");
@@ -73,7 +73,7 @@ const COMMANDS = {
     }
   },
 
-  // archsim-specific: the flow diagram (React Flow) wraps every custom node
+  // CuriousArch-specific: the flow diagram (React Flow) wraps every custom node
   // in a ".react-flow__node" element; find the one whose text includes
   // `nodeText` (component label or id), then click its amber failure-count
   // badge (the only button inside a node, titled "N possible failure(s)"
@@ -149,7 +149,7 @@ const COMMANDS = {
   },
 
   // Waits for text to DISAPPEAR - the counterpart wait-text lacks. Needed
-  // for archsim specifically: the header's static copy ("...a possible
+  // for CuriousArch specifically: the header's static copy ("...a possible
   // failure carries an indicator...") permanently contains words like
   // "possible failure", so wait-text for that phrase resolves instantly
   // regardless of whether identifyFailures has actually finished - only

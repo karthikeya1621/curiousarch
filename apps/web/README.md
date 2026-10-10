@@ -1,6 +1,6 @@
 # apps/web
 
-Next.js App Router UI for archsim — the full loop: describe a system in
+Next.js App Router UI for CuriousArch — the full loop: describe a system in
 prose, get a diagram with AI-identified findings, apply fixes or chat
 free-form to queue changes, Re-simulate to apply what's queued, save and reopen
 multiple projects. Consumes `packages/engine` as a workspace package
