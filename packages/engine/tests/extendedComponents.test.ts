@@ -18,6 +18,9 @@ import {
   checkNoDroppedExtendedComponents,
   mergeRevision,
   checkDecisionsMatchComponents,
+  checkReviseDecisionsMatchComponents,
+  buildExtendedToolInputSchema,
+  ReviseResponseSchema,
 } from "../src/inference/extendedComponents.js";
 import { MAX_EXTENDED_COMPONENTS, MAX_TOTAL_COMPONENTS } from "../src/types.js";
 
@@ -450,6 +453,59 @@ describe("the revise step shares the same tier groups", () => {
     expect(REVISE_PROMPT).toContain("Tier groups, as guidance for your own judgement");
     expect(REVISE_PROMPT).toContain("Highest tier (100,000,000 users");
   });
+
+  // Regression test for a confirmed-live bug: a real project (multiple service instances,
+  // scaled from 100 to 100M users across four Re-simulates) never gained a load balancer at
+  // any tier, because "cannot work at its current scale without it" had no concrete anchor -
+  // the tier guide's own "a load balancer runs multiple" line only covers an EXISTING one's
+  // instance count, never when to create one in the first place. Not load-balancer-specific:
+  // the same project's topology never changed AT ALL across four tier jumps, so the fix
+  // recalibrates the threshold itself (read as an architect launching this would, not as a
+  // literal "would it still technically run" test) and keeps the load balancer case as one
+  // worked example, not the only one — the identical pair of sentences is also in
+  // reworkModel.ts's REWORK_PROMPT for the five base kinds (see reworkModel.test.ts).
+  it("recalibrates 'cannot work without it' to an architect's judgment, not a literal uptime test, with the load balancer case as one example among several extended kinds", () => {
+    expect(REVISE_PROMPT).toMatch(/the way an architect actually launching this system at this scale would, not as a literal test of whether it would still run in some degraded way/);
+    expect(REVISE_PROMPT).toMatch(/two or more instances of that service with nothing distributing traffic across them is exactly that gap/);
+    expect(REVISE_PROMPT).toMatch(/The same standard applies to any other extended kind the system's own described load has genuinely outgrown/);
+  });
+
+  // The deeper bug the prompt wording alone couldn't fix, found only by actually running it
+  // live: BaseComponentRef (and baseComponentContext, which builds what the AI is shown)
+  // stripped every trait down to id/label/kind, so this step had no way to see that a service
+  // had already gone "multiple" — the prompt guidance above had nothing to act on. Confirmed
+  // live before this fix: a real rework correctly split an overloaded shared database (the
+  // REWORK_PROMPT guidance for base kinds DOES see instance counts) but never added a load
+  // balancer for services already at "multiple", across four tier jumps to 100M users.
+  it("actually shows the AI which base services are already multiple-instance, not just the guidance to act on it", async () => {
+    const withInstanceCount = {
+      components: [
+        { id: "gw", label: "API Gateway", kind: "gateway" as const },
+        {
+          id: "order-svc",
+          label: "Order Service",
+          kind: "service" as const,
+          instanceCount: { value: "multiple", rationale: "Massive scale.", provenance: "inferred" as const },
+        },
+      ],
+    };
+    const requests: { messages: { content: unknown }[] }[] = [];
+    const client = {
+      messages: {
+        create: async (params: unknown) => {
+          requests.push(params as { messages: { content: unknown }[] });
+          return toolUseResponse({ components: [], edges: [] });
+        },
+      },
+    } as unknown as Anthropic;
+    await reviseExtendedComponents([], withInstanceCount, { client });
+    const sent = JSON.stringify(requests[0]!.messages[0]!.content);
+    expect(sent).toContain('\\"id\\":\\"order-svc\\"');
+    expect(sent).toContain('\\"instanceCount\\":\\"multiple\\"');
+    // The gateway has no instanceCount trait at all - confirms this is really reading each
+    // component's own value, not stamping every component with one regardless.
+    expect(sent).not.toMatch(/"id":"gw"[^}]*instanceCount/);
+  });
 });
 
 describe("extended kinds also start without protections", () => {
@@ -550,6 +606,65 @@ describe("the revise step lists what it keeps instead of re-emitting it", () => 
   it("the prompt explains the three places a previous component can go, and ties keep to rationales that are still true", () => {
     expect(REVISE_PROMPT).toMatch(/goes in exactly one place/);
     expect(REVISE_PROMPT).toMatch(/"keep": the ids you leave EXACTLY as they are - and only when every rationale it carries is still true at the current scale/);
+  });
+
+  it("the prompt requires deciding all seven kinds first, same discipline as a build", () => {
+    expect(REVISE_PROMPT).toMatch(/first decide, for EACH of the 7 kinds in "considered", whether this system needs one NOW/);
+    expect(REVISE_PROMPT).toMatch(/keeping a kind it already has counts as needed/);
+  });
+});
+
+describe("the revise step also decides each kind before listing components — the same bug class as the propose step, confirmed live for THIS step too", () => {
+  const decision = (kind: string, needed: boolean) => ({ kind, needed, evidence: needed ? "Still needed." : "Not needed." });
+  const all = (neededKinds: string[]) => EXTENDED_KINDS.map((k) => decision(k, neededKinds.includes(k)));
+  const lbComponent = {
+    id: "api-lb", label: "API Load Balancer", kind: "load-balancer",
+    instanceCount: { rationale: "Massive scale.", provenance: "inferred", value: "multiple" },
+    hasHealthChecks: { rationale: "Baseline at this scale.", provenance: "inferred", value: true },
+  };
+  const multiInstanceBase = {
+    components: [
+      { id: "gw", label: "API Gateway", kind: "gateway" as const },
+      { id: "svc", label: "Order Service", kind: "service" as const, instanceCount: { value: "multiple" } },
+    ],
+  };
+
+  it("checkReviseDecisionsMatchComponents: quiet when kept+returned agree with the decisions, names the disagreement either way", () => {
+    expect(checkReviseDecisionsMatchComponents({ considered: all(["load-balancer"]) as never, components: [lbComponent as never], keep: [] }, [])).toBeNull();
+    // Kept (not re-returned) still counts as present - a "needed: true" for a kept kind is not a disagreement.
+    expect(checkReviseDecisionsMatchComponents({ considered: all(["load-balancer"]) as never, components: [], keep: ["api-lb"] }, [lbComponent as never])).toBeNull();
+    expect(checkReviseDecisionsMatchComponents({ considered: all([]) as never, components: [lbComponent as never], keep: [] }, [])).toMatch(/kept or returned load-balancer without deciding it is needed/);
+    expect(checkReviseDecisionsMatchComponents({ considered: all(["load-balancer"]) as never, components: [], keep: [] }, [])).toMatch(/load-balancer is needed but it's neither kept nor returned/);
+  });
+
+  // The actual confirmed-live bug, reproduced at the schema level: before "considered"
+  // existed on this step's schema, a scale change that genuinely called for a NEW load
+  // balancer (services already multiple-instance, nothing distributing traffic across them)
+  // could return an empty revision with no load balancer and no stated reason - nothing in
+  // the schema forced a yes/no, so skipping the question looked identical to answering "no"
+  // to it. This reproduces that exact shape of self-contradiction (decided "needed", returned
+  // nothing) now that "considered" exists, and confirms it is rejected and retried rather than
+  // silently accepted.
+  it("deciding a load balancer is needed but returning none is rejected with the reason, and the corrected answer accepted", async () => {
+    const client = fakeClient([
+      toolUseResponse({ considered: all(["load-balancer"]), keep: [], remove: [], components: [], edges: [] }),
+      toolUseResponse({ considered: all(["load-balancer"]), keep: [], remove: [], components: [lbComponent], edges: [{ from: "gw", to: "api-lb" }, { from: "api-lb", to: "svc" }] }),
+    ]);
+    const result = await reviseExtendedComponents([], multiInstanceBase, { client });
+    expect(result.components.map((c) => c.kind)).toContain("load-balancer");
+  });
+
+  // The schema-level guarantee a live, strict-mode call actually depends on: "considered" is
+  // a required field with exactly 7 entries, so a response cannot omit it or decide a subset -
+  // unlike before this fix, skipping the load-balancer question is no longer representable.
+  it("the tool schema requires 'considered' with all 7 kinds, so a live call cannot omit it", () => {
+    const schema = buildExtendedToolInputSchema(ReviseResponseSchema) as {
+      required?: string[];
+      properties: Record<string, { items?: { properties?: Record<string, unknown> } }>;
+    };
+    expect(schema.required).toContain("considered");
+    expect(schema.properties.considered?.items?.properties).toHaveProperty("kind");
+    expect(schema.properties.considered?.items?.properties).toHaveProperty("needed");
   });
 });
 

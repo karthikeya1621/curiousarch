@@ -90,16 +90,16 @@ describe("tool input schema", () => {
   });
 });
 
-describe("the revise step's tool input schema (keep / remove / components / edges)", () => {
+describe("the revise step's tool input schema (considered / keep / remove / components / edges)", () => {
   const schema = buildExtendedToolInputSchema(ReviseResponseSchema);
 
   it("validates as JSON Schema draft 2020-12", () => {
     expect(() => new Ajv2020({ strict: false }).compile(schema)).not.toThrow();
   });
 
-  it("requires all four fields, forbids extras, and types keep/remove as string arrays", () => {
+  it("requires all five fields, forbids extras, and types keep/remove as string arrays", () => {
     const s = schema as { required?: string[]; additionalProperties?: boolean; properties: Record<string, { type?: string; items?: { type?: string } }> };
-    expect([...(s.required ?? [])].sort()).toEqual(["components", "edges", "keep", "remove"]);
+    expect([...(s.required ?? [])].sort()).toEqual(["components", "considered", "edges", "keep", "remove"]);
     expect(s.additionalProperties).toBe(false);
     expect(s.properties.keep).toMatchObject({ type: "array", items: { type: "string" } });
     expect(s.properties.remove).toMatchObject({ type: "array", items: { type: "string" } });

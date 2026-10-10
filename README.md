@@ -14,7 +14,7 @@ Live at **[curiousarch.com](https://curiousarch.com)** — try it as a guest, no
 2. CuriousArch infers a rough architectural model — components and how they connect, each tagged with a handful of **categorical** traits (`instanceCount: "single"`, `hasCircuitBreaker: false`) — never invented numbers.
 3. A separate AI pass reviews that model like a senior architect would, and flags real risks: single points of failure, thundering herds, cascading failures, unbounded admission, data loss on an unversioned store, and more — each with a plain-English explanation and a concrete fix.
 4. Pick a fix (or just ask for a change in chat), **Re-simulate**, and see whether the risk actually cleared — not just whether you clicked a button.
-5. Raise the scale (100 users → 100M) and watch which protections the AI decides you'd actually need at that scale, and which risks only start to matter once you get there.
+5. Raise the scale (100 users → 100M) and watch the architecture respond — not just which protections switch on, but new instances, a split datastore, a load balancer once one's actually needed — and which risks only start to matter once you get there.
 
 It's a learning tool, not a capacity planner: the point is to build the instinct for *what* breaks systems and *why*, not to compute queueing math.
 
@@ -34,7 +34,7 @@ It's a learning tool, not a capacity planner: the point is to build the instinct
 | AI | Anthropic Claude, called directly via the Messages API with structured tool-use output — Sonnet 5 for reasoning calls (topology, failure analysis, chat), Haiku 4.5 for a cheap utility extraction call |
 | Database / auth | Supabase (Postgres + Row-Level Security, including anonymous "guest" auth) |
 | Hosting | Vercel |
-| Testing | Vitest — **680 tests** across both workspaces |
+| Testing | Vitest — **687 tests** across both workspaces |
 
 ## Repo structure
 
@@ -55,7 +55,7 @@ plans/              The phased product roadmap, from where the project currently
 
 ```bash
 npm install
-npm test           # 680 tests across both workspaces
+npm test           # 687 tests across both workspaces
 npm run typecheck
 npm run dev         # serves apps/web at http://localhost:3000
 ```

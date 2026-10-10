@@ -218,12 +218,29 @@ export function checkDecisionsMatchComponents(data: { considered: KindDecision[]
  */
 export const ReviseResponseSchema = z
   .object({
+    considered: z.array(KindDecisionSchema),
     keep: z.array(z.string()),
     remove: z.array(z.string()),
     components: z.array(ExtendedComponentSchema),
     edges: z.array(EdgeSchema),
   })
   .superRefine((val, ctx) => {
+    // Same reasoning as ProposeResponseSchema's own superRefine, and the exact same bug
+    // class confirmed live for THIS step too (see reviseExtendedComponents's own comment):
+    // without a forced per-kind decision, a scale change that genuinely calls for something
+    // new (a load balancer, once services are multiple-instance) is simply never considered,
+    // not rejected for a reason - the soft "add one only when..." prose alone had nothing
+    // stopping the model from skipping the question entirely.
+    const kinds = val.considered.map((d) => d.kind);
+    for (const kind of EXTENDED_KINDS) {
+      if (kinds.filter((k) => k === kind).length !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `"considered" needs exactly one entry for "${kind}" - every one of the ${EXTENDED_KINDS.length} kinds must be decided, including ones you're keeping or already have none of.`,
+          path: ["considered"],
+        });
+      }
+    }
     const ids = val.components.map((c) => c.id);
     for (const id of new Set(ids.filter((x, i) => ids.indexOf(x) !== i))) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate component id "${id}" — every component needs a distinct id.`, path: ["components"] });
@@ -237,6 +254,37 @@ export const ReviseResponseSchema = z
     }
   });
 export type ReviseResponse = z.infer<typeof ReviseResponseSchema>;
+
+/**
+ * The revise-step equivalent of `checkDecisionsMatchComponents` — a kind counts as
+ * "present" here if it's kept (an id in `keep` that belongs, per `previousExtended`, to
+ * that kind) OR returned this round in `components`; `remove` and "never mentioned" both
+ * count as absent. Kept separate from the propose-step version rather than sharing a
+ * parametrized helper: the two "presence" computations are different enough (propose only
+ * ever looks at `components`) that forcing one shape on both cost more clarity in the
+ * repair-retry message than it saved in lines.
+ */
+export function checkReviseDecisionsMatchComponents(
+  data: { considered: KindDecision[]; components: { kind: string }[]; keep: string[] },
+  previousExtended: Pick<Component, "id" | "kind">[],
+): string | null {
+  const keptKinds = new Set(previousExtended.filter((c) => data.keep.includes(c.id)).map((c) => c.kind));
+  const present = new Set([...keptKinds, ...data.components.map((c) => c.kind)]);
+  const missing = data.considered.filter((d) => d.needed && !present.has(d.kind)).map((d) => d.kind);
+  const unexpected = [...present].filter((k) => !data.considered.some((d) => d.kind === k && d.needed));
+  const parts: string[] = [];
+  if (missing.length) {
+    parts.push(
+      `you decided ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} needed but ${missing.length === 1 ? "it's" : "they're"} neither kept nor returned - keep the existing one, add it, or set needed to false`,
+    );
+  }
+  if (unexpected.length) {
+    parts.push(
+      `you kept or returned ${unexpected.join(", ")} without deciding ${unexpected.length === 1 ? "it is" : "they are"} needed - set needed to true, or remove ${unexpected.length === 1 ? "it" : "them"}`,
+    );
+  }
+  return parts.length ? `Your decisions and your components disagree: ${parts.join("; and ")}.` : null;
+}
 
 /**
  * The full extended component list a revise response describes: the previous
@@ -335,13 +383,15 @@ Every trait's rationale must be true at the system's CURRENT scale: write it fre
 
 Keep every existing edge exactly as it was — the same two ends and the SAME DIRECTION — as long as both ends still exist. The one exception: when a chosen fix or requested change puts a component between two ends (a queue between a job and a service), route the connection through it and remove the direct edge - keeping both leaves two competing paths. An edge's direction is meaning (which side calls or depends on which), so never reverse one, and never drop one unless the request specifically requires it. Only when a base end no longer exists (that component was replaced or removed in the rework) re-point the edge to the base component that now serves the equivalent role.
 
-How to answer: each PREVIOUS extended component goes in exactly one place.
+How to answer: first decide, for EACH of the ${EXTENDED_KINDS.length} kinds in "considered", whether this system needs one NOW (needed true or false) and give a short "evidence" - keeping a kind it already has counts as needed, same as the system's described load or current scale newly calling for one it never had. Deciding all seven, one by one, comes first, exactly as it does the first time this system is built: a kind marked "no" must end up with no component of that kind, kept or returned, and a kind marked "yes" must end up kept or returned - skipping the question is not the same as answering "no" to it, and only an explicit "no" is read as one.
+
+Add a NEW extended component only when the description, a listed fix or a requested change calls for it, or the system cannot work at its current scale without it - never because systems like this typically have one (a relay, a balancer or a job nobody described is an invention). Read "cannot work at its current scale" the way an architect actually launching this system at this scale would, not as a literal test of whether it would still run in some degraded way: if a competent team shipping this today would call the gap a real blocker rather than a nice-to-have, that counts. One example: once the tier groups above call for a load balancer in front of a service, two or more instances of that service with nothing distributing traffic across them is exactly that gap, not an invention - the rough sketch has no other way to show how a caller reaches more than one of them (the base topology above states each kept or changed service's current instanceCount for exactly this judgment). The same standard applies to any other extended kind the system's own described load has genuinely outgrown. A component you add gets its traits from the tier groups above, like the ones you keep.
+
+Once every kind is decided, each PREVIOUS extended component also goes in exactly one place.
 - "keep": the ids you leave EXACTLY as they are - and only when every rationale it carries is still true at the current scale (one that names an old scale or says "starting tier" must be returned again, fresh).
 - "components": the components you ADD or CHANGE, each in full (a changed one keeps its exact same id).
 - "remove": ids you take out - only when a listed fix or requested change asks for it.
 "edges" is the complete list of edges touching any extended component, as before.
-
-Add a NEW extended component only when the description, a listed fix or a requested change calls for it, or the system cannot work at its current scale without it - never because systems like this typically have one (a relay, a balancer or a job nobody described is an invention). A component you add gets its traits from the tier groups above, like the ones you keep.
 
 The default action for every previous extended component is to KEEP it, with its EXACT same id, and keep its edge(s) as they were (see above) — re-pointing one to the equivalent base component only where its base end no longer exists (base component ids may have changed during the rework you're not shown the details of). Only drop one if the system described no longer has any plausible need for it at all - not because the base topology's ids changed, not because you're being cautious, and never as a default. This is the same "preserve by default" rule the base rework itself follows: silently losing something the user's system already had is a mistake, not a simplification. Only mint a new id for something genuinely new that didn't exist before.
 
@@ -406,19 +456,36 @@ function sanitizeExtendedResponse(
 }
 
 /**
- * Only `id`/`label`/`kind` are ever read from the base model here — a
- * minimal structural type instead of `Pick<SystemModel, "components">`
+ * Only `id`/`label`/`kind`/`instanceCount` are ever read from the base model
+ * here — a minimal structural type instead of `Pick<SystemModel, "components">`
  * (which would demand every base component's full trait shape) so a
  * caller (production or test) never needs more than this actually uses.
+ * `instanceCount` is only its bare value, not the full `Trait` (rationale/
+ * provenance): this step never writes it back, only reads it to judge
+ * whether something like a load balancer is now a real gap — see REVISE_PROMPT's
+ * "cannot work at its current scale" guidance, which otherwise has no way to
+ * tell a single instance from multiple. Confirmed live: a real rework split an
+ * overloaded shared database across tiers exactly as intended (REWORK_PROMPT's
+ * guidance had what it needed), but never added a load balancer for services
+ * that had already gone "multiple" — because this step was never shown that
+ * fact at all, so the identical kind of prompt guidance had nothing to act on.
  */
 export interface BaseComponentRef {
   id: string;
   label: string;
   kind: string;
+  instanceCount?: { value: string };
 }
 
 function baseComponentContext(model: { components: BaseComponentRef[] }): string {
-  return JSON.stringify(model.components.map((c) => ({ id: c.id, label: c.label, kind: c.kind })));
+  return JSON.stringify(
+    model.components.map((c) => ({
+      id: c.id,
+      label: c.label,
+      kind: c.kind,
+      ...(c.instanceCount ? { instanceCount: c.instanceCount.value } : {}),
+    })),
+  );
 }
 
 /**
@@ -608,11 +675,24 @@ export async function reviseExtendedComponents(
     {
       maxRetries: 2,
       ...options,
-      // A response that omits keep/remove (older callers, canned test responses)
-      // means "nothing kept, nothing removed": every previous component it still
-      // wants must be returned in full, as before.
-      normalizeOutput: (raw) => (typeof raw === "object" && raw !== null ? { keep: [], remove: [], ...(raw as object) } : raw),
+      // A response that omits keep/remove/considered (older callers, canned test responses)
+      // is read as: nothing kept, nothing removed, needed exactly for the kinds it returned
+      // or already had kept — same shim proposeExtendedComponents uses for "considered".
+      normalizeOutput: (raw) => {
+        if (typeof raw !== "object" || raw === null) return raw;
+        const withDefaults = { keep: [], remove: [], ...(raw as object) } as { keep: string[]; components?: { kind?: string }[] };
+        if ("considered" in withDefaults) return withDefaults;
+        const keptKinds = new Set(previousExtended.filter((c) => withDefaults.keep.includes(c.id)).map((c) => c.kind));
+        const returnedKinds = new Set((withDefaults.components ?? []).map((c) => c?.kind));
+        const present = new Set([...keptKinds, ...returnedKinds]);
+        return {
+          ...withDefaults,
+          considered: EXTENDED_KINDS.map((kind) => ({ kind, needed: present.has(kind), evidence: present.has(kind) ? "kept or returned" : "not needed" })),
+        };
+      },
       validateResult: (data) => {
+        const decisionProblem = checkReviseDecisionsMatchComponents(data as ReviseResponse, previousExtended);
+        if (decisionProblem) return decisionProblem;
         const merged = mergeRevision(previousExtended, data as ReviseResponse, removalMayBeRequested);
         if (merged.problem) return merged.problem;
         const notMinimal = minimalAtWorkload ? checkLowestTierMinimal(merged.components, minimalAtWorkload) : null;

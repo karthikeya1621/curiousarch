@@ -58,7 +58,7 @@ bet in "Findings are AI-generated" is working, not just accepted.
 
 ## 4.3 — Automated UI/e2e coverage
 
-All 680 tests today are unit-level (engine inference logic, `apps/web`'s
+All 687 tests today are unit-level (engine inference logic, `apps/web`'s
 store and API routes) — nothing drives the actual rendered app. The
 `.claude/skills/run-web` Playwright driver already proves this is possible
 without a logged-in session; a real login-gated flow still needs either a

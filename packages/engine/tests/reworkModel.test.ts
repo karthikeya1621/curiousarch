@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
 import { REVISE_PROMPT } from "../src/inference/extendedComponents.js";
-import { baseView, checkNoDroppedBaseComponents, checkNoDroppedEdges, dedupeEdges, dropEdgesToMentionedUnknowns, restoreDroppedConnections, describeScale, reconcileWithPrevious, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
+import { baseView, checkNoDroppedBaseComponents, checkNoDroppedEdges, dedupeEdges, dropEdgesToMentionedUnknowns, restoreDroppedConnections, describeScale, reconcileWithPrevious, REWORK_PROMPT, reworkModel, stripExtendedReferences } from "../src/inference/reworkModel.js";
 import { STRUCTURAL_SELF_CHECK } from "../src/inference/schema.js";
 import { checkout } from "../models/reference.js";
 import { cleanModelIdentity, unwrapIdentityText, type SystemModel } from "../src/types.js";
@@ -1088,5 +1088,17 @@ describe("at the lowest tier a rework may not keep things scaled up (live: 100M 
     const result = await reworkModel(withLb, [], [], { client });
     const found = result.model.components.find((c) => c.id === "lb1") as unknown as { instanceCount: { value: string } };
     expect(found.instanceCount.value).toBe("single");
+  });
+});
+
+describe("REWORK_PROMPT recalibrates 'cannot work without it' for base-kind additions", () => {
+  // Companion to extendedComponents.test.ts's identical regression test: a real project's
+  // topology (not just its missing load balancer) never changed AT ALL across four Re-simulates
+  // from 100 to 100M users — the five base kinds (gateway/service/cache/database/queue) share
+  // this exact same vague gate, with no tier-driven signal at all for when to add a NEW one
+  // (TIER_GROUP_GUIDE only covers instance counts and protections on components already kept).
+  it("reads the threshold as an architect launching at this scale would, not a literal uptime test, with a shared-datastore example", () => {
+    expect(REWORK_PROMPT).toMatch(/the way an architect actually launching this system at this scale would, not as a literal test of whether it would still run in some degraded way/);
+    expect(REWORK_PROMPT).toMatch(/a single datastore carrying every write-heavy flow the system has/);
   });
 });
