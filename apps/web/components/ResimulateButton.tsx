@@ -33,7 +33,14 @@ const NEAR_CAP_THRESHOLD = MAX_TOTAL_COMPONENTS - 2;
  * (see reworkModel.ts's own comment on why that context lives in the user
  * content, not the system prompt).
  */
-export function ResimulateButton({ model }: { model: SystemModel }) {
+export function ResimulateButton({
+  model,
+  onBusyChange,
+}: {
+  model: SystemModel;
+  /** Lets FlowDiagram show its own "generating the flow" indicator without lifting this button's loading state into the store. */
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const canResimulate = useAppStore((s) => s.canResimulate);
   const commitRework = useAppStore((s) => s.commitRework);
   const pendingFixes = useAppStore((s) => s.pendingFixes);
@@ -44,6 +51,7 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
   async function resimulate() {
     if (loading || !canResimulate) return;
     setLoading(true);
+    onBusyChange?.(true);
     setError(null);
     try {
       // Shared with the findings refresh `commitRework` starts, so the
@@ -80,6 +88,7 @@ export function ResimulateButton({ model }: { model: SystemModel }) {
       setError(err instanceof Error ? err.message : "Rework failed.");
     } finally {
       setLoading(false);
+      onBusyChange?.(false);
     }
   }
 

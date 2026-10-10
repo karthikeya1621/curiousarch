@@ -96,6 +96,22 @@ function FlowDiagramInner({
   const narrow = useSyncExternalStore(subscribeNarrow, isNarrow, () => false);
   const liveFindings = useAppStore((s) => s.findings);
   const findings = findingsOverride ?? liveFindings;
+  const findingsStatus = useAppStore((s) => s.findingsStatus);
+  // Re-simulate's own in-flight state, lifted here (not the store) purely so this canvas can show it —
+  // ResimulateButton otherwise has no reason to be anything but local state.
+  const [isResimulating, setIsResimulating] = useState(false);
+  // `findingsOverride !== undefined` is this app's existing "read-only preview version" signal
+  // (see SystemDashboard.tsx) — a saved version's findings are fixed, never "loading" or stale,
+  // so the live findingsStatus (which describes the CURRENT model, not whichever version is on
+  // screen) must not drive this indicator while a past version is being previewed.
+  const isLiveView = findingsOverride === undefined;
+  const flowStatusText = !isLiveView
+    ? null
+    : isResimulating
+      ? "Generating the flow…"
+      : findingsStatus === "loading"
+        ? "Reviewing the flow…"
+        : null;
 
   const findingsByComponent = useMemo(() => {
     const map = new Map<string, AiFinding[]>();
@@ -299,9 +315,18 @@ function FlowDiagramInner({
         // visually distinct floating elements, not one merged container.
         <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-1.5">
           <div className="rounded-lg bg-white/90 p-1.5 shadow-sm backdrop-blur-sm dark:bg-slate-800/90">
-            <ResimulateButton model={model} />
+            <ResimulateButton model={model} onBusyChange={setIsResimulating} />
           </div>
           <ResimulateNotes />
+        </div>
+      )}
+      {flowStatusText && (
+        <div
+          role="status"
+          className="absolute bottom-3 left-3 z-10 flex items-center gap-1.5 rounded-lg bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm backdrop-blur-sm dark:bg-slate-800/90 dark:text-slate-300"
+        >
+          <span className="h-3 w-3 shrink-0 rounded-full border-2 border-slate-300 border-t-slate-600 motion-safe:animate-spin dark:border-slate-600 dark:border-t-slate-300" />
+          {flowStatusText}
         </div>
       )}
     </div>
