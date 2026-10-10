@@ -1,5 +1,7 @@
 # CuriousArch
 
+[![CI](https://github.com/karthikeya1621/curiousarch/actions/workflows/ci.yml/badge.svg)](https://github.com/karthikeya1621/curiousarch/actions/workflows/ci.yml)
+
 **An architect-in-a-box for distributed systems.** Describe what you're building in plain English, get back a rough architecture diagram, and see what actually breaks it — thundering herds, cascading failures, single points of failure — before you ever write code.
 
 Live at **[curiousarch.com](https://curiousarch.com)** — try it as a guest, no sign-up required for your first build.
@@ -19,8 +21,8 @@ It's a learning tool, not a capacity planner: the point is to build the instinct
 ## Why it's built the way it is
 
 - **Judgment belongs to the AI; code only enforces structural validity.** The model is never asserted by a hardcoded pattern catalogue — a free-form AI call reasons over the architecture like a person would, and the engine code only ever checks things that need no design opinion to call wrong (a cycle, a dangling edge, two components sharing an id, a queue with no consumer). See [`docs/context/product-decisions.md`](docs/context/product-decisions.md).
-- **This started as a numeric simulator and got pulled back on purpose.** An earlier version ran real queueing math (M/M/c, Erlang B/C) over AI-inferred numbers. It got deleted after a live incident showed an LLM will confidently explain a failure it didn't actually compute, inventing a plausible-sounding mechanism that was simply wrong. The model is categorical now — booleans and small closed choices, never a number the AI computes — because that's the kind of question an LLM can actually answer reliably. The full story, kept on purpose because the reasoning still matters: [`docs/context/history-and-pivot.md`](docs/context/history-and-pivot.md).
-- **A validation gate sits between every AI generation and the screen.** If a result breaks a hard structural rule (a lost connection, something scaled up with no justification, a queue the diagram forgot to finish wiring), it's never shown — the engine retries once with the violation named, and only a previous-version fallback with a plain explanation ever reaches the user. See [`docs/context/inference-reliability.md`](docs/context/inference-reliability.md).
+- **This started as a numeric simulator and got pulled back on purpose.** An earlier version ran real queueing math (M/M/c, Erlang B/C) over AI-inferred numbers. A dedicated measurement round found it got the bottleneck right only 30% of the time across 10 comparison runs, with every miss guessing a duration or capacity number 5–8x off — the structure was reliably right, the magnitudes never were. The model is categorical now — booleans and small closed choices, never a number the AI computes — because that's the kind of question an LLM can actually answer reliably. The full story, kept on purpose because the reasoning still matters: [`docs/context/history-and-pivot.md`](docs/context/history-and-pivot.md).
+- **A validation gate sits between every AI generation and the screen.** If a result breaks a hard structural rule (a lost connection, something scaled up with no justification, a queue the diagram forgot to finish wiring), it's never shown — the engine retries once with the violation named, and only a previous-version fallback with a plain explanation ever reaches the user. A five-version project built end-to-end this way cost $0.27 with zero retries. See [`docs/context/inference-reliability.md`](docs/context/inference-reliability.md).
 - **A guest trial with real server-side quota**, not a client-side gate — Supabase anonymous sign-in plus a Postgres-enforced daily budget, so a guest gets one real build before being asked to sign in.
 
 ## Tech stack
